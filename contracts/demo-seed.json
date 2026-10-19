@@ -1,0 +1,47 @@
+{
+  "meta": {
+    "type": "SYNTHETIC_OFFLINE_DEMO",
+    "note": "Original-IP made-up teams, props, games, and prices. NOT actual Worlds 2026 matchups or odds.",
+    "source": "design_fixture_v1",
+    "created_at": "2026-10-18",
+    "credits": "Nonredeemable imaginary credits only"
+  },
+  "season": {
+    "code": "fictional-championship-2026-demo",
+    "opening_grant_rc": 1000,
+    "match_day_grant_rc": 1000,
+    "eligible_match_dates": ["2026-10-23", "2026-10-24", "2026-10-25"],
+    "users": ["you", "kai", "mika"]
+  },
+  "events": [
+    {
+      "id": "demo-series-a",
+      "stage": "SWISS",
+      "best_of": 3,
+      "team_a": {"code": "ATLAS", "name": "Atlas", "region": "North"},
+      "team_b": {"code": "NOVA", "name": "Nova", "region": "East"},
+      "scheduled_at": "2026-10-23T17:00:00Z",
+      "source_quality": "MOCK",
+      "markets": [
+        {
+          "id": "a-win",
+          "kind": "series_winner",
+          "scope": "SERIES",
+          "lock_trigger": "BEFORE_START",
+          "close_at": "2026-10-23T16:59:00Z",
+          "rules_version": 1,
+          "outcomes": [{"label": "Atlas", "odds": "1.6200"}, {"label": "Nova", "odds": "2.4000"}]
+        },
+        {
+          "id": "a-orianna",
+          "kind": "champion_picked",
+          "scope": "GAME",
+          "game_index": 1,
+          "lock_trigger": "BEFORE_DRAFT",
+          "required_fields": ["game_1.draft.picks.champion_id"],
+          "outcomes": [{"label": "Yes", "odds": "1.9200"}, {"label": "No", "odds": "1.9100"}]
+        }
+      ]
+    }
+  ]
+}
