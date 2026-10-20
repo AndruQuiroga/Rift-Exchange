@@ -58,6 +58,9 @@ class TimelineData:
     early_baron: int = 0
     player: dict[str, dict[str, list[float]]] = field(default_factory=dict)  # player_id -> stat -> values
     role: dict[str, dict[str, list[float]]] = field(default_factory=dict)  # role -> stat -> values
+    reference_samples: list[tuple[str | None, str, str | None, float, float]] = field(default_factory=list)
+    champion_samples: list[tuple[str, str, str, float, float]] = field(default_factory=list)
+
 
 
 def _complete_games(session: Session, season: Season) -> list[Game]:
@@ -99,16 +102,31 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
         data.soul[tl.get("soul") or "none"] += 1
         baron = firsts.get("baron")
         data.early_baron += int(bool(baron) and baron["at_s"] < EARLY_BARON_S)
+        champions = {str(p.get("player_id") or p.get("name")): p.get("champion")
+                     for p in (tl.get("participants") or {}).values()}
         for pid, line in player_lines(g).items():
             for stat in STATS:
                 if line[stat] is None or not line["role"]:
                     continue
                 data.player.setdefault(pid, defaultdict(list))[stat].append(float(line[stat]))
                 data.role.setdefault(line["role"], defaultdict(list))[stat].append(float(line[stat]))
+                if champions.get(pid):
+                    data.champion_samples.append((line["role"], champions[pid], stat, float(line[stat]), 1.0))
     for what in ("blood", "tower"):
         n = took[(what, "n")]
         # Shrink toward a coin flip; first objectives only lean slightly toward the eventual winner.
         data.winner_took_first[what] = (took[(what, "w")] + 5) / (n + 10)
+    # Historical feed finals support kills only. They do not establish objective events,
+    # damage share or CS15; missing telemetry must never become a zero or "no soul".
+    from rift.reference import observations
+    for g, weight in observations(session, season):
+        if isinstance(g, Game):
+            continue
+        for p in g.stats.get("players", []):
+            role, pid, value = p.get("role"), p.get("player_id"), p.get("kills")
+            if role not in ROLES or value is None:
+                continue
+            data.reference_samples.append((pid, role, p.get("champion"), float(value), weight))
     return data
 
 
@@ -182,21 +200,40 @@ def lineups(session: Session, fixture: Fixture) -> dict[str, dict[str, dict]]:
     return out
 
 
-def _player_estimate(data: TimelineData, pid: str, role: str, stat: str) -> tuple[float, float] | None:
-    role_vals = data.role.get(role, {}).get(stat) or []
-    if len(role_vals) < 5:
+def _player_estimate(data: TimelineData, pid: str, role: str, stat: str,
+                     champion: str | None = None) -> tuple[float, float] | None:
+    from rift.champions import champion_key
+    role_samples = [(v, 1.0) for v in data.role.get(role, {}).get(stat, [])]
+    own = [(v, 1.0) for v in data.player.get(pid, {}).get(stat, [])]
+    champion_samples = [(value, weight) for lane, champ, key, value, weight in data.champion_samples
+                        if lane == role and key == stat and champion
+                        and champion_key(champ) == champion_key(champion)]
+    if stat == "kills":
+        for player, lane, champ, value, weight in data.reference_samples:
+            if lane != role:
+                continue
+            role_samples.append((value, weight))
+            if player and str(player) == pid:
+                own.append((value, weight))
+            if champion and champ and champion_key(champ) == champion_key(champion):
+                champion_samples.append((value, weight))
+    mass = sum(w for _, w in role_samples)
+    if mass < 5:
         return None
-    rmean = sum(role_vals) / len(role_vals)
-    rvar = sum((v - rmean) ** 2 for v in role_vals) / (len(role_vals) - 1)
-    own = data.player.get(pid, {}).get(stat) or []
-    mean = (sum(own) + SHRINK_GAMES * rmean) / (len(own) + SHRINK_GAMES)
-    # A floor keeps a short, uniform sample from pricing near-certainties: one kill or 0.01 damage share.
+    rmean = sum(v * w for v, w in role_samples) / mass
+    rvar = sum(w * (v - rmean) ** 2 for v, w in role_samples) / max(mass - 1, 1)
+    # Champion conditioning is optional and shrinks heavily toward role until coverage is adequate.
+    cmass = sum(w for _, w in champion_samples)
+    if cmass >= 3:
+        rmean = (sum(v * w for v, w in champion_samples) + 6 * rmean) / (cmass + 6)
+    mean = (sum(v * w for v, w in own) + SHRINK_GAMES * rmean) / (sum(w for _, w in own) + SHRINK_GAMES)
     return mean, max(rvar, 1.0 if STATS[stat][1] else 1e-4)
 
 
 def duel_probability(data: TimelineData, a: dict, b: dict, role: str, stat: str) -> float | None:
     """P(A beats B | no exact tie). None when there isn't enough data to price it."""
-    ea, eb = _player_estimate(data, a["player_id"], role, stat), _player_estimate(data, b["player_id"], role, stat)
+    ea = _player_estimate(data, a["player_id"], role, stat, a.get("champion"))
+    eb = _player_estimate(data, b["player_id"], role, stat, b.get("champion"))
     if ea is None or eb is None:
         return None
     mu, sd = ea[0] - eb[0], math.sqrt(ea[1] + eb[1])
@@ -370,6 +407,7 @@ def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: Tourn
     w = early_window(session, fixture, game_index, now)
     dist = _kill_dist(stats)
     return {"game_index": game_index, **_window_view(w),
+            "champions": game_lineup(w.game, fixture) if w.game else {},
             "typical": str(math.floor(dist[0]) + 0.5) if dist else None,
             "lines": _kill_line_rows(dist, settings) if w.open else []}
 

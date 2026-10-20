@@ -67,10 +67,8 @@ class Rates:
 
 
 def tournament_rates(session: Session, season: Season) -> Rates:
-    rows = session.execute(
-        select(Game.stats, Game.stats_complete, Game.bans).join(Fixture, Fixture.id == Game.fixture_id)
-        .where(Fixture.season_id == season.id)
-    ).all()
+    from rift.reference import observations
+    rows = [(g.stats, g.stats_complete, g.bans, weight) for g, weight in observations(session, season)]
     names: dict[str, str] = {}
 
     def canon(champ: str) -> str:
@@ -80,33 +78,33 @@ def tournament_rates(session: Session, season: Season) -> Rates:
     picked, roles, role_games = Counter(), {}, {}
     team_games, team_picks, team_roles = Counter(), {}, {}
     n = 0
-    for stats, complete, _bans in rows:
+    for stats, complete, _bans, weight in rows:
         if not complete or not stats:
             continue
-        n += 1
+        n += weight
         players = [dict(p, champion=canon(p["champion"])) for p in stats["players"]]
         for champ in {p["champion"] for p in players}:
-            picked[champ] += 1
+            picked[champ] += weight
         for p in players:
-            roles.setdefault(p["champion"], Counter())[p["role"]] += 1
+            roles.setdefault(p["champion"], Counter())[p["role"]] += weight
             if p.get("team_id"):
-                team_picks.setdefault(p["team_id"], Counter())[p["champion"]] += 1
-                team_roles.setdefault(p["team_id"], Counter())[(p["champion"], p["role"])] += 1
+                team_picks.setdefault(p["team_id"], Counter())[p["champion"]] += weight
+                team_roles.setdefault(p["team_id"], Counter())[(p["champion"], p["role"])] += weight
         for champ, role in {(p["champion"], p["role"]) for p in players}:
-            role_games.setdefault(champ, Counter())[role] += 1
+            role_games.setdefault(champ, Counter())[role] += weight
         for team_id in {p.get("team_id") for p in players if p.get("team_id")}:
-            team_games[team_id] += 1
+            team_games[team_id] += weight
     banned, first = Counter(), Counter()
     ban_games = first_games = 0
-    for _stats, _complete, bans in rows:
+    for _stats, _complete, bans, weight in rows:
         if not bans or "blue" not in bans:
             continue
-        ban_games += 1
+        ban_games += weight
         for champ in {canon(c) for c in bans["blue"] + bans["red"]}:
-            banned[champ] += 1
+            banned[champ] += weight
         if bans.get("first_pick"):
-            first_games += 1
-            first[canon(bans["first_pick"])] += 1
+            first_games += weight
+            first[canon(bans["first_pick"])] += weight
     return Rates(games=n, picked={c: k / n for c, k in picked.items()} if n else {},
                  role={c: r.most_common(1)[0][0] for c, r in roles.items()},
                  team_games=team_games, team_picks=team_picks, role_games=role_games, team_roles=team_roles,

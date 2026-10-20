@@ -3,18 +3,26 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
+import { useNow } from "@/lib/hooks";
 import { odds as fmtOdds } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { Choice } from "./Choice";
 
 type Side = "A" | "B";
-type DuelGrid = {
-  open: boolean;
+type WindowState = { open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close_at: string | null; opens_when: string | null };
+function WindowNote({ data, now }: { data: WindowState; now: number }) {
+  const seconds = data.close_at ? Math.max(0, Math.ceil((Date.parse(data.close_at) - now) / 1000)) : 0;
+  const text = data.state === "UPCOMING" ? "Opens after draft, when champions are confirmed."
+    : data.open && seconds > 0 ? `Closes in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} · earlier at first blood`
+    : "Early-game picks closed.";
+  return <p className="muted num" role="status" style={{ fontSize: 13, marginTop: 12 }}>{text}</p>;
+}
+type DuelGrid = WindowState & {
   stats: { id: string; label: string }[];
-  duels: { role: string; a: { player_id: string; name: string }; b: { player_id: string; name: string }; odds: Record<string, Record<Side, string | null>> }[];
+  duels: { role: string; a: { player_id: string; name: string; champion?: string }; b: { player_id: string; name: string; champion?: string }; odds: Record<string, Record<Side, string | null>> }[];
 };
-type LineGrid = { open: boolean; typical: string | null; lines: { line: string; over: string; under: string }[] };
+type LineGrid = WindowState & { champions?: Partial<Record<Side, Record<string, { champion?: string }>>>; typical: string | null; lines: { line: string; over: string; under: string }[] };
 
 const ROLE_SHORT: Record<string, string> = { top: "TOP", jungle: "JGL", mid: "MID", bottom: "BOT", support: "SUP" };
 
@@ -43,13 +51,16 @@ function useOnDemand(event: EventT) {
 }
 
 export function LaneDuels({ event, game }: { event: EventT; game: number }) {
-  const { data } = useSWR<DuelGrid>(`/events/${event.id}/duels?game=${game}`);
+  const { data } = useSWR<DuelGrid>(`/events/${event.id}/duels?game=${game}`, { refreshInterval: 2000 });
+  const now = useNow(1000);
   const [stat, setStat] = useState("kills");
   const { tap, selected, error } = useOnDemand(event);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
-  if (!data.duels.length) return <p className="muted" style={{ fontSize: 14, marginTop: 12 }}>Lineups show up once both teams have played a game here.</p>;
+  if (!data.duels.length) return <WindowNote data={data} now={now} />;
+  const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   return (
     <div>
+      <WindowNote data={data} now={now} />
       <div className="segmented" role="tablist" aria-label="Duel stat" style={{ marginTop: 12 }}>
         {data.stats.map((s) => (
           <button key={s.id} role="tab" aria-selected={stat === s.id} onClick={() => setStat(s.id)}>
@@ -68,11 +79,11 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
                 className={`side${s === "B" ? " right" : ""}`}
                 style={{ minHeight: 48 }}
                 aria-pressed={selected(key)}
-                disabled={!data.open || !px}
+                disabled={!open || !px}
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
                 aria-label={`${(s === "A" ? d.a : d.b).name}, ${fmtOdds(px ?? null)} times`}
               >
-                <span className="code duel-name">{(s === "A" ? d.a : d.b).name}</span>
+                <span className="duel-name"><span className="code">{(s === "A" ? d.a : d.b).name}</span><small style={{ display: "block", color: "var(--muted)" }}>{(s === "A" ? d.a : d.b).champion ?? "Champion pending"}</small></span>
                 <span className="px num" style={{ fontSize: 15 }}>{fmtOdds(px ?? null)}</span>
               </button>
             );
@@ -87,26 +98,33 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         })}
       </div>
       {error ? <div className="notice error" role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
-      <p className="fineprint" style={{ textAlign: "left" }}>Lineups from each team&apos;s last game. A tie, or a player who doesn&apos;t start, voids the duel.</p>
+      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00 or first blood. Ties void.</p>
     </div>
   );
 }
 
 export function KillLine({ event, game }: { event: EventT; game: number }) {
-  const { data } = useSWR<LineGrid>(`/events/${event.id}/kill-lines?game=${game}`);
+  const { data } = useSWR<LineGrid>(`/events/${event.id}/kill-lines?game=${game}`, { refreshInterval: 2000 });
+  const now = useNow(1000);
   const [index, setIndex] = useState<number | null>(null);
   const { tap, selected, error } = useOnDemand(event);
   useEffect(() => {
-    if (data && index === null) {
+    if (data && data.lines.length && index === null) {
       const typical = data.lines.findIndex((l) => l.line === data.typical);
       setIndex(typical >= 0 ? typical : Math.floor(data.lines.length / 2));
     }
   }, [data, index]);
   if (!data) return <div className="skeleton" style={{ height: 140, marginTop: 12 }} />;
-  if (!data.lines.length || index === null) return <p className="muted" style={{ fontSize: 14, marginTop: 12 }}>Kill lines open once enough Worlds games are in.</p>;
-  const row = data.lines[index];
+  if (!data.lines.length || index === null) return <><WindowNote data={data} now={now} />{data.open ? <p className="muted">No kill lines are priced yet.</p> : null}</>;
+  const activeIndex = Math.min(index, data.lines.length - 1);
+  const row = data.lines[activeIndex];
+  const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   return (
     <div style={{ marginTop: 12 }}>
+      <WindowNote data={data} now={now} />
+      {data.champions ? <div style={{ fontSize: 12, margin: "8px 0 12px" }}>
+        {(["A", "B"] as const).map((side) => <p key={side} className="muted"><b>{side === "A" ? event.team_a?.code : event.team_b?.code}</b> · {Object.values(data.champions?.[side] ?? {}).map((p) => p.champion).filter(Boolean).join(" · ")}</p>)}
+      </div> : null}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6 }}>
         <span className="display num" style={{ fontSize: 40, fontWeight: 800, lineHeight: 1 }}>{row.line}</span>
         <span className="muted" style={{ fontSize: 13 }}>total kills · Game {game}</span>
@@ -116,7 +134,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
         className="line-slider"
         min={0}
         max={data.lines.length - 1}
-        value={index}
+        value={activeIndex}
         onChange={(e) => setIndex(Number(e.target.value))}
         aria-label="Kill line"
         aria-valuetext={`${row.line} kills`}
@@ -136,7 +154,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
               className="side"
               style={{ justifyContent: "space-between" }}
               aria-pressed={selected(key)}
-              disabled={!data.open}
+              disabled={!open}
               onClick={() => tap(key, `/events/${event.id}/kill-lines`, { game_index: game, line: row.line }, code)}
             >
               <span className="code">{code === "OVER" ? "Over" : "Under"} {row.line}</span>

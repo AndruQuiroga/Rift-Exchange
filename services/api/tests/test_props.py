@@ -200,6 +200,14 @@ def test_pick_accepted_after_first_blood_is_void(factory, season_games):
     assert rows[season_games["bob"]].status == "VOID" and rows[season_games["bob"]].return_rc == 100
     assert balance(factory, season_games, "bob") == (2000, 0)
 
+    # A corrected final scan moves first blood before Alice's pick, without changing the winner.
+    with factory() as s, s.begin():
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        g.timeline = {**g.timeline, "firsts": {"blood": {"at_s": 50}}}
+        assert apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
+        assert not apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
+    assert balance(factory, season_games, "alice") == (2000, 0)
+
 
 def test_any_kill_line_is_one_shared_market(factory, season_games):
     _live_game1(factory, season_games)
@@ -253,3 +261,21 @@ def test_regional_lineup_until_a_team_plays_at_worlds(factory, world):
         atlas = s.get(Team, world["team_a"])
         assert atlas.lineup["players"]["mid"] == {"player_id": "red-mid", "name": "RED mid"}
         assert props.lineups(s, s.get(Fixture, world["fixture"]))["A"]["mid"]["name"] == "RED mid"
+
+def test_quote_rejects_recorded_first_blood_before_worker_locks(factory, season_games):
+    from test_money import join
+
+    from rift.placement import PlacementError, QuoteItem, create_quote
+
+    _live_game1(factory, season_games)
+    at = T0 + timedelta(seconds=60)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        duel = props.ensure_duel(s, season, fx, 1, "mid", "kills", SETTINGS, at)
+        oid = s.execute(select(Outcome.id).where(Outcome.market_id == duel.id, Outcome.code == "A")).scalar_one()
+        game = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        game.timeline = {**game.timeline, "firsts": {"blood": {"at_s": 90}}}
+    join(factory, season_games, "alice")
+    with factory() as s, s.begin(), pytest.raises(PlacementError, match="window has closed"):
+        create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
+                     items=[QuoteItem(oid, 100)], now=T0 + timedelta(seconds=100), ttl_seconds=20)

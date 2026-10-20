@@ -60,21 +60,25 @@ class TournamentStats:
 
 
 def tournament_stats(session: Session, season: Season) -> TournamentStats:
-    rows = session.execute(
-        select(Game.stats).join(Fixture, Fixture.id == Game.fixture_id)
-        .where(Fixture.season_id == season.id, Game.stats_complete.is_(True))
-    ).scalars().all()
-    counts: dict[str, int] = {}
+    from rift.champions import champion_key
+    from rift.reference import observations
+    rows = [(g.stats, weight) for g, weight in observations(session, season) if g.stats_complete and g.stats]
+    expansion = 4 if any(weight < 1 for _, weight in rows) else 1
+    counts = {}
+    names = {}
     totals = []
-    for stats in rows:
+    n = 0.0
+    for stats, weight in rows:
+        n += weight
         for champ in {p["champion"] for p in stats["players"]}:
-            counts[champ] = counts.get(champ, 0) + 1
-        totals.append(sum(p["kills"] for p in stats["players"]))
-    n = len(rows)
-    from rift.props import timeline_data  # props builds on this module's market specs
-
-    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {}, kill_totals=totals,
-                           timeline=timeline_data(session, season))
+            name = names.setdefault(champion_key(champ), champ)
+            counts[name] = counts.get(name, 0) + weight
+        # Exact quarter-game weights, preserving existing distribution consumers. The effective
+        # sample gate uses n, not the expanded list length.
+        totals.extend([sum(p["kills"] for p in stats["players"])] * round(weight * expansion))
+    from rift.props import timeline_data
+    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {},
+                           kill_totals=totals, timeline=timeline_data(session, season))
 
 
 def _nb_cdf(k: int, mean: float, var: float) -> float:

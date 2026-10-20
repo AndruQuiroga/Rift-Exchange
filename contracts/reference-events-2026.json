@@ -1,0 +1,92 @@
+[
+  {
+    "name": "msi_2026",
+    "league_id": "98767991325878492",
+    "league_slug": "msi",
+    "category": "international",
+    "start": "2026-06-27T00:00:00+00:00",
+    "end": "2026-07-13T00:00:00+00:00",
+    "tournament_id": "115570934354631452"
+  },
+  {
+    "name": "first_stand_2026",
+    "league_id": "113464388705111224",
+    "league_slug": "first_stand",
+    "category": "international",
+    "start": "2026-03-16T00:00:00+00:00",
+    "end": "2026-03-24T00:00:00+00:00",
+    "tournament_id": "115570858980956868"
+  },
+  {
+    "name": "ewc_lol_2026",
+    "league_id": "116838530616006090",
+    "league_slug": "ewc_lol",
+    "category": "international",
+    "start": "2026-07-14T00:00:00+00:00",
+    "end": "2026-07-20T00:00:00+00:00",
+    "tournament_id": "116854907266085633"
+  },
+  {
+    "name": "lck_split_3_2026",
+    "league_id": "98767991310872058",
+    "league_slug": "lck",
+    "category": "regional",
+    "start": "2026-07-28T00:00:00+00:00",
+    "end": "2026-09-14T00:00:00+00:00",
+    "tournament_id": "115548147890329817"
+  },
+  {
+    "name": "lpl_split_3_2026",
+    "league_id": "98767991314006698",
+    "league_slug": "lpl",
+    "category": "regional",
+    "start": "2026-07-21T00:00:00+00:00",
+    "end": "2026-09-20T00:00:00+00:00",
+    "tournament_id": "115616254668930796"
+  },
+  {
+    "name": "lec_split_3_2026",
+    "league_id": "98767991302996019",
+    "league_slug": "lec",
+    "category": "regional",
+    "start": "2026-07-23T00:00:00+00:00",
+    "end": "2026-09-21T00:00:00+00:00",
+    "tournament_id": "115548681802226458"
+  },
+  {
+    "name": "lcs_split_3_2026",
+    "league_id": "98767991299243165",
+    "league_slug": "lcs",
+    "category": "regional",
+    "start": "2026-07-25T00:00:00+00:00",
+    "end": "2026-10-06T00:00:00+00:00",
+    "tournament_id": "115564797158840434"
+  },
+  {
+    "name": "cblol_split_3_2026",
+    "league_id": "98767991332355509",
+    "league_slug": "cblol-brazil",
+    "category": "regional",
+    "start": "2026-07-25T00:00:00+00:00",
+    "end": "2026-10-12T00:00:00+00:00",
+    "tournament_id": "115565671525288828"
+  },
+  {
+    "name": "lcp_split_3_2026",
+    "league_id": "113476371197627891",
+    "league_slug": "lcp",
+    "category": "regional",
+    "start": "2026-07-24T00:00:00+00:00",
+    "end": "2026-08-31T00:00:00+00:00",
+    "tournament_id": "115570728597462574"
+  },
+  {
+    "name": "americas_cup_2026",
+    "league_id": "116096325848746167",
+    "league_slug": "americas_cup",
+    "category": "international",
+    "start": "2026-03-04T00:00:00+00:00",
+    "end": "2026-03-10T00:00:00+00:00",
+    "tournament_id": "116096602354689823"
+  }
+]

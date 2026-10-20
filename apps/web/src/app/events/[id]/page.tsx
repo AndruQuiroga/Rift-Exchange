@@ -66,7 +66,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          You get about 8 minutes before its draft: winner, kill line and any champion, with everything already played greyed out.
+          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00 or first blood.
         </p>
       </div>
     );
@@ -240,7 +240,7 @@ export default function EventPage() {
 
           {event.best_of > 1 ? (
             <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-              Game winners, kill lines and the draft are under each game. Later games open as the one before ends.
+              Choose a game for its markets. Winner and draft picks close before play; duels and kill lines open once champions are confirmed.
             </p>
           ) : event.team_a && event.team_b ? (
             <>

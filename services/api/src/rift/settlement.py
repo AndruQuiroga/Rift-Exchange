@@ -67,6 +67,10 @@ def grade_market(session: Session, market: Market) -> Grade:
         return Grade("HOLD", reason="Series postponed")
     ev = {"fixture": fixture.provider_id, "score": f"{fixture.team_a_wins}-{fixture.team_b_wins}"}
     kind = market.kind
+    if market.params.get("early"):
+        game = next((g for g in _games(session, fixture) if g.game_index == market.params["game_index"]), None)
+        if game is not None and game.state != "unneeded" and not game.timeline_complete:
+            return Grade("HOLD", reason="Awaiting complete timeline for the early-game cutoff", evidence=ev)
 
     if kind in ("series_winner", "series_score", "total_games"):
         if fixture.status != "COMPLETED":
@@ -242,6 +246,15 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         market.state, market.state_reason = "HOLD", grade.reason
         return changed
 
+    # Final scans can refine first blood after a market was already locked. Settle against
+    # that timestamp, rather than the poll-time cutoff, and replay if it later changes.
+    effective_cutoff = market.close_at
+    if market.params.get("early") and market.fixture_id is not None:
+        game = session.execute(select(Game).where(Game.fixture_id == market.fixture_id,
+                              Game.game_index == market.params["game_index"])).scalar_one_or_none()
+        if game is not None and props.early_cutoff(game) is not None:
+            effective_cutoff = min(effective_cutoff, props.early_cutoff(game))
+        grade.evidence = {**grade.evidence, "acceptance_cutoff": effective_cutoff.isoformat()}
     void = grade.status == "VOID"
     winning = sorted(grade.winning_codes) if not void else []
     partial = set(grade.partial_codes) if not void else set()
@@ -249,7 +262,9 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         select(MarketResult).where(MarketResult.market_id == market.id)
         .order_by(MarketResult.revision.desc()).limit(1)
     ).scalar_one_or_none()
-    if last is not None and last.void == void and sorted(last.winning_codes) == winning:
+    if (last is not None and last.void == void and sorted(last.winning_codes) == winning
+            and (not market.params.get("early") or
+                 last.evidence.get("acceptance_cutoff") == grade.evidence.get("acceptance_cutoff"))):
         return False
 
     revision = market.result_revision + 1
@@ -273,7 +288,7 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
 
     for sel in selections:
         code = outcome_codes[sel.outcome_id]
-        late = accepted[sel.ticket_id] > market.close_at
+        late = accepted[sel.ticket_id] >= effective_cutoff
         result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
                   else "LOST")
         new_return = settlement_return(sel.stake_rc, sel.odds, result,
