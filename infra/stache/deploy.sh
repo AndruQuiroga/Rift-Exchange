@@ -92,9 +92,9 @@ run_job() {
 
 if [ "$existing" = true ]; then
     # Stop writes and the scheduler before the snapshot/migration.
-    docker service scale rift-exchange_worker=0 rift-exchange_api=0 >/dev/null
+    docker service scale --detach=true rift-exchange_worker=0 rift-exchange_api=0 >/dev/null
     for attempt in $(seq 1 120); do
-        count=$(docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_api --filter label=com.docker.swarm.service.name=rift-exchange_worker | wc -l)
+        count=$({ docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_api; docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_worker; } | wc -l)
         test "$count" = 0 && break
         sleep 2
     done
