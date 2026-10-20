@@ -35,6 +35,8 @@ Or with Docker: `docker compose -f infra/compose.yaml up --build`, then `docker 
 For Stache hosting options, verified infrastructure observations, launch requirements,
 and the recommended agent deployment interface, see [the deployment assessment](docs/deployment/stache.md).
 Run `./infra/stache/preflight.ps1` from PowerShell for read-only SSH/Swarm checks.
+The [v0 launch record](docs/deployment/v0-launch-2026-10-20.md) records the live release,
+validation and known limitations; [release commands](infra/stache/README.md) cover updates.
 
 Environment variables (prefix `RIFT_`, see `services/api/src/rift/config.py`): `DATABASE_URL`, `COOKIE_SECURE` (set `true` behind HTTPS), `LEAGUEPEDIA_MODE` (`mock` until the bot account exists, then `live` with `LEAGUEPEDIA_BOT_USER`/`LEAGUEPEDIA_BOT_PASSWORD`), `SETTLE_DELAY_SECONDS`, `HOLD_VOID_AFTER_HOURS`.
 
