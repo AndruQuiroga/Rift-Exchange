@@ -1,0 +1,162 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    environment:
+      POSTGRES_DB: rift
+      POSTGRES_USER: rift
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U rift -d rift"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.hostname == ${DATA_NODE:?Set the storage node}"]
+      resources:
+        limits: { memory: 512M }
+        reservations: { memory: 128M }
+      update_config: { order: stop-first }
+    logging: &logs
+      driver: json-file
+      options: { max-size: 10m, max-file: "3" }
+
+  api:
+    image: ${API_IMAGE:?Set the validated API image digest}
+    environment: &app-env
+      RIFT_DATABASE_URL_FILE: /run/secrets/database_url
+      RIFT_COOKIE_SECURE: "true"
+      RIFT_LEAGUEPEDIA_MODE: mock
+    secrets: [database_url]
+    networks: [data, traefik-public]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/ready', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    deploy:
+      replicas: ${APP_REPLICAS:-1}
+      placement:
+        constraints: ["node.hostname == ${DATA_NODE:?Set the storage node}"]
+      resources:
+        limits: { memory: 512M }
+        reservations: { memory: 128M }
+      update_config: { order: stop-first, failure_action: rollback, monitor: 60s }
+      labels:
+        io.stache.deployment-owner: ssh-git
+        traefik.enable: "true"
+        traefik.swarm.network: ${INGRESS_NETWORK:?Set the ingress overlay}
+        traefik.http.routers.rift-api.rule: Host(`rift.mustache.network`) && (Path(`/api`) || PathPrefix(`/api/`))
+        traefik.http.routers.rift-api.priority: "100"
+        traefik.http.routers.rift-api.entrypoints: web
+        traefik.http.routers.rift-api.observability.accesslogs: "false"
+        traefik.http.services.rift-api.loadbalancer.server.port: "8000"
+        traefik.http.services.rift-api.loadbalancer.healthcheck.path: /api/v1/health/ready
+    logging: *logs
+
+  worker:
+    image: ${API_IMAGE:?Set the validated API image digest}
+    command: [rift, worker]
+    environment: *app-env
+    secrets: [database_url]
+    networks: [data]
+    healthcheck:
+      test: [CMD, python, -m, rift.operations, check-worker]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    deploy:
+      replicas: ${APP_REPLICAS:-1}
+      placement:
+        constraints: ["node.hostname == ${DATA_NODE:?Set the storage node}"]
+      resources:
+        limits: { memory: 768M }
+        reservations: { memory: 128M }
+      update_config: { order: stop-first, failure_action: rollback, monitor: 120s }
+    logging: *logs
+
+  web:
+    image: ${WEB_IMAGE:?Set the validated web image digest}
+    networks: [traefik-public]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/join').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      replicas: ${APP_REPLICAS:-1}
+      placement:
+        constraints: ["node.hostname == ${DATA_NODE:?Set the storage node}"]
+      resources:
+        limits: { memory: 512M }
+        reservations: { memory: 128M }
+      update_config: { order: start-first, failure_action: rollback, monitor: 60s }
+      labels:
+        io.stache.deployment-owner: ssh-git
+        traefik.enable: "true"
+        traefik.swarm.network: ${INGRESS_NETWORK:?Set the ingress overlay}
+        traefik.http.routers.rift-web.rule: Host(`rift.mustache.network`)
+        traefik.http.routers.rift-web.entrypoints: web
+        traefik.http.routers.rift-web.observability.accesslogs: "false"
+        traefik.http.services.rift-web.loadbalancer.server.port: "3000"
+    logging: *logs
+
+  backup:
+    image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+    entrypoint: [/bin/sh, /backup.sh]
+    configs:
+      - source: backup_script
+        target: /backup.sh
+    secrets: [postgres_password]
+    volumes: [backups:/backups]
+    networks: [data]
+    healthcheck:
+      test: [CMD-SHELL, "test -n \"$$(find /backups -name '*.dump' -mmin -1500 -print -quit)\""]
+      interval: 5m
+      timeout: 10s
+      retries: 2
+      start_period: 5m
+    deploy:
+      replicas: 1
+      placement:
+        constraints: ["node.hostname == ${BACKUP_NODE:?Set a separate backup node}"]
+      resources:
+        limits: { memory: 192M }
+        reservations: { memory: 32M }
+      update_config: { order: stop-first }
+    logging: *logs
+
+networks:
+  data:
+    driver: overlay
+  traefik-public:
+    external: true
+    name: ${INGRESS_NETWORK:?Set the ingress overlay}
+
+volumes:
+  database:
+    name: rift-exchange_database
+  backups:
+    name: rift-exchange_backups
+
+secrets:
+  postgres_password:
+    external: true
+    name: rift_postgres_password_v1
+  database_url:
+    external: true
+    name: rift_database_url_v1
+
+configs:
+  backup_script:
+    name: rift-backup-${RELEASE_ID:?Set a unique release ID}
+    file: ./backup.sh

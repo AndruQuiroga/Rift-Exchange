@@ -1,10 +1,37 @@
 from functools import lru_cache
+from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RIFT_", env_file=".env", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls: type[BaseSettings], init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource, dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple:
+        # Explicit *_FILE configuration takes precedence over development defaults.
+        # Use the same source for CLI, Alembic, API and worker.
+        def mounted_secrets() -> dict:
+            import os
+
+            values = {}
+            for field in ("database_url", "leaguepedia_bot_user", "leaguepedia_bot_password"):
+                path = os.environ.get(f"RIFT_{field.upper()}_FILE")
+                if path:
+                    try:
+                        value = Path(path).read_text(encoding="utf-8").strip()
+                    except OSError:
+                        raise ValueError(f"Cannot read configured secret file for {field}") from None
+                    if not value:
+                        raise ValueError(f"Empty configured secret file for {field}")
+                    values[field] = value
+            return values
+
+        return init_settings, mounted_secrets, env_settings, dotenv_settings, file_secret_settings
 
     database_url: str = "postgresql+psycopg://rift:rift@localhost:5432/rift"
 
