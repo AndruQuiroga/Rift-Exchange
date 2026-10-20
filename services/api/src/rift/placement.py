@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from rift import ledger
-from rift.domain.money import winning_return
+from rift.domain.money import partial_return, winning_return
 from rift.models import Market, OutboxEvent, Outcome, Quote, Selection, Ticket, Wallet
 
 
@@ -76,6 +76,8 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
             "outcome_id": str(outcome.id), "market_id": str(market.id), "stake_rc": item.stake_rc,
             "odds": str(outcome.odds.quantize(Decimal("0.01"))), "odds_version": outcome.odds_version,
             "potential_return_rc": winning_return(item.stake_rc, outcome.odds),
+            "partial_return_rc": partial_return(item.stake_rc, outcome.odds, market.params["consolation"])
+            if market.params.get("consolation") else None,
             "market_title": market.title, "outcome_label": outcome.label,
         })
     total = sum(i.stake_rc for i in items)

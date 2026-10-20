@@ -59,7 +59,9 @@ def _apply_match(session: Session, season: Season, m: ScheduleMatch, now: dateti
     a_wins = (m.teams[0].game_wins if m.teams and m.teams[0] else None) or 0
     b_wins = (m.teams[1].game_wins if len(m.teams) > 1 and m.teams[1] else None) or 0
     status = STATUS.get(m.state, "SCHEDULED")
-    before = (fixture.status, fixture.team_a_wins, fixture.team_b_wins, fixture.team_a_id, fixture.team_b_id,
+    if fixture.status == "LIVE" and status == "SCHEDULED":
+        status = "LIVE"  # getLive saw it start before the schedule caught up; never re-open a live series
+    before =(fixture.status, fixture.team_a_wins, fixture.team_b_wins, fixture.team_a_id, fixture.team_b_id,
               fixture.scheduled_at)
     fixture.stage, fixture.best_of = m.block_name, m.best_of
     fixture.team_a_id = teams[0].id if teams[0] else None
@@ -86,6 +88,23 @@ def sync_schedule(session: Session, season: Season, client: LolesportsClient, no
     since = datetime.combine(season.first_match_day, datetime.min.time(), UTC) - timedelta(days=30)
     matches = client.schedule_since(season.provider_league_id, since)
     return [_apply_match(session, season, m, now) for m in matches]
+
+
+def mark_live(session: Session, live_ids: set[str], now: datetime) -> int:
+    """Flip scheduled fixtures to LIVE the moment the feed shows them in progress.
+
+    Scheduled times can be hours off (FUR-C9 on 2026-10-16 started 2h07m before its listed time), so
+    locking must not wait for the next schedule sync.
+    """
+    if not live_ids:
+        return 0
+    rows = session.execute(select(Fixture).where(Fixture.provider_id.in_(live_ids),
+                                                 Fixture.status == "SCHEDULED")).scalars().all()
+    for f in rows:
+        f.status, f.data_changed_at, f.updated_at = "LIVE", now, now
+        session.add(OutboxEvent(type="event.updated", entity_id=f.provider_id, payload={"status": "LIVE"}))
+    session.flush()
+    return len(rows)
 
 
 def needs_details(f: Fixture, now: datetime, games_done: bool) -> bool:

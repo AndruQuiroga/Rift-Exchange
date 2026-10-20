@@ -338,7 +338,7 @@ class Selection(Base):
     __table_args__ = (
         CheckConstraint("stake_rc > 0", name="ck_selection_stake"),
         CheckConstraint("odds > 1", name="ck_selection_odds"),
-        CheckConstraint("status IN ('OPEN','WON','LOST','VOID')", name="ck_selection_status"),
+        CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID')", name="ck_selection_status"),
     )
 
 

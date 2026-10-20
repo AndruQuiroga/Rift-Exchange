@@ -44,6 +44,10 @@ class FakeFeed:
         self.state, self.score = "unstarted", (0, 0)
         self.games: list[GameRef] = [GameRef(f"g{i}", i, "unstarted", "e-a", "e-b") for i in (1, 2, 3)]
         self.stats: dict[str, GameStats] = {}
+        self.live_ids: set[str] = set()
+
+    def live(self):
+        return self.live_ids
 
     def schedule_since(self, league_id, since, max_pages=12):
         a, b = self.score
@@ -148,3 +152,29 @@ def test_full_series_lifecycle(factory):
 def _balance(factory, user_id):
     with factory() as s:
         return s.execute(select(Wallet.available_rc).where(Wallet.user_id == user_id)).scalar_one()
+
+
+def test_early_start_locks_before_the_schedule_catches_up(factory):
+    """FUR-C9 (2026-10-16) started 2h07m before its listed time: getLive alone must lock its markets."""
+    feed = FakeFeed()
+    now = [START - timedelta(hours=6)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    with factory() as s, s.begin():
+        a = Team(provider_id=team_key("Atlas"), code="ATL", name="Atlas", region="LCK")
+        b = Team(provider_id=team_key("Nova"), code="NOV", name="Nova", region="LCS")
+        s.add_all([a, b])
+        s.flush()
+        s.add(HistoricalResult(provider_id="h1", league_slug="msi", played_at=START - timedelta(days=90),
+                               team_a_id=a.id, team_b_id=b.id, team_a_wins=3, team_b_wins=1))
+    worker.cycle()
+    with factory() as s:
+        assert {m.state for m in s.execute(select(Market)).scalars()} == {"OPEN"}
+
+    now[0] = START - timedelta(hours=2)  # the schedule still says unstarted
+    feed.live_ids = {"m1"}
+    worker.cycle()
+    worker.cycle()  # a second pass must not re-open the series from the stale schedule
+    with factory() as s:
+        assert s.execute(select(Fixture.status)).scalar_one() == "LIVE"
+        assert {m.state for m in s.execute(select(Market)).scalars()} == {"LOCKED"}
+    assert worker.poll_interval() == 15

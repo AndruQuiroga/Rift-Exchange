@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from rift import ledger
 from rift.domain.money import settlement_return
+from rift.markets import SWISS_RECORDS, swiss_side
 from rift.models import (
     Fixture,
     Game,
@@ -32,6 +33,7 @@ class Grade:
     winning_codes: list[str] = field(default_factory=list)
     reason: str = ""
     evidence: dict = field(default_factory=dict)
+    partial_codes: list[str] = field(default_factory=list)  # pay the market's consolation share
 
 
 PENDING = Grade("PENDING", reason="Event not finished")
@@ -158,7 +160,7 @@ def grade_tournament_market(session: Session, market: Market) -> Grade:
             return PENDING
         team = session.get(Team, final[0].winner_team_id)
         return Grade("RESULT", [team.provider_id], "Final completed", {"fixture": final[0].provider_id})
-    if market.kind == "swiss_advance":
+    if market.kind in ("swiss_advance", "swiss_record"):
         team = session.execute(select(Team).where(Team.provider_id == market.params["team"])).scalar_one()
         wins = losses = 0
         swiss = [f for f in fixtures if f.stage == "Swiss" and team.id in (f.team_a_id, f.team_b_id)]
@@ -169,6 +171,15 @@ def grade_tournament_market(session: Session, market: Market) -> Grade:
                 wins += 1
             else:
                 losses += 1
+        if market.kind == "swiss_record":
+            if wins < 3 and losses < 3:
+                return PENDING
+            record = f"{wins}-{losses}"
+            if record not in SWISS_RECORDS:
+                return Grade("HOLD", reason=f"{team.code} Swiss record {record} is not a valid finish")
+            partial = [r for r in SWISS_RECORDS if r != record and swiss_side(r) == swiss_side(record)]
+            return Grade("RESULT", [record], f"{team.code} finished Swiss {record.replace('-', chr(8211))}",
+                         {"record": record, "partial_codes": partial}, partial_codes=partial)
         if wins >= 3:
             return Grade("RESULT", ["YES"], f"{team.code} reached 3 Swiss wins", {"record": f"{wins}-{losses}"})
         if losses >= 3:
@@ -195,6 +206,7 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
 
     void = grade.status == "VOID"
     winning = sorted(grade.winning_codes) if not void else []
+    partial = set(grade.partial_codes) if not void else set()
     last = session.execute(
         select(MarketResult).where(MarketResult.market_id == market.id)
         .order_by(MarketResult.revision.desc()).limit(1)
@@ -218,8 +230,10 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
     locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if selections else {}
 
     for sel in selections:
-        result = "VOID" if void else ("WON" if outcome_codes[sel.outcome_id] in winning else "LOST")
-        new_return = settlement_return(sel.stake_rc, sel.odds, result)
+        code = outcome_codes[sel.outcome_id]
+        result = "VOID" if void else "WON" if code in winning else "PARTIAL" if code in partial else "LOST"
+        new_return = settlement_return(sel.stake_rc, sel.odds, result,
+                                       consolation=sel.rules_snapshot.get("params", {}).get("consolation"))
         wallet = locked[wallet_by_user[sel.user_id].id]
         if sel.settled_revision > 0 and sel.status == result:
             pass  # unchanged outcome for this selection; record the revision without moving credits
@@ -229,9 +243,10 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
                                ref_type="selection", ref_id=str(sel.id),
                                memo=f"Correction: reversed {sel.status.lower()} return")
             if new_return > 0:
+                memo = sel.rules_snapshot.get("title", "")
                 ledger.credit(session, wallet, kind="VOID_REFUND" if result == "VOID" else "PAYOUT",
                               amount_rc=new_return, key=f"settle:{sel.id}:{revision}", ref_type="selection",
-                              ref_id=str(sel.id), memo=sel.rules_snapshot.get("title", ""))
+                              ref_id=str(sel.id), memo=f"{memo} (right side)" if result == "PARTIAL" else memo)
         session.add(Settlement(selection_id=sel.id, revision=revision, result=result, return_rc=new_return))
         sel.status, sel.return_rc, sel.settled_revision, sel.settled_at = result, new_return, revision, now
         session.add(OutboxEvent(type="selection.settled", entity_id=str(sel.id), user_id=sel.user_id,

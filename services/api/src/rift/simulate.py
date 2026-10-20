@@ -23,6 +23,7 @@ class FuturesProbabilities:
     advance: dict[uuid.UUID, float]
     champion: dict[uuid.UUID, float]
     sims: int
+    records: dict[uuid.UUID, dict[str, float]]  # final Swiss record "3-0" ... "0-3" -> probability
 
 
 def simulate(fixtures: list[Fixture], model: EloModel, sims: int = 4000, seed: int = 2026) -> FuturesProbabilities | None:
@@ -51,6 +52,7 @@ def simulate(fixtures: list[Fixture], model: EloModel, sims: int = 4000, seed: i
     ko_results = {(f.team_a_id, f.team_b_id): f.winner_team_id for f in ko if f.status == "COMPLETED"}
 
     adv, champ = Counter(), Counter()
+    recs: dict[uuid.UUID, Counter] = {t: Counter() for t in teams}
     for _ in range(sims):
         wins = dict.fromkeys(teams, 0)
         losses = dict.fromkeys(teams, 0)
@@ -82,6 +84,8 @@ def simulate(fixtures: list[Fixture], model: EloModel, sims: int = 4000, seed: i
                     b = group.pop(idx)
                     bo = 3 if w == 2 or losses_at == 2 else 1
                     record(a, b, play(a, b, bo))
+        for t in teams:
+            recs[t][f"{wins[t]}-{losses[t]}"] += 1
         qualified = [t for t in teams if wins[t] >= 3]
         for t in qualified:
             adv[t] += 1
@@ -102,4 +106,5 @@ def simulate(fixtures: list[Fixture], model: EloModel, sims: int = 4000, seed: i
         advance={t: adv[t] / sims for t in teams},
         champion={t: champ[t] / sims for t in teams},
         sims=sims,
+        records={t: {r: n / sims for r, n in recs[t].items()} for t in teams},
     )

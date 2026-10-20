@@ -20,7 +20,7 @@ from rift.domain.pricing import (
     series_win_probability,
     total_games_distribution,
 )
-from rift.models import Fixture, Game, Market, OddsSnapshot, OutboxEvent, Outcome, Season, Team
+from rift.models import AuditEvent, Fixture, Game, Market, OddsSnapshot, OutboxEvent, Outcome, Season, Team
 from rift.ratings import EloModel
 from rift.simulate import FuturesProbabilities
 
@@ -175,13 +175,38 @@ def futures_specs(season: Season, fixtures: list[Fixture], teams: dict, sim: Fut
         for t, p in sorted(sim.advance.items(), key=lambda kv: -kv[1]):
             team = teams[t]
             specs.append(MarketSpec(
-                f"swiss_advance:{team.provider_id}", "swiss_advance", "STAGE", "FUTURES",
-                f"{team.name} advance from Swiss",
-                "Yes if the team reaches 3 Swiss wins before 3 losses. Locks before the first Swiss match.",
-                swiss_start, "elo_v1_bracket_sim", "EXPERIMENTAL",
-                [OutcomeSpec("YES", "Advance", p), OutcomeSpec("NO", "Eliminated", 1 - p)],
-                {"team": team.provider_id}))
+                f"swiss_record:{team.provider_id}", "swiss_record", "STAGE", "FUTURES",
+                f"{team.name} Swiss record",
+                f"Pick {team.name}'s final Swiss record. Exact record pays the full price. Right side but wrong "
+                "record (advanced, or eliminated) pays a quarter of the full return. Locks before the first "
+                "Swiss match.",
+                swiss_start, "elo_v1_bracket_sim_record", "EXPERIMENTAL",
+                swiss_record_outcomes(sim.records[t]),
+                {"team": team.provider_id, "consolation": str(SWISS_CONSOLATION)}))
     return specs
+
+
+SWISS_RECORDS = ("3-0", "3-1", "3-2", "2-3", "1-3", "0-3")
+SWISS_CONSOLATION = Decimal("0.25")
+
+
+def swiss_side(record: str) -> str:
+    return "ADVANCE" if record.startswith("3") else "OUT"
+
+
+def swiss_record_outcomes(dist: dict[str, float]) -> list[OutcomeSpec]:
+    """Price each record so exact pays odds and same-side pays odds x consolation at fair value.
+
+    odds = 1 / (P(exact) + c * P(same side, other record)), expressed as the effective probability
+    the generic pricer turns into odds.
+    """
+    c = float(SWISS_CONSOLATION)
+    out = []
+    for r in SWISS_RECORDS:
+        exact = dist.get(r, 0.0)
+        side = sum(p for k, p in dist.items() if k != r and swiss_side(k) == swiss_side(r))
+        out.append(OutcomeSpec(r, r.replace("-", "–"), exact + c * side if exact > 0 else 0.0))
+    return out
 
 
 def upsert_market(session: Session, season: Season, fixture: Fixture | None, spec: MarketSpec,
@@ -236,6 +261,19 @@ def reprice(session: Session, market: Market, spec: MarketSpec, settings: Settin
         session.add(OutboxEvent(type="market.odds_updated", entity_id=str(market.id), payload={}))
         session.flush()
     return changed
+
+
+def retire_kind(session: Session, kind: str, reason: str) -> int:
+    """Stop offering a market family. Accepted picks stay valid; markets lock and settle as before."""
+    rows = session.execute(
+        select(Market).where(Market.kind == kind, Market.state == "OPEN").with_for_update()
+    ).scalars().all()
+    for m in rows:
+        m.state, m.state_reason = "SUSPENDED", reason
+        session.add(AuditEvent(actor="system", action="market.suspended", entity_type="market",
+                               entity_id=str(m.id), data={"reason": reason}))
+    session.flush()
+    return len(rows)
 
 
 def lock_due(session: Session, now: datetime) -> int:

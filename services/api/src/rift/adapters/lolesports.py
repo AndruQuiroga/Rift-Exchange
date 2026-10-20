@@ -112,6 +112,17 @@ def parse_schedule(payload: dict) -> tuple[list[ScheduleMatch], str | None]:
     return out, (sched.get("pages") or {}).get("older")
 
 
+def live_match_ids(payload: dict) -> set[str]:
+    """Match ids the feed reports as in progress right now (getLive)."""
+    events = ((payload.get("data") or {}).get("schedule") or {}).get("events") or []
+    out = set()
+    for ev in events:
+        match = ev.get("match") or {}
+        if ev.get("type") == "match" and match.get("id") and ev.get("state", "inProgress") == "inProgress":
+            out.add(str(match["id"]))
+    return out
+
+
 def parse_event_details(payload: dict) -> MatchDetail:
     event = payload["data"]["event"]
     match = event["match"]
@@ -182,6 +193,9 @@ class LolesportsClient:
     def leagues(self) -> dict[str, str]:
         payload = self._get(f"{self.settings.lolesports_api}/getLeagues", {"hl": "en-US"})
         return {lg["slug"]: str(lg["id"]) for lg in payload["data"]["leagues"]}
+
+    def live(self) -> set[str]:
+        return live_match_ids(self._get(f"{self.settings.lolesports_api}/getLive", {"hl": "en-US"}))
 
     def event_details(self, match_id: str) -> MatchDetail:
         return parse_event_details(

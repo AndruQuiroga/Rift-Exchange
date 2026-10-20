@@ -19,9 +19,23 @@ def winning_return(stake_rc: int, odds: Decimal) -> int:
     return int((Decimal(stake_rc) * odds).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def settlement_return(stake_rc: int, odds: Decimal, result: str) -> int:
+def partial_return(stake_rc: int, odds: Decimal, consolation: Decimal | str) -> int:
+    """Right side, wrong exact outcome: the market's frozen share of the full return, ROUND_HALF_UP."""
+    if stake_rc <= 0:
+        raise ValueError("stake must be positive")
+    share = Decimal(consolation)
+    if not Decimal(0) < share < Decimal(1):
+        raise ValueError(f"consolation share must be between 0 and 1, got {share}")
+    return int((Decimal(stake_rc) * odds * share).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def settlement_return(stake_rc: int, odds: Decimal, result: str, consolation: Decimal | str | None = None) -> int:
     if result == "WON":
         return winning_return(stake_rc, odds)
+    if result == "PARTIAL":
+        if consolation is None:
+            raise ValueError("a PARTIAL result needs the market's consolation share")
+        return partial_return(stake_rc, odds, consolation)
     if result == "VOID":
         return stake_rc
     if result == "LOST":

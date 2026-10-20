@@ -8,7 +8,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rift.domain.money import winning_return
+from rift.domain.money import partial_return, winning_return
 from rift.models import (
     Fixture,
     LedgerEntry,
@@ -171,6 +171,8 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "id": str(s.id), "ticket_id": str(s.ticket_id), "status": s.status, "stake_rc": s.stake_rc,
             "odds": str(s.odds.quantize(CENT)), "return_rc": s.return_rc,
             "potential_return_rc": winning_return(s.stake_rc, s.odds),
+            "partial_return_rc": partial_return(s.stake_rc, s.odds, s.rules_snapshot["params"]["consolation"])
+            if s.rules_snapshot.get("params", {}).get("consolation") else None,
             "market_title": s.rules_snapshot.get("title"), "outcome_label": s.rules_snapshot.get("outcome"),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
@@ -200,7 +202,7 @@ def standings(db: Session, season: Season) -> list[dict]:
                                  .group_by(Selection.status)).all())
         rows.append({"user": {"id": str(w.user_id), "handle": users[w.user_id].handle,
                               "display_name": users[w.user_id].display_name}, **summary,
-                     "won": record.get("WON", 0), "lost": record.get("LOST", 0)})
+                     "won": record.get("WON", 0) + record.get("PARTIAL", 0), "lost": record.get("LOST", 0)})
     rows.sort(key=lambda r: -r["available_rc"])
     for i, r in enumerate(rows):
         r["rank"] = 1 + sum(1 for o in rows if o["available_rc"] > r["available_rc"])

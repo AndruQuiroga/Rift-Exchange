@@ -58,6 +58,7 @@ class Worker:
             self._run("history", lambda s, now: ingest.sync_history(s, self.client, datetime(2026, 1, 1, tzinfo=UTC)))
         if self._due("schedule", self._schedule_interval()):
             self._run("schedule", self._sync_schedule)
+        self._run("live", lambda s, now: ingest.mark_live(s, self.client.live(), now))
         self._run("details", self._sync_details)
         self._run("markets", self._price_markets)
         if self._due("futures", timedelta(minutes=10)):
@@ -69,15 +70,22 @@ class Worker:
     def _season(self, s: Session) -> Season:
         return s.execute(select(Season).where(Season.code == self.settings.season_code)).scalar_one()
 
-    def _schedule_interval(self) -> timedelta:
+    def busy(self, within: timedelta = timedelta(hours=2)) -> bool:
+        """A series is live, or one is scheduled within `within` and not yet completed."""
         now = self.clock()
         with self.factory() as s:
-            busy = s.execute(select(func.count()).select_from(Fixture).where(
+            return bool(s.execute(select(func.count()).select_from(Fixture).where(
                 (Fixture.status == "LIVE")
-                | ((Fixture.scheduled_at <= now + timedelta(hours=2))
+                | ((Fixture.scheduled_at <= now + within)
                    & (Fixture.scheduled_at >= now - timedelta(hours=8)) & (Fixture.status != "COMPLETED"))
-            )).scalar()
-        return timedelta(minutes=1) if busy else timedelta(minutes=10)
+            )).scalar())
+
+    def _schedule_interval(self) -> timedelta:
+        return timedelta(minutes=1) if self.busy() else timedelta(minutes=10)
+
+    def poll_interval(self) -> float:
+        """15 s around live series so locks and between-game markets react quickly; 60 s otherwise."""
+        return self.settings.live_poll_seconds if self.busy(timedelta(minutes=30)) else self.settings.idle_poll_seconds
 
     def _sync_schedule(self, s: Session, now: datetime) -> int:
         return len(ingest.sync_schedule(s, self._season(s), self.client, now))
@@ -120,6 +128,7 @@ class Worker:
             return 0
         teams = {t.id: t for t in s.execute(select(Team).where(Team.id.in_(sim.champion.keys()))).scalars()}
         specs = markets.futures_specs(season, fixtures, teams, sim)
+        markets.retire_kind(s, "swiss_advance", "Replaced by the Swiss Board")
         return sum(1 for spec in specs if markets.upsert_market(s, season, None, spec, self.settings, now))
 
     def _settle(self, s: Session, now: datetime) -> int:
@@ -152,11 +161,13 @@ class Worker:
         return grants.run_match_day_grants(s, self._season(s), now)
 
 
-def run_forever(interval_seconds: int = 60) -> None:
+def run_forever(idle_seconds: int | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    if idle_seconds:
+        settings = settings.model_copy(update={"idle_poll_seconds": idle_seconds})
     worker = Worker(session_factory(), settings, LolesportsClient(settings), make_source(settings))
     while True:
         started = time.monotonic()
         worker.cycle()
-        time.sleep(max(5.0, interval_seconds - (time.monotonic() - started)))
+        time.sleep(max(5.0, worker.poll_interval() - (time.monotonic() - started)))
