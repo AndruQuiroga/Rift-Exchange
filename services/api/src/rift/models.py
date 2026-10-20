@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -189,6 +190,12 @@ class Game(Base):
     stats_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     bans: Mapped[dict | None] = mapped_column(JSONB)
     data_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Livestats timeline (rift.timeline): first/last frame times, objective firsts, dragons, 15-minute and
+    # final player lines, plus the latest live frame summary. Graders that read it HOLD until complete.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timeline: Mapped[dict | None] = mapped_column(JSONB)
+    timeline_complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     __table_args__ = (UniqueConstraint("fixture_id", "game_index", name="uq_game_index"),)
 
 

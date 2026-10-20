@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from rift import grants, ingest, markets, ratings, settlement
+from rift import grants, ingest, markets, ratings, settlement, timeline
 from rift.adapters.leaguepedia import LeaguepediaSource, make_source
 from rift.adapters.lolesports import LolesportsClient
 from rift.config import Settings, get_settings
@@ -60,6 +60,7 @@ class Worker:
             self._run("schedule", self._sync_schedule)
         self._run("live", lambda s, now: ingest.mark_live(s, self.client.live(), now))
         self._run("details", self._sync_details)
+        self._run("timeline", self._track_games)
         self._run("markets", self._price_markets)
         if self._due("futures", timedelta(minutes=10)):
             self._run("futures", self._price_futures)
@@ -98,6 +99,16 @@ class Worker:
                 n += 1
         return n
 
+    def _track_games(self, s: Session, now: datetime) -> int:
+        n = 0
+        recent = (Fixture.status == "COMPLETED") & (
+            Fixture.completed_at.is_(None) | (Fixture.completed_at >= now - timedelta(hours=6)))
+        for f in s.execute(select(Fixture).where((Fixture.status == "LIVE") | recent)).scalars().all():
+            games = list(s.execute(select(Game).where(Game.fixture_id == f.id)).scalars())
+            for g in ingest.games_to_track(f, games, now):
+                n += timeline.track(g, self.client, now)
+        return n
+
     def _model(self, s: Session) -> tuple[ratings.EloModel, str]:
         model = ratings.fit(s)
         bt = ratings.backtest(s)
@@ -114,7 +125,23 @@ class Worker:
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
         for f in fixtures:
             a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
-            for spec in markets.fixture_specs(f, a, b, model, stats, confidence):
+            for spec in markets.fixture_specs(f, a, b, model, stats, confidence, markets.pinned_lines(s, f)):
+                if markets.upsert_market(s, season, f, spec, self.settings, now):
+                    count += 1
+        # Between games of a live series: open (and keep pricing) the next game's markets.
+        live = s.execute(select(Fixture).where(
+            Fixture.season_id == season.id, Fixture.status == "LIVE", Fixture.best_of > 1,
+            Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+        for f in live:
+            games = list(s.execute(select(Game).where(Game.fixture_id == f.id)).scalars())
+            nxt = markets.next_game(f, games)
+            if nxt is None:
+                continue
+            idx, close_at = nxt
+            a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
+            q = model.game_probability(a.id, b.id)
+            for spec in markets.game_specs(f, idx, a, b, q, stats, close_at, confidence,
+                                           markets.pinned_lines(s, f).get(idx)):
                 if markets.upsert_market(s, season, f, spec, self.settings, now):
                     count += 1
         return count

@@ -173,9 +173,33 @@ def sync_fixture_details(session: Session, fixture: Fixture, client: LolesportsC
                 }
                 game.stats_complete = True
                 game.data_changed_at = now
+                # The same fetch dates the game, so the next game's markets need not wait for the timeline.
+                game.started_at = game.started_at or stats.first_frame_at
+                game.ended_at = game.ended_at or stats.last_frame_at
     infer_game_winners(session, fixture, list(games.values()), secondary, now)
     fixture.details_synced_at = now
     session.flush()
+
+
+def games_to_track(fixture: Fixture, games: list[Game], now: datetime) -> list[Game]:
+    """Games whose livestats timeline should advance this cycle.
+
+    Live and finished-but-incomplete games, plus the next unplayed game of an undecided live series: its
+    first frame (the game has loaded after the draft) is the earliest sign it started, which locks its
+    markets before the schedule feed catches up.
+    """
+    if fixture.status == "COMPLETED" and fixture.completed_at and now - fixture.completed_at > timedelta(hours=6):
+        return []
+    out = [g for g in games if not g.timeline_complete and (
+        g.state in ("inProgress", "completed") or (g.state == "unstarted" and g.started_at is not None))]
+    need = fixture.best_of // 2 + 1
+    if fixture.status == "LIVE" and max(fixture.team_a_wins, fixture.team_b_wins) < need:
+        played = {g.game_index for g in games if g.state == "completed" or g.ended_at is not None}
+        nxt = next((g for g in sorted(games, key=lambda g: g.game_index)
+                    if g.state == "unstarted" and set(range(1, g.game_index)) <= played), None)
+        if nxt is not None and nxt.started_at is None:
+            out.append(nxt)
+    return out
 
 
 def infer_game_winners(session: Session, fixture: Fixture, games: list[Game], secondary: LeaguepediaSource,
