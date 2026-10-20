@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from rift import auth, ledger
+from rift import auth, draft, ledger
 from rift.api import views
 from rift.config import Settings, get_settings
 from rift.db import db_now, session_factory
@@ -203,6 +203,36 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                                 now=db_now(session), ttl_seconds=settings.quote_ttl_seconds)
         except PlacementError as e:
             raise placement_error(e) from e
+
+    def _fixture(session: Session, event_id: uuid.UUID) -> Fixture:
+        fixture = session.get(Fixture, event_id)
+        if fixture is None:
+            raise ApiError(404, "NOT_FOUND", "Event not found.")
+        return fixture
+
+    @app.get("/api/v1/events/{event_id}/draft")
+    def draft_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        try:
+            return draft.grid(session, season_of(session), _fixture(session, event_id), game, settings)
+        except draft.DraftError as e:
+            raise ApiError(409, e.code, e.message) from e
+
+    class DraftMarketBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        champion: str = Field(min_length=1, max_length=40)
+        scope: str = Field(pattern="^(picked|A|B)$")
+
+    @app.post("/api/v1/events/{event_id}/draft")
+    def draft_market(event_id: uuid.UUID, body: DraftMarketBody, session: Db, user: CurrentUser):
+        """Create (once, for everyone) the market behind a tapped champion and return it priced."""
+        fixture = _fixture(session, event_id)
+        try:
+            market = draft.ensure_market(session, season_of(session), fixture, body.game_index, body.champion,
+                                         body.scope, settings, db_now(session))
+        except draft.DraftError as e:
+            raise ApiError(409, e.code, e.message) from e
+        outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
+        return views.market_view(market, outcomes)
 
     class TicketBody(BaseModel):
         quote_id: uuid.UUID

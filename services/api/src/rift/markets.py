@@ -141,21 +141,7 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
             fixture.scheduled_at, "negbin_tournament_v1", "EXPERIMENTAL",
             [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
             {"game_index": 1, "line": str(line)}))
-        expected_games = sum(n * p for n, p in total_games_distribution(q, bo).items())
-        contested = sorted(stats.pick_rate.items(), key=lambda kv: -kv[1])
-        chosen = contested[:3] + contested[6:8]  # a few staples and a couple of less certain picks
-        for champ, rate in chosen:
-            rate = min(max(rate, 0.02), 0.97)
-            p_any = 1 - (1 - rate) ** expected_games
-            label = champion_label(champ)
-            scope_text = "Game 1" if bo == 1 else "any game of the series"
-            specs.append(MarketSpec(
-                f"champion_picked:{key}:{champ}", "champion_picked", "SERIES", "DRAFT",
-                f"{label} picked in {scope_text}",
-                f"Yes if either team picks {label} in {scope_text}. Fearless Draft means a champion can be picked "
-                "at most once per series. Requires verified draft data.",
-                fixture.scheduled_at, "pick_rate_tournament_v1", "EXPERIMENTAL",
-                [OutcomeSpec("YES", "Yes", p_any), OutcomeSpec("NO", "No", 1 - p_any)], {"champion": champ}))
+        # Champion markets are created on demand from the champion grid (rift.draft), not pre-picked here.
     return specs
 
 
@@ -263,11 +249,12 @@ def reprice(session: Session, market: Market, spec: MarketSpec, settings: Settin
     return changed
 
 
-def retire_kind(session: Session, kind: str, reason: str) -> int:
+def retire_kind(session: Session, kind: str, reason: str, template_prefix: str | None = None) -> int:
     """Stop offering a market family. Accepted picks stay valid; markets lock and settle as before."""
-    rows = session.execute(
-        select(Market).where(Market.kind == kind, Market.state == "OPEN").with_for_update()
-    ).scalars().all()
+    q = select(Market).where(Market.kind == kind, Market.state == "OPEN")
+    if template_prefix:
+        q = q.where(Market.template_key.startswith(template_prefix))
+    rows = session.execute(q.with_for_update()).scalars().all()
     for m in rows:
         m.state, m.state_reason = "SUSPENDED", reason
         session.add(AuditEvent(actor="system", action="market.suspended", entity_type="market",

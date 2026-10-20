@@ -112,6 +112,7 @@ class Worker:
         fixtures = s.execute(select(Fixture).where(
             Fixture.season_id == season.id, Fixture.status == "SCHEDULED", Fixture.scheduled_at > now,
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+        markets.retire_kind(s, "champion_picked", "Replaced by the champion grid", template_prefix="champion_picked:")
         for f in fixtures:
             a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
             for spec in markets.fixture_specs(f, a, b, model, stats, confidence):

@@ -112,7 +112,12 @@ def grade_market(session: Session, market: Market) -> Grade:
             scoped = played
         if not scoped or any(not g.stats_complete for g in scoped):
             return Grade("HOLD", reason="Awaiting verified draft data", evidence=ev)
-        picks = {p["champion"] for g in scoped for p in g.stats["players"]}
+        side = market.params.get("side")
+        team_id = str(fixture.team_a_id if side == "A" else fixture.team_b_id) if side else None
+        picks = {p["champion"] for g in scoped for p in g.stats["players"]
+                 if team_id is None or p.get("team_id") == team_id}
+        if team_id is not None and not any(p.get("team_id") == team_id for g in scoped for p in g.stats["players"]):
+            return Grade("HOLD", reason="Awaiting verified team draft data", evidence=ev)
         return Grade("RESULT", ["YES" if champ in picks else "NO"], "Draft confirmed",
                      {**ev, "games": [g.provider_id for g in scoped]})
 
