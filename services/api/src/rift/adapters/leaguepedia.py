@@ -57,7 +57,15 @@ class LeaguepediaClient(LeaguepediaSource):
             raise RuntimeError("Leaguepedia live mode requires both bot username and bot password")
         self.http = http or httpx.Client(timeout=30, headers={"User-Agent": "RiftExchange/0.1 (private league)"})
         self._team_names: dict[str, str] = {}
-        self._login(settings.leaguepedia_bot_user, settings.leaguepedia_bot_password)
+        # Log in on first use, so a provider outage cannot stop the worker from starting.
+        self._credentials: tuple[str, str] | None = (settings.leaguepedia_bot_user,
+                                                     settings.leaguepedia_bot_password)
+
+    def _query(self, **params) -> dict:
+        if self._credentials is not None:
+            self._login(*self._credentials)
+            self._credentials = None
+        return self._request("GET", params=params)
 
     def _request(self, method: str, **kwargs) -> dict:
         response = self.http.request(method, API, **kwargs)
@@ -78,11 +86,8 @@ class LeaguepediaClient(LeaguepediaSource):
 
     def check_access(self) -> None:
         """Verify authenticated Cargo access and the tables used by this adapter, not worker liveness."""
-        result = self._request("GET", params={
-            "action": "cargoquery", "format": "json", "limit": 1,
-            "tables": "ScoreboardGames=SG", "fields": GAME_FIELDS,
-            "order_by": "SG.DateTime_UTC DESC",
-        })
+        result = self._query(action="cargoquery", format="json", limit=1, tables="ScoreboardGames=SG",
+                             fields=GAME_FIELDS, order_by="SG.DateTime_UTC DESC")
         if not result.get("cargoquery"):
             raise RuntimeError("Leaguepedia Cargo probe returned no game rows; coverage is unverified")
         self._parse_games(result["cargoquery"])
@@ -94,11 +99,8 @@ class LeaguepediaClient(LeaguepediaSource):
     def _canonical_team(self, name: str) -> str:
         if name not in self._team_names:
             lookup = PROVIDER_TEAM_NAMES.get(name, name)
-            result = self._request("GET", params={
-                "action": "cargoquery", "format": "json", "limit": 2,
-                "tables": "TeamRedirects=TR", "fields": "TR._pageName=Canonical",
-                "where": f"TR.AllName={self._quote(lookup)}",
-            })
+            result = self._query(action="cargoquery", format="json", limit=2, tables="TeamRedirects=TR",
+                                 fields="TR._pageName=Canonical", where=f"TR.AllName={self._quote(lookup)}")
             if "cargoquery" not in result:
                 raise RuntimeError("Leaguepedia response is missing team redirect results")
             names = {r["title"]["Canonical"] for r in result["cargoquery"]}
@@ -118,19 +120,22 @@ class LeaguepediaClient(LeaguepediaSource):
         if canonical_a == canonical_b:
             raise RuntimeError("Leaguepedia fixture resolves both teams to the same identity")
         a, b = self._quote(canonical_a), self._quote(canonical_b)
-        rows = self._request("GET", params={
-            "action": "cargoquery", "format": "json", "limit": 10,
-            "tables": "ScoreboardGames=SG", "fields": GAME_FIELDS,
-            "where": (f'SG.DateTime_UTC >= "{lower}" AND SG.DateTime_UTC <= "{upper}" '
-                      f'AND ((SG.Team1={a} AND SG.Team2={b}) OR (SG.Team1={b} AND SG.Team2={a}))'),
-            "order_by": "SG.N_GameInMatch ASC",
-        })
+        rows = self._query(
+            action="cargoquery", format="json", limit=10, tables="ScoreboardGames=SG", fields=GAME_FIELDS,
+            where=(f'SG.DateTime_UTC >= "{lower}" AND SG.DateTime_UTC <= "{upper}" '
+                   f'AND ((SG.Team1={a} AND SG.Team2={b}) OR (SG.Team1={b} AND SG.Team2={a}))'),
+            order_by="SG.N_GameInMatch ASC",
+        )
         if "cargoquery" not in rows:
             raise RuntimeError("Leaguepedia response is missing Cargo results")
         games = self._parse_games(rows["cargoquery"])
-        names = {canonical_a: team_a, canonical_b: team_b}
+        # Cargo matches names case-insensitively, so map rows back the same way.
+        names = {canonical_a.casefold(): team_a, canonical_b.casefold(): team_b}
         for game in games:
-            game.team1, game.team2 = names[game.team1], names[game.team2]
+            team1, team2 = names.get(game.team1.casefold()), names.get(game.team2.casefold())
+            if team1 is None or team2 is None:
+                raise RuntimeError("Leaguepedia returned a game for an unexpected team")
+            game.team1, game.team2 = team1, team2
         if len({g.game_in_series for g in games}) != len(games):
             raise RuntimeError("Leaguepedia returned ambiguous games for the fixture")
         return games or None

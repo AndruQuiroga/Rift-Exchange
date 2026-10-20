@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -185,7 +186,14 @@ def infer_game_winners(session: Session, fixture: Fixture, games: list[Game], se
             g.winner_team_id, g.winner_evidence, g.data_changed_at = winner, "series_score", now
         return
     team_a, team_b = session.get(Team, fixture.team_a_id), session.get(Team, fixture.team_b_id)
-    rows = secondary.series_games(team_a.name, team_b.name, fixture.scheduled_at) if secondary.available else None
+    if not secondary.available:
+        return
+    try:
+        rows = secondary.series_games(team_a.name, team_b.name, fixture.scheduled_at)
+    except (httpx.HTTPError, RuntimeError, KeyError, ValueError) as exc:
+        # The secondary source is optional; its failure leaves these games on HOLD, not the whole sync.
+        log.warning("fixture %s: Leaguepedia lookup failed (%s)", fixture.provider_id, type(exc).__name__)
+        return
     if not rows:
         return
     for g in unknown:
