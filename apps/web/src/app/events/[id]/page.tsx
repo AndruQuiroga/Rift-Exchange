@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
+import { ChampionGrid } from "@/components/ChampionGrid";
 import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
 import { IconBack } from "@/components/icons";
 import { countdown, kickoff, longDate, odds as fmtOdds } from "@/lib/format";
@@ -32,7 +33,6 @@ function Choice({ market, outcome, label, className, children }: { market: Marke
 }
 
 const BUILDERS: Record<string, { title: string; sub: string }> = {
-  DRAFT: { title: "Draft", sub: "Which champions get played" },
   PROPS: { title: "Game props", sub: "Kills and other in-game lines" },
 };
 
@@ -157,8 +157,23 @@ export default function EventPage() {
             </section>
           ) : null}
 
+          {event.team_a && event.team_b ? (
+            <details className="builder section">
+              <summary>
+                <span>
+                  <span className="t" style={{ display: "block" }}>Draft</span>
+                  <span className="s">Any champion · picked, or by team</span>
+                </span>
+                <span className="chev" aria-hidden="true">›</span>
+              </summary>
+              <div className="body">
+                <ChampionGrid event={event} />
+              </div>
+            </details>
+          ) : null}
+
           {groups.length ? (
-            <div className="section">
+            <div style={{ marginTop: 8 }}>
               {groups.map((g) => (
                 <details className="builder" key={g.cat}>
                   <summary>

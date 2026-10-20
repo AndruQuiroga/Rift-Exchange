@@ -492,6 +492,32 @@ img { display: block; }
 .cutline { display: flex; align-items: center; gap: 8px; margin: 10px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--subtle); }
 .cutline::before, .cutline::after { content: ""; flex: 1; height: 1px; background: var(--divider-strong); }
 
+/* ------------------------------------------------------------------ champion grid */
+
+.cgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s2); margin-top: var(--s3); }
+@media (min-width: 560px) { .cgrid { grid-template-columns: repeat(6, minmax(0, 1fr)); } }
+.ctile {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 8px 4px;
+  border-radius: 8px; border: 1px solid var(--divider); background: var(--surface-2);
+}
+.ctile:hover:not(:disabled) { border-color: var(--divider-strong); }
+.ctile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.ctile:disabled { opacity: 0.5; }
+.ctile .nm { font-size: 12px; font-weight: 600; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ctile .px { font-size: 13px; font-weight: 800; }
+.cicon {
+  width: 48px; height: 48px; border-radius: 8px; overflow: hidden; flex: none; display: grid; place-items: center;
+  background: var(--surface-3); font-family: var(--font-display); font-weight: 800; font-size: 18px; color: var(--muted);
+}
+.cicon img { width: 100%; height: 100%; object-fit: cover; }
+.cicon.sm { width: 36px; height: 36px; font-size: 14px; }
+.burned { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--s2); margin-top: 8px; }
+.burned > div { display: flex; flex-direction: column; align-items: center; gap: 3px; opacity: 0.45; font-size: 11px; color: var(--subtle); min-width: 0; }
+.burned .cicon { filter: grayscale(1); }
+.window-note { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 13px; background: #2d2614; border: 1px solid #5a4a1e; color: #f3d9a0; }
+.searchbox { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; margin-top: var(--s3); border-radius: var(--radius-control); background: var(--canvas); border: 1px solid var(--divider-strong); }
+.searchbox input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 15px; outline: none; }
+
 /* ------------------------------------------------------------------ slip stake modes */
 
 .stake-mode { margin-top: var(--s3); padding: 10px; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider); }
