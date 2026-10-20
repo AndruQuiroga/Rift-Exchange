@@ -518,6 +518,25 @@ img { display: block; }
 .searchbox { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; margin-top: var(--s3); border-radius: var(--radius-control); background: var(--canvas); border: 1px solid var(--divider-strong); }
 .searchbox input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: 15px; outline: none; }
 
+/* ------------------------------------------------------------------ live + game tabs */
+
+.livecard { border-color: #5a2f2e; }
+.live-nums { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; }
+.live-nums b { font-size: 22px; font-weight: 800; }
+.goldbar { position: relative; height: 6px; border-radius: 999px; background: var(--surface-3); margin-top: 8px; overflow: hidden; }
+.goldbar .mid { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: var(--subtle); }
+.goldbar .fill { position: absolute; top: 0; bottom: 0; background: var(--accent); }
+.live-events { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.live-pick { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); padding: 8px 0; border-top: 1px solid var(--divider); }
+.live-pick:first-of-type { border-top: 0; }
+.gametabs { display: flex; gap: 6px; margin-top: var(--s4); overflow-x: auto; }
+.gametab { flex: 1 1 0; min-width: 76px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border-radius: var(--radius-control); border: 1px solid var(--divider); background: var(--surface); text-align: left; }
+.gametab[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.gametab .t { font-weight: 700; font-size: 14px; }
+.gametab .w { font-size: 11px; font-weight: 700; white-space: nowrap; }
+.w.OPEN { color: var(--win); } .w.UPCOMING { color: var(--warn); } .w.LOCKED, .w.DONE, .w.NOT_NEEDED { color: var(--subtle); }
+.upcoming { margin-top: var(--s3); padding: 20px 16px; border-radius: var(--radius-card); border: 1px dashed var(--divider-strong); text-align: center; }
+
 /* ------------------------------------------------------------------ slip stake modes */
 
 .stake-mode { margin-top: var(--s3); padding: 10px; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider); }

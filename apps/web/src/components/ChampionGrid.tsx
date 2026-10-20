@@ -57,10 +57,11 @@ export function ChampIcon({ id, label, small }: { id: string; label: string; sma
 }
 
 /** Tap any champion for a price; the market behind it is created once, for everyone, on first tap. */
-export function ChampionGrid({ event }: { event: EventT }) {
+export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?: number }) {
   const slip = useSlip();
   const now = useNow();
-  const [game, setGame] = useState(1);
+  const [pickedGame, setGame] = useState(1);
+  const game = fixedGame ?? pickedGame;
   const [scope, setScope] = useState<Scope>("picked");
   const [role, setRole] = useState("all");
   const [query, setQuery] = useState("");
@@ -108,7 +109,7 @@ export function ChampionGrid({ event }: { event: EventT }) {
 
   return (
     <div>
-      {event.best_of > 1 ? (
+      {event.best_of > 1 && fixedGame === undefined ? (
         <div className="chips" role="tablist" aria-label="Game" style={{ marginTop: 12 }}>
           {Array.from({ length: event.best_of }, (_, i) => i + 1).map((g) => (
             <button key={g} role="tab" className="chip" aria-selected={g === game} onClick={() => setGame(g)}>

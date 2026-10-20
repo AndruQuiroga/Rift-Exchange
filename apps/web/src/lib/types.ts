@@ -40,6 +40,37 @@ export type EventT = {
   close_at?: string | null;
   featured?: MarketT | null;
   markets?: MarketT[];
+  games?: GameT[];
+};
+
+export type GameWindow = "OPEN" | "UPCOMING" | "LOCKED" | "DONE" | "NOT_NEEDED";
+
+export type GameT = {
+  index: number;
+  state: string;
+  started_at: string | null;
+  ended_at: string | null;
+  winner: "A" | "B" | null;
+  window: GameWindow;
+  opens_when: string | null;
+  closes_at: string | null;
+  burned_champions: string[];
+};
+
+export type LiveEvent = { type: "first_blood" | "first_tower" | "dragon" | "baron" | "inhibitor"; team: "A" | "B" | null; at_s: number; detail: string | null };
+
+export type LiveT = {
+  status: EventT["status"];
+  game_index: number | null;
+  game_state: string | null;
+  as_of: string | null;
+  game_clock_s: number | null;
+  gold: [number, number] | null;
+  kills: [number, number] | null;
+  towers: [number, number] | null;
+  dragons: [string[], string[]] | null;
+  events: LiveEvent[];
+  my_picks: (Pick & { live: { score?: [number, number]; current?: number; line?: string; needed?: number } | null })[];
 };
 
 export type Wallet = { available_rc: number; open_stake_rc: number; recovery_due_rc: number; granted_rc: number; realized_net_rc: number };
