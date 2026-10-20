@@ -1,14 +1,15 @@
 from datetime import timedelta
 
 import pytest
-from conftest import outcome_id
+from conftest import make_market, outcome_id
 from fastapi.testclient import TestClient
 from sqlalchemy import update
+from test_timeline import CHAMPS
 
 from rift.api.app import create_app
 from rift.auth import create_invite
 from rift.config import Settings
-from rift.models import Fixture, Market, Outcome
+from rift.models import Fixture, Game, Market, Outcome, Season
 
 H = {"x-rift-client": "web"}
 
@@ -83,3 +84,70 @@ def test_odds_change_returns_new_quote(api, factory, world):
     assert err["code"] == "ODDS_CHANGED"
     assert err["details"]["new_quote"]["items"][0]["odds"] == "1.70"
     assert err["details"]["previous_items"][0]["odds"] == "1.62"
+
+
+def _pick(client, outcome, stake, key):
+    q = client.post("/api/v1/quotes", json={"items": [{"outcome_id": str(outcome), "stake_rc": stake}]},
+                    headers=H).json()
+    r = client.post("/api/v1/tickets", json={"quote_id": q["quote_id"], "confirm_odds_versions": {str(outcome): 1}},
+                    headers={**H, "Idempotency-Key": key})
+    assert r.status_code == 201, r.text
+
+
+def test_event_games_and_live_scoreboard(api, factory, world):
+    """Mid-series: Atlas (A) won Game 1 on blue; Game 2 is live with Atlas on red."""
+    app, codes = api
+    kai, mika = signup(app, codes[0], "kai"), signup(app, codes[1], "mika")
+    with factory() as s, s.begin():
+        season, fixture = s.get(Season, world["season"]), s.get(Fixture, world["fixture"])
+        kills = make_market(s, season, fixture, "total_kills_game", [("OVER", "Over 27.5", "1.90"),
+                                                                     ("UNDER", "Under 27.5", "2.10")],
+                            params={"game_index": 2, "line": "27.5"}, scope="GAME")
+        kills_id = kills.id
+    _pick(kai, outcome_id(factory, world["market"], "A"), 100, "k1")
+    _pick(kai, outcome_id(factory, kills_id, "OVER"), 50, "k2")
+
+    a, b = world["team_a"], world["team_b"]
+    with factory() as s, s.begin():
+        fixture = s.get(Fixture, world["fixture"])
+        fixture.status, fixture.team_a_wins = "LIVE", 1
+        start = fixture.scheduled_at
+        s.execute(update(Market).values(state="LOCKED"))
+        s.add(Game(fixture_id=fixture.id, provider_id="g1", game_index=1, state="completed", blue_team_id=a,
+                   red_team_id=b, winner_team_id=a, started_at=start, ended_at=start + timedelta(minutes=31),
+                   stats_complete=True, stats={"players": [{"champion": c, "kills": 1} for c in CHAMPS]}))
+        s.add(Game(fixture_id=fixture.id, provider_id="g2", game_index=2, state="inProgress", blue_team_id=b,
+                   red_team_id=a, started_at=start + timedelta(minutes=50), timeline={
+                       "participants": {"1": {"side": "blue", "champion": "Rumble"}},
+                       "live": {"at": "2026-10-23T18:02:34+00:00", "state": "in_game", "clock_s": 754,
+                                "kills": {"blue": 3, "red": 5}, "gold": {"blue": 20000, "red": 21000},
+                                "towers": {"blue": 1, "red": 0}, "inhibitors": {"blue": 0, "red": 0},
+                                "barons": {"blue": 0, "red": 0}, "dragons": {"blue": ["ocean"], "red": []}},
+                       "firsts": {"blood": {"side": "red", "team_id": str(a), "at_s": 200},
+                                  "tower": {"side": "blue", "team_id": str(b), "at_s": 600}},
+                       "dragons": [{"side": "blue", "team_id": str(b), "type": "ocean", "at_s": 400}],
+                       "barons": []}))
+
+    detail = kai.get(f"/api/v1/events/{world['fixture']}").json()
+    assert [g["window"] for g in detail["games"]] == ["DONE", "LOCKED", "UPCOMING"]
+    g1, g2, g3 = detail["games"]
+    assert g1["winner"] == "A" and g1["burned_champions"] == [] and g1["ended_at"] is not None
+    assert g2["burned_champions"] == CHAMPS and g2["state"] == "inProgress" and g2["winner"] is None
+    assert g3 == {"index": 3, "state": "unstarted", "started_at": None, "ended_at": None, "winner": None,
+                  "window": "UPCOMING", "opens_when": "When Game 2 ends", "closes_at": None,
+                  "burned_champions": CHAMPS + ["Rumble"]}
+    assert detail["markets"]  # existing fields stay
+
+    live = kai.get(f"/api/v1/events/{world['fixture']}/live").json()
+    assert {k: live[k] for k in ("status", "game_index", "game_clock_s", "gold", "kills", "towers", "dragons")} == {
+        "status": "LIVE", "game_index": 2, "game_clock_s": 754, "gold": [21000, 20000], "kills": [5, 3],
+        "towers": [0, 1], "dragons": [[], ["ocean"]]}
+    assert live["events"] == [
+        {"type": "first_blood", "team": "A", "at_s": 200, "detail": None},
+        {"type": "dragon", "team": "B", "at_s": 400, "detail": "ocean"},
+        {"type": "first_tower", "team": "B", "at_s": 600, "detail": None}]
+    picks = {p["market_title"]: p for p in live["my_picks"]}
+    assert picks["series_winner"]["live"] == {"score": [1, 0]} and picks["series_winner"]["stake_rc"] == 100
+    assert picks["total_kills_game"]["live"] == {"current": 8, "line": "27.5", "needed": 20}
+    assert mika.get(f"/api/v1/events/{world['fixture']}/live").json()["my_picks"] == []
+    assert TestClient(app).get(f"/api/v1/events/{world['fixture']}/live").status_code == 401

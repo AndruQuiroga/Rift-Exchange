@@ -170,7 +170,15 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         fixture = session.get(Fixture, event_id)
         if fixture is None:
             raise ApiError(404, "NOT_FOUND", "Event not found.")
-        return views.event_detail(session, fixture)
+        return views.event_detail(session, fixture, db_now(session))
+
+    @app.get("/api/v1/events/{event_id}/live")
+    def get_event_live(event_id: uuid.UUID, session: Db, user: CurrentUser):
+        # Served from what the worker stored; an API request never calls the feed.
+        fixture = session.get(Fixture, event_id)
+        if fixture is None:
+            raise ApiError(404, "NOT_FOUND", "Event not found.")
+        return views.live_view(session, fixture, user)
 
     @app.get("/api/v1/markets")
     def list_markets(session: Db, user: CurrentUser, category: str | None = None):

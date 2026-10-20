@@ -21,6 +21,7 @@ from rift.config import Settings
 from rift.domain.pricing import price
 from rift.markets import MarketSpec, OutcomeSpec, champion_label, upsert_market
 from rift.models import Fixture, Game, Market, Season, Team
+from rift.timeline import burned_champions
 
 SCOPES = ("picked", "A", "B")
 TEAM_PRIOR_GAMES = 6  # pseudo-games of the global rate added to each team's own record
@@ -67,9 +68,8 @@ def tournament_rates(session: Session, season: Season) -> Rates:
 
 def burned(session: Session, fixture: Fixture, game_index: int) -> list[str]:
     """Champions already played in earlier games of this series (Fearless: unavailable now)."""
-    games = session.execute(select(Game).where(Game.fixture_id == fixture.id, Game.game_index < game_index,
-                                               Game.stats_complete.is_(True))).scalars().all()
-    return sorted({p["champion"] for g in games for p in g.stats["players"]})
+    games = list(session.execute(select(Game).where(Game.fixture_id == fixture.id)).scalars())
+    return sorted(burned_champions(games, fixture.best_of).get(game_index, []))
 
 
 def game_market_window(session: Session, fixture: Fixture, game_index: int) -> Market | None:

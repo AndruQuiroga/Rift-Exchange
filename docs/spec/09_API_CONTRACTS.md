@@ -6,7 +6,8 @@ API base `/api/v1`. JSON encoded as UTF-8. OAuth/OIDC or session-cookie login; c
 
 - `GET /season/current` → current tournament, user match-day grant calendar, UI flags, season-local timezone.
 - `GET /events?date=2026-10-23&stage=SWISS` → fixture cards with `format`, `scheduled_start_at`, `state`, summary markets, lock time, pagination.
-- `GET /events/{fixture_id}` → detailed stage/series, game indices, upcoming markets, source status.
+- `GET /events/{fixture_id}` → detailed stage/series, game indices, upcoming markets, source status. `games[]` lists every game slot (1..best_of) with `state`, `started_at`, `ended_at`, `winner` (A/B), betting `window` (`OPEN`/`UPCOMING`/`LOCKED`/`DONE`/`NOT_NEEDED`), `opens_when`, `closes_at` and `burned_champions` (Fearless: champions played in earlier games). Game N ≥ 2 markets open when Game N−1 ends and close 7 minutes later or when Game N loads; their `params.game_index` names the game.
+- `GET /events/{fixture_id}/live` → stored live scoreboard for the current game (`game_index`, `game_clock_s`, `[A, B]` gold/kills/towers/dragons, objective `events`) plus the caller's picks on the series with a `live` progress object. Served from what the worker stored; never calls the provider. Game clock is wall time since the first livestats frame, so pauses inflate it.
 - `GET /markets?fixture_id=...&category=DRAFT&state=OPEN` → typed markets, outcome quote snapshots, readable settlement policy, availability reason.
 - `GET /markets/{id}/history` → pre-lock quote updates for transparent movement charts.
 - `GET /league/standings` → season member summary (`available_rc`, `open_stake_rc`, realized profit, provisional flag), spoiler control.
