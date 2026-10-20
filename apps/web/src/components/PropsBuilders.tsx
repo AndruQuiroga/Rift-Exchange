@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { useNow } from "@/lib/hooks";
-import { odds as fmtOdds } from "@/lib/format";
+import { countdown, odds as fmtOdds } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { Choice } from "./Choice";
@@ -14,7 +14,8 @@ type WindowState = { open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close
 function WindowNote({ data, now }: { data: WindowState; now: number }) {
   const seconds = data.close_at ? Math.max(0, Math.ceil((Date.parse(data.close_at) - now) / 1000)) : 0;
   const text = data.state === "UPCOMING" ? "Opens after draft, when champions are confirmed."
-    : data.open && seconds > 0 ? `Closes in ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} · earlier at first blood`
+    : data.open && seconds > 0
+      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)} · earlier at first blood`
     : "Early-game picks closed.";
   return <p className="muted num" role="status" style={{ fontSize: 13, marginTop: 12 }}>{text}</p>;
 }

@@ -12,7 +12,7 @@ Everything runs without manual input (D-008): the worker pulls fixtures and resu
 | `apps/web` | Next.js mobile-first client; `/api/*` is proxied to the API |
 | `infra/compose.yaml` | Postgres + migrate + api + worker + web |
 | `docs/spec` | Product/engineering spec (build packet v0.2) and the decisions log |
-| `docs/screens` | Reference screenshots from the end-to-end walkthrough (390px and 1440px) |
+| `docs/screens` | Reference screenshots from the end-to-end walkthrough: core flow at 390px, every screen at 320/390/768/1440px |
 | `design` | Earlier prototype and design-lab studies (reference only) |
 
 ## Run locally
