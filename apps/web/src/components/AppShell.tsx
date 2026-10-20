@@ -116,10 +116,16 @@ function SlipSheet({ setOpen }: { setOpen: (open: boolean) => void }) {
   useEffect(() => {
     const onClose = () => setOpen(false);
     const opener = document.activeElement as HTMLElement | null;
-    // Browser back closes the sheet without losing picks.
-    history.pushState({ riftSheet: true }, "");
+    // Browser back closes the sheet without losing picks. The history entry is pushed a tick later so
+    // an immediate unmount (React StrictMode runs effects twice in dev) cancels it instead of queueing
+    // a back() that would close the remounted sheet.
+    let pushed = false;
     const onPop = () => onClose();
-    window.addEventListener("popstate", onPop);
+    const timer = window.setTimeout(() => {
+      history.pushState({ riftSheet: true }, "");
+      pushed = true;
+      window.addEventListener("popstate", onPop);
+    }, 0);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") history.back();
       if (e.key === "Tab" && ref.current) {
@@ -140,10 +146,11 @@ function SlipSheet({ setOpen }: { setOpen: (open: boolean) => void }) {
     document.body.style.overflow = "hidden";
     ref.current?.querySelector<HTMLElement>("input, button")?.focus();
     return () => {
+      window.clearTimeout(timer);
       window.removeEventListener("popstate", onPop);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
-      if (history.state?.riftSheet) history.back();
+      if (pushed && history.state?.riftSheet) history.back();
       opener?.focus?.();
     };
   }, [setOpen]);
