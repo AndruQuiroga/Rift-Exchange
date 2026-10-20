@@ -39,7 +39,10 @@ services:
     restart: unless-stopped
 
   web:
-    build: ../apps/web
+    build:
+      context: ../apps/web
+      args:
+        RIFT_API_ORIGIN: http://api:8000
     environment:
       RIFT_API_ORIGIN: http://api:8000
     ports: ["${RIFT_WEB_PORT:-3000}:3000"]

@@ -9,7 +9,8 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from rift import auth, ledger
@@ -345,6 +346,18 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     @app.get("/api/v1/healthz")
     def healthz():
+        return {"ok": True}
+
+    @app.get("/api/v1/health/ready")
+    def ready():
+        # A reachable process is not sufficient: the migrated schema and season
+        # must be usable. Do not return SQL/connection details to anonymous clients.
+        try:
+            with factory() as session:
+                session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
+                season_of(session)
+        except (SQLAlchemyError, ApiError):
+            return JSONResponse(status_code=503, content={"ok": False})
         return {"ok": True}
 
     return app

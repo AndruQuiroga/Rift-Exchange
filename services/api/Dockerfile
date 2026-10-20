@@ -9,5 +9,7 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 RUN uv sync --frozen --no-dev
 ENV PATH="/app/.venv/bin:$PATH"
+RUN useradd --system --uid 10001 --create-home rift
+USER rift
 EXPOSE 8000
 CMD ["rift", "api"]

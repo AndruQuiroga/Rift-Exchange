@@ -8,3 +8,5 @@ node_modules/
 .env.local
 *.log
 .ruff_cache/
+artifacts/
+infra/stache/target.local.psd1

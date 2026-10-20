@@ -21,7 +21,9 @@ def main() -> None:
     if args.cmd == "api":
         import uvicorn
 
-        uvicorn.run("rift.api.app:app", host=args.host, port=args.port, proxy_headers=True)
+        # Invite URLs and session-bearing query strings must not enter access logs.
+        uvicorn.run("rift.api.app:app", host=args.host, port=args.port, proxy_headers=True,
+                    access_log=False)
     elif args.cmd == "worker":
         from rift.worker import run_forever
 

@@ -1,10 +1,10 @@
 from datetime import timedelta
 
 import pytest
+from conftest import outcome_id
 from fastapi.testclient import TestClient
 from sqlalchemy import update
 
-from conftest import outcome_id
 from rift.api.app import create_app
 from rift.auth import create_invite
 from rift.config import Settings
