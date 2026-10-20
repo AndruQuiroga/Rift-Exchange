@@ -75,7 +75,12 @@ use `-LeaguepediaMode mock` to disable it.
 
 The probe confirms login and a query against the game/ban tables. It does not
 prove current tournament coverage or safe grading. Inspect representative
-fixtures and provider errors separately. Leaguepedia currently supplies winner
+fixtures and provider errors separately. The adapter resolves Leaguepedia team
+redirects, explicitly maps the verified `Cloud9 Kia` / `Cloud9` feed difference,
+and searches from six hours before to twelve hours after the scheduled UTC
+start. Duplicate game numbers reject ambiguous rematches. The six completed
+Play-In series from October 15–18 matched the official feed's final scores in
+the pre-activation comparison. Leaguepedia currently supplies winner
 cross-checks; its ban rows are parsed but not yet persisted or used by a ban
 market generator. Champion picks and total-kill props use LoL Esports final
 frames and require enough verified tournament games. Pre-series player props

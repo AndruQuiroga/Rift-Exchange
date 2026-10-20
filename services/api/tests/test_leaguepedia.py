@@ -22,6 +22,9 @@ def client(cargo, *, login=None, status=200):
             return httpx.Response(200, json={"login": login or {"result": "Success"}})
         if request.url.params["action"] == "query":
             return httpx.Response(200, json={"query": {"tokens": {"logintoken": "token"}}})
+        if request.url.params.get("tables") == "TeamRedirects=TR":
+            name = request.url.params["where"].split('"')[1]
+            return httpx.Response(200, json={"cargoquery": [{"title": {"Canonical": name}}]})
         return httpx.Response(status, json=cargo)
 
     return LeaguepediaClient(settings(), httpx.Client(transport=httpx.MockTransport(respond)))
@@ -81,3 +84,31 @@ def test_bot_secret_files(tmp_path, monkeypatch):
     config = Settings(_env_file=None, leaguepedia_mode="live")
     assert config.leaguepedia_bot_user == "Test@RiftExchange"
     assert config.leaguepedia_bot_password == "test-secret"
+
+
+def test_series_crosses_midnight_and_resolves_sponsor_names():
+    def respond(request):
+        params = request.url.params
+        if request.method == "POST":
+            return httpx.Response(200, json={"login": {"result": "Success"}})
+        if params["action"] == "query":
+            return httpx.Response(200, json={"query": {"tokens": {"logintoken": "token"}}})
+        if params["tables"] == "TeamRedirects=TR":
+            name = params["where"].split('"')[1]
+            return httpx.Response(200, json={"cargoquery": [{"title": {"Canonical": name.removesuffix(" Kia")}}]})
+        assert 'SG.Team2="Cloud9"' in params["where"]
+        assert 'SG.DateTime_UTC >= "2026-10-19 17:00:00"' in params["where"]
+        assert 'SG.DateTime_UTC <= "2026-10-20 11:00:00"' in params["where"]
+        row = {"title": dict(GAME["title"], Team2="Cloud9", WinTeam="Cloud9",
+                             **{"DateTime UTC": "2026-10-20 00:15:00"})}
+        return httpx.Response(200, json={"cargoquery": [row]})
+
+    source = LeaguepediaClient(settings(), httpx.Client(transport=httpx.MockTransport(respond)))
+    games = source.series_games("Atlas", "Cloud9 Kia", datetime.fromisoformat("2026-10-19T16:00:00-07:00"))
+    assert games[0].team2 == "Cloud9 Kia"
+    assert games[0].winner == 2
+
+
+def test_duplicate_game_numbers_cannot_select_the_wrong_series():
+    with pytest.raises(RuntimeError, match="ambiguous games"):
+        client({"cargoquery": [GAME, GAME]}).series_games("Atlas", "Nova", datetime(2026, 10, 19))

@@ -6,7 +6,7 @@ nothing is ever settled from invented values.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -16,6 +16,8 @@ API = "https://lol.fandom.com/api.php"
 # Leaguepedia's ScoreboardGames declaration stores aggregate bans here, not PicksAndBansS7.
 GAME_FIELDS = ("SG.Team1, SG.Team2, SG.WinTeam, SG.N_GameInMatch, SG.DateTime_UTC, "
                "SG.Team1Bans__full=Team1Bans, SG.Team2Bans__full=Team2Bans")
+# Verified against the October 2026 Play-In scoreboards. No fuzzy team matching.
+PROVIDER_TEAM_NAMES = {"Cloud9 Kia": "Cloud9"}
 
 
 @dataclass
@@ -54,6 +56,7 @@ class LeaguepediaClient(LeaguepediaSource):
         if not settings.leaguepedia_bot_user.strip() or not settings.leaguepedia_bot_password.strip():
             raise RuntimeError("Leaguepedia live mode requires both bot username and bot password")
         self.http = http or httpx.Client(timeout=30, headers={"User-Agent": "RiftExchange/0.1 (private league)"})
+        self._team_names: dict[str, str] = {}
         self._login(settings.leaguepedia_bot_user, settings.leaguepedia_bot_password)
 
     def _request(self, method: str, **kwargs) -> dict:
@@ -84,17 +87,53 @@ class LeaguepediaClient(LeaguepediaSource):
             raise RuntimeError("Leaguepedia Cargo probe returned no game rows; coverage is unverified")
         self._parse_games(result["cargoquery"])
 
+    @staticmethod
+    def _quote(value: str) -> str:
+        return '"' + value.replace('\\', '\\\\').replace('"', '""') + '"'
+
+    def _canonical_team(self, name: str) -> str:
+        if name not in self._team_names:
+            lookup = PROVIDER_TEAM_NAMES.get(name, name)
+            result = self._request("GET", params={
+                "action": "cargoquery", "format": "json", "limit": 2,
+                "tables": "TeamRedirects=TR", "fields": "TR._pageName=Canonical",
+                "where": f"TR.AllName={self._quote(lookup)}",
+            })
+            if "cargoquery" not in result:
+                raise RuntimeError("Leaguepedia response is missing team redirect results")
+            names = {r["title"]["Canonical"] for r in result["cargoquery"]}
+            if len(names) > 1:
+                raise RuntimeError("Leaguepedia team redirect is ambiguous")
+            self._team_names[name] = next(iter(names), lookup)
+        return self._team_names[name]
+
     def series_games(self, team_a, team_b, on):
-        day = on.strftime("%Y-%m-%d")
+        # Series can start early after a short preceding match, or finish on the
+        # following UTC day. Keep the window tied
+        # to its scheduled start, so a next-day rematch is not mixed into it.
+        start = on.replace(tzinfo=UTC) if on.tzinfo is None else on.astimezone(UTC)
+        lower = (start - timedelta(hours=6)).strftime("%Y-%m-%d %H:%M:%S")
+        upper = (start + timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+        canonical_a, canonical_b = self._canonical_team(team_a), self._canonical_team(team_b)
+        if canonical_a == canonical_b:
+            raise RuntimeError("Leaguepedia fixture resolves both teams to the same identity")
+        a, b = self._quote(canonical_a), self._quote(canonical_b)
         rows = self._request("GET", params={
             "action": "cargoquery", "format": "json", "limit": 10,
             "tables": "ScoreboardGames=SG", "fields": GAME_FIELDS,
-            "where": (f'SG.DateTime_UTC >= "{day} 00:00:00" AND SG.DateTime_UTC <= "{day} 23:59:59" '
-                      f'AND ((SG.Team1="{team_a}" AND SG.Team2="{team_b}") OR (SG.Team1="{team_b}" AND SG.Team2="{team_a}"))'),
+            "where": (f'SG.DateTime_UTC >= "{lower}" AND SG.DateTime_UTC <= "{upper}" '
+                      f'AND ((SG.Team1={a} AND SG.Team2={b}) OR (SG.Team1={b} AND SG.Team2={a}))'),
+            "order_by": "SG.N_GameInMatch ASC",
         })
         if "cargoquery" not in rows:
             raise RuntimeError("Leaguepedia response is missing Cargo results")
-        return self._parse_games(rows["cargoquery"]) or None
+        games = self._parse_games(rows["cargoquery"])
+        names = {canonical_a: team_a, canonical_b: team_b}
+        for game in games:
+            game.team1, game.team2 = names[game.team1], names[game.team2]
+        if len({g.game_in_series for g in games}) != len(games):
+            raise RuntimeError("Leaguepedia returned ambiguous games for the fixture")
+        return games or None
 
     @staticmethod
     def _parse_games(rows: list[dict]) -> list[LeaguepediaGame]:
