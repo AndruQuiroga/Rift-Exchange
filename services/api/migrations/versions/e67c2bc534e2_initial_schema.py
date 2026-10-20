@@ -1,8 +1,8 @@
 """initial schema
 
-Revision ID: 699b8b0d3b57
+Revision ID: e67c2bc534e2
 Revises: 
-Create Date: 2026-10-19 23:57:16.660460
+Create Date: 2026-10-20 00:00:28.484011
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '699b8b0d3b57'
+revision: str = 'e67c2bc534e2'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -56,12 +56,14 @@ def upgrade() -> None:
     )
     op.create_table('teams',
     sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('provider_id', sa.String(length=64), nullable=False),
+    sa.Column('provider_id', sa.String(length=160), nullable=False),
+    sa.Column('esports_id', sa.String(length=64), nullable=True),
     sa.Column('code', sa.String(length=16), nullable=False),
     sa.Column('name', sa.String(length=128), nullable=False),
     sa.Column('image_url', sa.Text(), nullable=True),
     sa.Column('region', sa.String(length=32), nullable=True),
     sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('esports_id'),
     sa.UniqueConstraint('provider_id')
     )
     op.create_table('users',
@@ -90,6 +92,7 @@ def upgrade() -> None:
     sa.Column('winner_team_id', sa.UUID(), nullable=True),
     sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('data_changed_at', sa.DateTime(timezone=True), nullable=True),
+    sa.Column('details_synced_at', sa.DateTime(timezone=True), nullable=True),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.CheckConstraint("status IN ('SCHEDULED','LIVE','COMPLETED','POSTPONED','CANCELED')", name='ck_fixture_status'),
     sa.CheckConstraint('best_of IN (1,3,5)', name='ck_fixture_bo'),

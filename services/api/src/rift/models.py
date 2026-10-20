@@ -137,7 +137,8 @@ class LedgerEntry(Base):
 class Team(Base):
     __tablename__ = "teams"
     id: Mapped[uuid.UUID] = _uuid()
-    provider_id: Mapped[str] = mapped_column(String(64), unique=True)
+    provider_id: Mapped[str] = mapped_column(String(160), unique=True)  # lolesports:<normalised name>
+    esports_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     code: Mapped[str] = mapped_column(String(16))
     name: Mapped[str] = mapped_column(String(128))
     image_url: Mapped[str | None] = mapped_column(Text)
@@ -161,6 +162,7 @@ class Fixture(Base):
     winner_team_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("teams.id"))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     data_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    details_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = _created()
     __table_args__ = (
         CheckConstraint("best_of IN (1,3,5)", name="ck_fixture_bo"),
