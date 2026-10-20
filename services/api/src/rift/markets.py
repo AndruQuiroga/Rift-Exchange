@@ -56,6 +56,7 @@ class TournamentStats:
     games: int
     pick_rate: dict[str, float]
     kill_totals: list[int]
+    timeline: object | None = None  # rift.props.TimelineData: objective rates and player lines
 
 
 def tournament_stats(session: Session, season: Season) -> TournamentStats:
@@ -70,7 +71,10 @@ def tournament_stats(session: Session, season: Season) -> TournamentStats:
             counts[champ] = counts.get(champ, 0) + 1
         totals.append(sum(p["kills"] for p in stats["players"]))
     n = len(rows)
-    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {}, kill_totals=totals)
+    from rift.props import timeline_data  # props builds on this module's market specs
+
+    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {}, kill_totals=totals,
+                           timeline=timeline_data(session, season))
 
 
 def _nb_cdf(k: int, mean: float, var: float) -> float:
@@ -130,6 +134,10 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
             close_at, "negbin_tournament_v1", "EXPERIMENTAL",
             [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
             {"game_index": idx, "line": line}))
+    if stats.timeline is not None:
+        from rift.props import objective_specs
+
+        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, close_at, when))
     return specs
 
 

@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from rift import auth, draft, ledger
+from rift import auth, draft, ledger, markets, props
 from rift.api import views
 from rift.config import Settings, get_settings
 from rift.db import db_now, session_factory
@@ -194,6 +194,48 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                              "at": t.isoformat()} for c, v, o, t in rows]}
 
     # ------------------------------------------------------------ slip
+
+    def _market_out(session: Session, market: Market) -> dict:
+        outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
+        return views.market_view(market, outcomes)
+
+    @app.get("/api/v1/events/{event_id}/duels")
+    def duel_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        return props.duels(session, season_of(session), _fixture(session, event_id), game, settings)
+
+    class DuelBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        role: str = Field(pattern="^(top|jungle|mid|bottom|support)$")
+        stat: str = Field(pattern="^(kills|cs15|damage)$")
+
+    @app.post("/api/v1/events/{event_id}/duels")
+    def duel_market(event_id: uuid.UUID, body: DuelBody, session: Db, user: CurrentUser):
+        try:
+            market = props.ensure_duel(session, season_of(session), _fixture(session, event_id), body.game_index,
+                                       body.role, body.stat, settings, db_now(session))
+        except props.PropsError as e:
+            raise ApiError(409, e.code, e.message) from e
+        return _market_out(session, market)
+
+    @app.get("/api/v1/events/{event_id}/kill-lines")
+    def kill_line_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        season = season_of(session)
+        return props.kill_lines(session, _fixture(session, event_id), game, markets.tournament_stats(session, season),
+                                settings)
+
+    class KillLineBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        line: str = Field(pattern=r"^\d{1,2}\.5$")
+
+    @app.post("/api/v1/events/{event_id}/kill-lines")
+    def kill_line_market(event_id: uuid.UUID, body: KillLineBody, session: Db, user: CurrentUser):
+        season = season_of(session)
+        try:
+            market = props.ensure_kill_line(session, season, _fixture(session, event_id), body.game_index, body.line,
+                                            markets.tournament_stats(session, season), settings, db_now(session))
+        except props.PropsError as e:
+            raise ApiError(409, e.code, e.message) from e
+        return _market_out(session, market)
 
     class QuoteBody(BaseModel):
         class Item(BaseModel):

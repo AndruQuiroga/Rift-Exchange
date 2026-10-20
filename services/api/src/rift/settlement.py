@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rift import ledger
+from rift import ledger, props
 from rift.domain.money import settlement_return
 from rift.markets import SWISS_RECORDS, swiss_side
 from rift.models import (
@@ -94,6 +94,10 @@ def grade_market(session: Session, market: Market) -> Grade:
             return Grade("HOLD", reason=f"Awaiting verified Game {idx} winner", evidence=ev)
         return Grade("RESULT", [code], f"Game {idx} winner confirmed",
                      {**ev, "game": game.provider_id, "winner_evidence": game.winner_evidence})
+
+    if kind in props.KINDS:
+        idx = market.params["game_index"]
+        return props.grade(market, fixture, next((g for g in _games(session, fixture) if g.game_index == idx), None))
 
     if kind == "champion_picked":
         champ = market.params["champion"]
