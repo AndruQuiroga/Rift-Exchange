@@ -15,7 +15,7 @@ Models (EXPERIMENTAL) use what this Worlds has shown so far:
 import math
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -211,26 +211,89 @@ def duel_probability(data: TimelineData, a: dict, b: dict, role: str, stat: str)
     return win / (win + lose) if win + lose > 1e-9 else 0.5
 
 
-def duels(session: Session, season: Season, fixture: Fixture, game_index: int, settings: Settings) -> dict:
-    from rift.draft import game_market_window
+# ------------------------------------------------------------------ early-game window
+#
+# Duels and kill lines need the champions, which only exist once the game loads (the feed has no live
+# champion select). They open on the game's first livestats frame and close at 3:00 of game time, or at
+# the first kill if that comes sooner. Times are the feed's own frame timestamps, so a pick accepted after
+# the real cutoff is voided at settlement even though the worker only notices the kill on its next poll.
 
-    window = game_market_window(session, fixture, game_index)
-    lineup = lineups(session, fixture)
-    data = timeline_data(session, season)
+EARLY_WINDOW = timedelta(minutes=3)
+EARLY_KINDS = ("lane_duel", "total_kills_game")
+
+
+@dataclass
+class EarlyWindow:
+    open: bool
+    state: str  # UPCOMING / OPEN / CLOSED
+    opens_when: str | None
+    close_at: datetime | None
+    game: Game | None
+
+
+def early_cutoff(game: Game) -> datetime | None:
+    """3:00 of game time, or the first kill if earlier, as wall time from the feed's frames."""
+    if game.started_at is None:
+        return None
+    cutoff = game.started_at + EARLY_WINDOW
+    blood = ((game.timeline or {}).get("firsts") or {}).get("blood")
+    if blood:
+        cutoff = min(cutoff, game.started_at + timedelta(seconds=blood["at_s"]))
+    return cutoff
+
+
+def early_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
+    game = session.execute(select(Game).where(Game.fixture_id == fixture.id, Game.game_index == game_index)
+                           ).scalar_one_or_none()
+    loaded = game is not None and game.started_at is not None and bool((game.timeline or {}).get("participants"))
+    if not loaded:
+        if fixture.status == "COMPLETED" or (game is not None and game.state in ("completed", "unneeded")):
+            return EarlyWindow(False, "CLOSED", None, None, game)
+        return EarlyWindow(False, "UPCOMING", f"When Game {game_index} loads, champions locked in", None, game)
+    cutoff = early_cutoff(game)
+    if now < game.started_at:
+        return EarlyWindow(False, "UPCOMING", f"When Game {game_index} loads, champions locked in", None, game)
+    if game.state in ("completed", "unneeded") or game.ended_at is not None or now >= cutoff:
+        return EarlyWindow(False, "CLOSED", None, cutoff, game)
+    return EarlyWindow(True, "OPEN", None, cutoff, game)
+
+
+def game_lineup(game: Game, fixture: Fixture) -> dict[str, dict[str, dict]]:
+    """side ("A"/"B") -> role -> {player_id, name, champion} from the game's first frame."""
+    code = {str(fixture.team_a_id): "A", str(fixture.team_b_id): "B"}
+    team_of = {"blue": str(game.blue_team_id), "red": str(game.red_team_id)}
+    out: dict[str, dict[str, dict]] = {}
+    for p in ((game.timeline or {}).get("participants") or {}).values():
+        side = code.get(team_of.get(p.get("side"), ""))
+        if side and p.get("role") in ROLES:
+            out.setdefault(side, {})[p["role"]] = {"player_id": str(p.get("player_id") or p.get("name")),
+                                                   "name": p.get("name"), "champion": p.get("champion")}
+    return out
+
+
+def _window_view(w: EarlyWindow) -> dict:
+    return {"open": w.open, "state": w.state, "opens_when": w.opens_when,
+            "close_at": w.close_at.isoformat() if w.close_at else None}
+
+
+def duels(session: Session, season: Season, fixture: Fixture, game_index: int, settings: Settings,
+          now: datetime) -> dict:
+    w = early_window(session, fixture, game_index, now)
     rows = []
-    for role in ROLES:
-        a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
-        if not a or not b:
-            continue
-        odds = {}
-        for stat in STATS:
-            p = duel_probability(data, a, b, role, stat)
-            pa = _px(p, settings)
-            pb = _px(1 - p, settings) if p is not None else None
-            odds[stat] = {"A": pa, "B": pb}
-        rows.append({"role": role, "a": a, "b": b, "odds": odds})
-    return {"game_index": game_index, "open": window is not None and window.state == "OPEN",
-            "close_at": window.close_at.isoformat() if window else None,
+    # Before the game loads, show the expected matchups (last known lineups) without prices.
+    lineup = lineups(session, fixture) if w.state == "UPCOMING" else game_lineup(w.game, fixture) if w.game else {}
+    if lineup:
+        data = timeline_data(session, season) if w.open else None
+        for role in ROLES:
+            a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
+            if not a or not b:
+                continue
+            odds = {}
+            for stat in STATS:
+                p = duel_probability(data, a, b, role, stat) if data is not None else None
+                odds[stat] = {"A": _px(p, settings), "B": _px(1 - p, settings) if p is not None else None}
+            rows.append({"role": role, "a": a, "b": b, "odds": odds})
+    return {"game_index": game_index, **_window_view(w),
             "stats": [{"id": k, "label": v[0]} for k, v in STATS.items()], "duels": rows}
 
 
@@ -241,81 +304,119 @@ def _px(p: float | None, settings: Settings) -> str | None:
     return str(o) if o is not None else None
 
 
-def _open_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> Market:
-    from rift.draft import game_market_window
-
-    window = game_market_window(session, fixture, game_index)
-    if window is None or window.state != "OPEN" or window.close_at <= now:
-        raise PropsError("NOT_OPEN", f"Game {game_index} picks are not open.")
-    return window
+def _open_early(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
+    w = early_window(session, fixture, game_index, now)
+    if not w.open:
+        raise PropsError("NOT_OPEN", f"Game {game_index} early-game picks open when the game loads and close at "
+                         "3:00 or first blood.")
+    return w
 
 
 def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: int, role: str, stat: str,
                 settings: Settings, now: datetime) -> Market:
     if role not in ROLES or stat not in STATS:
         raise PropsError("BAD_DUEL", "Unknown role or stat.")
-    window = _open_window(session, fixture, game_index, now)
-    lineup = lineups(session, fixture)
+    w = _open_early(session, fixture, game_index, now)
+    lineup = game_lineup(w.game, fixture)
     a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
     if not a or not b:
-        raise PropsError("NO_LINEUP", "Lineups for this duel are not known yet.")
+        raise PropsError("NO_LINEUP", "This lane's players aren't in the game data yet.")
     p = duel_probability(timeline_data(session, season), a, b, role, stat)
     if p is None:
         raise PropsError("NOT_OFFERED", "Not enough data to price this duel yet.")
     label = STATS[stat][0]
+    who_a, who_b = f"{a['name']} ({a['champion']})", f"{b['name']} ({b['champion']})"
+    cs_note = ", as is a game that ends before 15:00" if stat == "cs15" else ""
     spec = MarketSpec(
         f"lane_duel:{fixture.provider_id}:{game_index}:{role}:{stat}:{a['player_id']}:{b['player_id']}",
         "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role}: {a['name']} vs {b['name']}",
-        f"{label}: {a['name']} or {b['name']} in Game {game_index}. An exact tie is void. Void if either player "
-        f"doesn't play Game {game_index}{', or if the game ends before 15:00' if stat == 'cs15' else ''}. Settles "
-        "from the game's live data.",
-        window.close_at, "player_normal_v1", "EXPERIMENTAL",
+        f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00 or first blood; a pick "
+        f"accepted after that is void. An exact tie is void{cs_note}. Settles from the game's live data.",
+        w.close_at, "player_champion_normal_v1", "EXPERIMENTAL",
         [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
-        {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"]})
+        {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"],
+         "a_champion": a["champion"], "b_champion": b["champion"], "early": True})
     market = upsert_market(session, season, fixture, spec, settings, now)
     if market is None:
-        raise PropsError("NOT_OPEN", f"Game {game_index} picks are not open.")
+        raise PropsError("NOT_OPEN", f"Game {game_index} early-game picks are closed.")
     return market
 
 
-# ------------------------------------------------------------------ kill lines (on demand)
+# ------------------------------------------------------------------ kill lines (early-game window)
 
 
-def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: TournamentStats, settings: Settings) -> dict:
-    from rift.draft import game_market_window
+def _kill_dist(stats: TournamentStats) -> tuple[float, float] | None:
+    if stats.games < MIN_DRAFT_GAMES or not stats.kill_totals:
+        return None
+    mean = sum(stats.kill_totals) / len(stats.kill_totals)
+    var = sum((k - mean) ** 2 for k in stats.kill_totals) / max(len(stats.kill_totals) - 1, 1)
+    return mean, var
 
-    window = game_market_window(session, fixture, game_index)
-    lines = []
-    if stats.games >= MIN_DRAFT_GAMES:
-        mean = sum(stats.kill_totals) / len(stats.kill_totals)
-        var = sum((k - mean) ** 2 for k in stats.kill_totals) / max(len(stats.kill_totals) - 1, 1)
-        for line in LINES:
-            under = _nb_cdf(int(line), mean, var)
-            over_px, under_px = _px(1 - under, settings), _px(under, settings)
-            if over_px and under_px:
-                lines.append({"line": str(line), "over": over_px, "under": under_px})
-    return {"game_index": game_index, "open": window is not None and window.state == "OPEN",
-            "close_at": window.close_at.isoformat() if window else None,
-            "typical": str(math.floor(sum(stats.kill_totals) / len(stats.kill_totals)) + 0.5) if stats.kill_totals else None,
-            "lines": lines}
+
+def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings) -> list[dict]:
+    rows = []
+    if dist is None:
+        return rows
+    for line in LINES:
+        under = _nb_cdf(int(line), *dist)
+        over_px, under_px = _px(1 - under, settings), _px(under, settings)
+        if over_px and under_px:
+            rows.append({"line": str(line), "over": over_px, "under": under_px})
+    return rows
+
+
+def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: TournamentStats, settings: Settings,
+               now: datetime) -> dict:
+    w = early_window(session, fixture, game_index, now)
+    dist = _kill_dist(stats)
+    return {"game_index": game_index, **_window_view(w),
+            "typical": str(math.floor(dist[0]) + 0.5) if dist else None,
+            "lines": _kill_line_rows(dist, settings) if w.open else []}
 
 
 def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_index: int, line: str,
                      stats: TournamentStats, settings: Settings, now: datetime) -> Market:
-    from rift.markets import game_specs
-
     if float(line) not in LINES:
         raise PropsError("BAD_LINE", "Lines run from 14.5 to 44.5 kills.")
-    window = _open_window(session, fixture, game_index, now)
-    a, b = session.get(Team, fixture.team_a_id), session.get(Team, fixture.team_b_id)
-    spec = next((s for s in game_specs(fixture, game_index, a, b, 0.5, stats, window.close_at, "EXPERIMENTAL",
-                                       str(float(line))) if s.kind == "total_kills_game"), None)
-    if spec is None or any(_px(o.probability, settings) is None for o in spec.outcomes):
+    w = _open_early(session, fixture, game_index, now)
+    dist = _kill_dist(stats)
+    if dist is None:
+        raise PropsError("NOT_OFFERED", "Not enough games yet to price kill lines.")
+    line = str(float(line))
+    under = _nb_cdf(int(float(line)), *dist)
+    if _px(under, settings) is None or _px(1 - under, settings) is None:
         raise PropsError("NOT_OFFERED", "That kill line isn't offered.")
+    spec = MarketSpec(
+        f"total_kills_game:{fixture.provider_id}:{game_index}:{line}", "total_kills_game", "GAME", "PROPS",
+        f"Game {game_index} total kills {line}",
+        f"Combined kills by both teams in Game {game_index}. Over means {int(float(line)) + 1} or more. Open from "
+        "game start until 3:00 or first blood; a pick accepted after that is void. Requires verified final game "
+        f"stats; void if Game {game_index} is not played.",
+        w.close_at, "negbin_early_v1", "EXPERIMENTAL",
+        [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
+        {"game_index": game_index, "line": line, "early": True})
     market = upsert_market(session, season, fixture, spec, settings, now)
     if market is None:
-        raise PropsError("NOT_OPEN", f"Game {game_index} picks are not open.")
+        raise PropsError("NOT_OPEN", f"Game {game_index} early-game picks are closed.")
     return market
+
+
+def tighten_early(session: Session, now: datetime) -> int:
+    """Pull each open early-game market's cutoff to first blood once the timeline records it."""
+    rows = session.execute(select(Market).where(Market.kind.in_(EARLY_KINDS), Market.state == "OPEN",
+                                                Market.fixture_id.is_not(None)).with_for_update()).scalars().all()
+    changed = 0
+    for m in rows:
+        if not m.params.get("early"):
+            continue
+        game = session.execute(select(Game).where(Game.fixture_id == m.fixture_id,
+                                                  Game.game_index == m.params["game_index"])).scalar_one_or_none()
+        cutoff = early_cutoff(game) if game is not None else None
+        if cutoff is not None and cutoff < m.close_at:
+            m.close_at = cutoff
+            changed += 1
+    session.flush()
+    return changed
 
 
 # ------------------------------------------------------------------ grading

@@ -102,15 +102,9 @@ def champion_label(champ: str) -> str:
 NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after Game N-1 ends (draft ~10 min)
 
 
-def kills_line(stats: TournamentStats) -> str | None:
-    if stats.games < MIN_DRAFT_GAMES:
-        return None
-    return str(math.floor(sum(stats.kill_totals) / len(stats.kill_totals)) + 0.5)
-
-
 def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: TournamentStats, close_at: datetime,
-               confidence: str, line: str | None = None) -> list[MarketSpec]:
-    """Markets scoped to one game. `line` pins a kills line already offered so a moving mean never forks it."""
+               confidence: str) -> list[MarketSpec]:
+    """Markets scoped to one game, open before it starts. Kill lines and duels open once it loads (rift.props)."""
     key = fixture.provider_id
     when = ("Locks at the scheduled series start." if idx == 1 else
             f"Opens when Game {idx - 1} ends; locks 7 minutes later or when Game {idx} starts, whichever is first.")
@@ -121,19 +115,6 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
             f"Winner of Game {idx} of this series. {when} Void if Game {idx} is not played.",
             close_at, "elo_v1", confidence,
             [OutcomeSpec("A", a.name, q), OutcomeSpec("B", b.name, 1 - q)], {"game_index": idx}))
-    line = line or kills_line(stats)
-    if line is not None and stats.games >= MIN_DRAFT_GAMES:
-        mean = sum(stats.kill_totals) / len(stats.kill_totals)
-        var = sum((k - mean) ** 2 for k in stats.kill_totals) / max(len(stats.kill_totals) - 1, 1)
-        under = _nb_cdf(int(float(line)), mean, var)
-        specs.append(MarketSpec(
-            f"total_kills_game:{key}:{idx}:{line}", "total_kills_game", "GAME", "PROPS",
-            f"Game {idx} total kills {line}",
-            f"Combined kills by both teams in Game {idx}. Over means {int(float(line)) + 1} or more. {when} "
-            f"Requires verified final game stats; void if Game {idx} is not played.",
-            close_at, "negbin_tournament_v1", "EXPERIMENTAL",
-            [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
-            {"game_index": idx, "line": line}))
     if stats.timeline is not None:
         from rift.props import objective_specs
 
@@ -171,7 +152,7 @@ def next_game(fixture: Fixture, games: list[Game]) -> tuple[int, datetime] | Non
 
 
 def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: TournamentStats,
-                  confidence: str, lines: dict[int, str] | None = None) -> list[MarketSpec]:
+                  confidence: str) -> list[MarketSpec]:
     q = model.game_probability(a.id, b.id)
     bo = fixture.best_of
     key = fixture.provider_id
@@ -198,7 +179,7 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
             f"Number of games played in the {fmt}. Void if the series is not completed.",
             fixture.scheduled_at, "elo_v1_independent_games", confidence,
             [OutcomeSpec(str(n), f"{n} games", p) for n, p in sorted(totals.items())], {}))
-    specs.extend(game_specs(fixture, 1, a, b, q, stats, fixture.scheduled_at, confidence, (lines or {}).get(1)))
+    specs.extend(game_specs(fixture, 1, a, b, q, stats, fixture.scheduled_at, confidence))
 
     # Champion markets are created on demand from the champion grid (rift.draft), not pre-picked here.
     return specs
@@ -308,11 +289,14 @@ def reprice(session: Session, market: Market, spec: MarketSpec, settings: Settin
     return changed
 
 
-def retire_kind(session: Session, kind: str, reason: str, template_prefix: str | None = None) -> int:
+def retire_kind(session: Session, kind: str, reason: str, template_prefix: str | None = None,
+                model_key: str | None = None) -> int:
     """Stop offering a market family. Accepted picks stay valid; markets lock and settle as before."""
     q = select(Market).where(Market.kind == kind, Market.state == "OPEN")
     if template_prefix:
         q = q.where(Market.template_key.startswith(template_prefix))
+    if model_key:
+        q = q.where(Market.model_key == model_key)
     rows = session.execute(q.with_for_update()).scalars().all()
     for m in rows:
         m.state, m.state_reason = "SUSPENDED", reason
@@ -320,13 +304,6 @@ def retire_kind(session: Session, kind: str, reason: str, template_prefix: str |
                                entity_id=str(m.id), data={"reason": reason}))
     session.flush()
     return len(rows)
-
-
-def pinned_lines(session: Session, fixture: Fixture) -> dict[int, str]:
-    """Kill lines already offered per game index, so re-pricing keeps one market per game."""
-    rows = session.execute(select(Market.params).where(Market.fixture_id == fixture.id,
-                                                       Market.kind == "total_kills_game")).scalars()
-    return {p["game_index"]: p["line"] for p in rows if "game_index" in p and "line" in p}
 
 
 def game_index(market: Market) -> int | None:
@@ -345,7 +322,8 @@ def lock_due(session: Session, now: datetime) -> int:
     for m in session.execute(
         select(Market).where(Market.state.in_(("OPEN", "SUSPENDED")), Market.close_at <= now).with_for_update()
     ).scalars():
-        locked[m.id] = (m, f"Locked before Game {game_index(m)} draft" if (game_index(m) or 0) > 1 else
+        locked[m.id] = (m, "Locked at 3:00 or first blood" if m.params.get("early") else
+                        f"Locked before Game {game_index(m)} draft" if (game_index(m) or 0) > 1 else
                         "Locked at series start" if m.fixture_id else "Locked")
     live = session.execute(
         select(Market, Fixture).join(Fixture, Fixture.id == Market.fixture_id)
@@ -357,11 +335,21 @@ def lock_due(session: Session, now: datetime) -> int:
         Game.fixture_id.in_(fixture_ids))).scalars()} if fixture_ids else {}
     for m, f in live:
         idx = game_index(m)
-        g = games.get((f.id, idx))
+        g = games.get((f.id, idx or 1))  # series markets take Game 1's start
+        if m.params.get("early"):
+            # Early-game markets are meant to be open while their game runs; they lock at their own cutoff.
+            if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":
+                locked.setdefault(m.id, (m, "Game over"))
+            continue
+        # The real start can precede the poll that noticed it. Pull the cutoff back so a pick that
+        # slipped in after the start is voided at settlement (settlement.apply_grade).
+        start = g.started_at if g is not None else None
         if idx is None or idx == 1:
             reason = "Locked at series start"
+            m.close_at = min(m.close_at, now, *([start] if start else []))
         elif g is not None and (g.state in ("inProgress", "completed") or g.started_at is not None):
             reason = f"Locked at Game {idx} start"
+            m.close_at = min(m.close_at, now, *([start] if start else []))
         elif f.status != "LIVE" or (g is not None and g.state == "unneeded"):
             reason = "Series over"
         else:

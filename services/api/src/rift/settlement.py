@@ -24,6 +24,7 @@ from rift.models import (
     Selection,
     Settlement,
     Team,
+    Ticket,
     Wallet,
 )
 
@@ -265,10 +266,16 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         ).scalars()
     }
     locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if selections else {}
+    # A market's cutoff can be pulled back after the fact (a series or game that started before the poll
+    # saw it, first blood inside the early-game window). A pick accepted after the real cutoff is void.
+    accepted = dict(session.execute(select(Ticket.id, Ticket.accepted_at).where(
+        Ticket.id.in_({s.ticket_id for s in selections}))).all()) if selections else {}
 
     for sel in selections:
         code = outcome_codes[sel.outcome_id]
-        result = "VOID" if void else "WON" if code in winning else "PARTIAL" if code in partial else "LOST"
+        late = accepted[sel.ticket_id] > market.close_at
+        result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
+                  else "LOST")
         new_return = settlement_return(sel.stake_rc, sel.odds, result,
                                        consolation=sel.rules_snapshot.get("params", {}).get("consolation"))
         wallet = locked[wallet_by_user[sel.user_id].id]

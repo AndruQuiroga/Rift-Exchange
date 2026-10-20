@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from rift import grants, ingest, markets, ratings, settlement, timeline
+from rift import grants, ingest, markets, props, ratings, settlement, timeline
 from rift.adapters.leaguepedia import LeaguepediaSource, make_source
 from rift.adapters.lolesports import LolesportsClient
 from rift.config import Settings, get_settings
@@ -68,6 +68,7 @@ class Worker:
             self._run("futures", self._price_futures)
         if self._due("lineups", timedelta(minutes=10)):
             self._run("lineups", lambda s, now: ingest.sync_lineups(s, self._season(s), self.client, now))
+        self._run("early", lambda s, now: props.tighten_early(s, now))
         self._run("lock", lambda s, now: markets.lock_due(s, now))
         self._run("settle", self._settle)
         self._run("grants", self._grants)
@@ -88,8 +89,19 @@ class Worker:
     def _schedule_interval(self) -> timedelta:
         return timedelta(minutes=1) if self.busy() else timedelta(minutes=10)
 
+    def early_window_open(self) -> bool:
+        """A game loaded within the last few minutes and still running: its early-game window may be open."""
+        now = self.clock()
+        with self.factory() as s:
+            return bool(s.execute(select(func.count()).select_from(Game).where(
+                Game.started_at >= now - props.EARLY_WINDOW - timedelta(seconds=30), Game.ended_at.is_(None)
+            )).scalar())
+
     def poll_interval(self) -> float:
-        """15 s around live series so locks and between-game markets react quickly; 60 s otherwise."""
+        """5 s during a game's first minutes (first blood closes early-game picks), 15 s around live series,
+        60 s otherwise."""
+        if self.early_window_open():
+            return self.settings.early_poll_seconds
         return self.settings.live_poll_seconds if self.busy(timedelta(minutes=30)) else self.settings.idle_poll_seconds
 
     def _sync_schedule(self, s: Session, now: datetime) -> int:
@@ -136,9 +148,11 @@ class Worker:
             Fixture.season_id == season.id, Fixture.status == "SCHEDULED", Fixture.scheduled_at > now,
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
         markets.retire_kind(s, "champion_picked", "Replaced by the champion grid", template_prefix="champion_picked:")
+        markets.retire_kind(s, "total_kills_game", "Kill lines now open when the game loads",
+                            model_key="negbin_tournament_v1")
         for f in fixtures:
             a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
-            for spec in markets.fixture_specs(f, a, b, model, stats, confidence, markets.pinned_lines(s, f)):
+            for spec in markets.fixture_specs(f, a, b, model, stats, confidence):
                 if markets.upsert_market(s, season, f, spec, self.settings, now):
                     count += 1
         # Between games of a live series: open (and keep pricing) the next game's markets.
@@ -153,8 +167,7 @@ class Worker:
             idx, close_at = nxt
             a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
             q = model.game_probability(a.id, b.id)
-            for spec in markets.game_specs(f, idx, a, b, q, stats, close_at, confidence,
-                                           markets.pinned_lines(s, f).get(idx)):
+            for spec in markets.game_specs(f, idx, a, b, q, stats, close_at, confidence):
                 if markets.upsert_market(s, season, f, spec, self.settings, now):
                     count += 1
         return count

@@ -201,7 +201,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     @app.get("/api/v1/events/{event_id}/duels")
     def duel_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
-        return props.duels(session, season_of(session), _fixture(session, event_id), game, settings)
+        return props.duels(session, season_of(session), _fixture(session, event_id), game, settings, db_now(session))
 
     class DuelBody(BaseModel):
         game_index: int = Field(ge=1, le=5)
@@ -221,7 +221,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     def kill_line_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
         season = season_of(session)
         return props.kill_lines(session, _fixture(session, event_id), game, markets.tournament_stats(session, season),
-                                settings)
+                                settings, db_now(session))
 
     class KillLineBody(BaseModel):
         game_index: int = Field(ge=1, le=5)

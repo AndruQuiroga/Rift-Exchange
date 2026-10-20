@@ -57,6 +57,7 @@ class Settings(BaseSettings):
 
     # Worker cadence: fast while a series is live or within 30 minutes of one
     live_poll_seconds: int = 15
+    early_poll_seconds: int = 5  # while an early-game window (game start to 3:00 / first blood) may be open
     idle_poll_seconds: int = 60
 
     # Market behaviour

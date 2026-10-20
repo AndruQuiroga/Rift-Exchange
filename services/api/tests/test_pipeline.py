@@ -332,17 +332,11 @@ def test_next_game_opens_from_a_final_frame_only_when_reachable_whoever_won():
     assert markets.next_game(bo3, games) is None
 
 
-def test_game_kill_lines_stay_pinned_once_offered():
+def test_game_specs_hold_pre_game_markets_only():
     fixture = Fixture(provider_id="m1", best_of=3)
     a, b = Team(name="Atlas"), Team(name="Nova")
     stats = markets.TournamentStats(games=15, pick_rate={}, kill_totals=[20] * 10 + [30] * 5)
     close = START + timedelta(minutes=42)
     fresh = {s.kind: s for s in markets.game_specs(fixture, 2, a, b, 0.6, stats, close, "MODEL")}
-    assert fresh["total_kills_game"].template_key == "total_kills_game:m1:2:23.5"
-    assert fresh["total_kills_game"].params == {"game_index": 2, "line": "23.5"}
     assert fresh["game_winner"].close_at == close and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
-    # The tournament mean moved after Game 1; the Game 2 market already offered keeps its line.
-    stats.kill_totals.append(40)
-    pinned = {s.kind: s for s in markets.game_specs(fixture, 2, a, b, 0.6, stats, close, "MODEL", "23.5")}
-    assert pinned["total_kills_game"].template_key == "total_kills_game:m1:2:23.5"
-    assert pinned["total_kills_game"].outcomes[0].probability != fresh["total_kills_game"].outcomes[0].probability
+    assert "total_kills_game" not in fresh  # kill lines open once the game loads (early-game window)
