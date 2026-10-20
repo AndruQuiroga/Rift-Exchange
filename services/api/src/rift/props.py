@@ -174,6 +174,11 @@ def lineups(session: Session, fixture: Fixture) -> dict[str, dict[str, dict]]:
             if set(roles) >= set(ROLES):
                 out[side] = roles
                 break
+        if side not in out:  # hasn't played at Worlds yet: its latest regional starting five
+            team = session.get(Team, team_id)
+            players = (team.lineup or {}).get("players") or {}
+            if set(players) >= set(ROLES):
+                out[side] = players
     return out
 
 

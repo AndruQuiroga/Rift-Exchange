@@ -144,6 +144,8 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(128))
     image_url: Mapped[str | None] = mapped_column(Text)
     region: Mapped[str | None] = mapped_column(String(32))
+    # Starting five from the team's latest regional match, until it plays at Worlds: {match, at, players}
+    lineup: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Fixture(Base):

@@ -153,3 +153,37 @@ def test_any_kill_line_is_one_shared_market(factory, season_games):
             with pytest.raises(props.PropsError):
                 props.ensure_kill_line(s, season, fx, 1, bad, stats, SETTINGS, T0)
         assert s.execute(select(Market).where(Market.kind == "total_kills_game")).scalars().all()
+
+
+class _RegionalFeed:
+    """Atlas's last regional match: one completed game with Atlas on red."""
+
+    def event_details(self, match_id):
+        from rift.adapters.lolesports import GameRef, MatchDetail
+        return MatchDetail(match_id, [("e-x", "Xeno", 1), ("e-atl", "Atlas", 2)],
+                           [GameRef("rg1", 1, "completed", "e-x", "e-atl"), GameRef("rg2", 2, "unneeded", None, None)])
+
+    def window(self, game_id):
+        from rift.adapters.lolesports import GameStats, PlayerLine
+        players = [PlayerLine(i + 1, f"{side}-{role}", f"{side.upper()} {role}", side, role, "C", 0, 0, 0)
+                   for side in ("blue", "red") for i, role in enumerate(ROLES)]
+        return GameStats(game_id, None, "finished", T0, T0, "e-x", "e-atl", players)
+
+
+def test_regional_lineup_until_a_team_plays_at_worlds(factory, world):
+    from rift.ingest import sync_lineups
+    from rift.models import HistoricalResult
+
+    with factory() as s, s.begin():
+        x = Team(provider_id="lolesports:xeno", code="XEN", name="Xeno")
+        s.add(x)
+        s.flush()
+        s.get(Team, world["team_a"]).provider_id = "lolesports:atlas"
+        s.add(HistoricalResult(provider_id="reg-1", league_slug="lck", played_at=T0 - timedelta(days=30),
+                               team_a_id=x.id, team_b_id=world["team_a"], team_a_wins=1, team_b_wins=2))
+    with factory() as s, s.begin():
+        sync_lineups(s, s.get(Season, world["season"]), _RegionalFeed(), T0)
+    with factory() as s:
+        atlas = s.get(Team, world["team_a"])
+        assert atlas.lineup["players"]["mid"] == {"player_id": "red-mid", "name": "RED mid"}
+        assert props.lineups(s, s.get(Fixture, world["fixture"]))["A"]["mid"]["name"] == "RED mid"

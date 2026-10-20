@@ -249,6 +249,54 @@ def infer_game_winners(session: Session, fixture: Fixture, games: list[Game], se
             g.winner_evidence, g.data_changed_at = "leaguepedia", now
 
 
+LINEUP_ROLES = {"top", "jungle", "mid", "bottom", "support"}
+
+
+def sync_lineups(session: Session, season: Season, client: LolesportsClient, now: datetime, limit: int = 8) -> int:
+    """Starting fives for teams in upcoming fixtures that haven't played at Worlds yet.
+
+    Lane duels need a lineup before the series. Once a team has a Worlds game its timeline is used instead;
+    until then take the five from the last completed game of its most recent regional match. A few teams
+    per cycle, refreshed daily, so the feed sees a handful of requests.
+    """
+    fixtures = session.execute(select(Fixture).where(
+        Fixture.season_id == season.id, Fixture.status == "SCHEDULED",
+        Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+    played = {t for row in session.execute(select(Game.blue_team_id, Game.red_team_id).join(
+        Fixture, Fixture.id == Game.fixture_id).where(Fixture.season_id == season.id,
+                                                      Game.timeline.is_not(None))).all() for t in row if t}
+    done = 0
+    for team_id in {t for f in fixtures for t in (f.team_a_id, f.team_b_id)} - played:
+        team = session.get(Team, team_id)
+        stale = team.lineup is None or now - datetime.fromisoformat(team.lineup["at"]) > timedelta(days=1)
+        if not stale or done >= limit:
+            continue
+        done += 1
+        last = session.execute(select(HistoricalResult).where(
+            (HistoricalResult.team_a_id == team.id) | (HistoricalResult.team_b_id == team.id))
+            .order_by(HistoricalResult.played_at.desc()).limit(1)).scalar_one_or_none()
+        if last is None:
+            continue
+        try:
+            detail = client.event_details(last.provider_id)
+            game = next((g for g in sorted(detail.games, key=lambda g: -g.number) if g.state == "completed"), None)
+            stats = client.window(game.game_id) if game else None
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            log.warning("lineup for %s unavailable (%s)", team.code, type(exc).__name__)
+            continue
+        esports_id = next((eid for eid, name, _w in detail.teams if team_key(name) == team.provider_id), None)
+        side = ("blue" if stats and esports_id == stats.blue_esports_team_id else
+                "red" if stats and esports_id == stats.red_esports_team_id else None)
+        if side is None:
+            continue
+        players = {p.role: {"player_id": p.esports_player_id or p.name, "name": p.name}
+                   for p in stats.players if p.side == side and p.role in LINEUP_ROLES}
+        if set(players) == LINEUP_ROLES:
+            team.lineup = {"match": last.provider_id, "at": now.isoformat(), "players": players}
+    session.flush()
+    return done
+
+
 def sync_history(session: Session, client: LolesportsClient, since: datetime) -> int:
     """Pull completed 2026 series from rated leagues for the team-strength model."""
     ids = client.leagues()
