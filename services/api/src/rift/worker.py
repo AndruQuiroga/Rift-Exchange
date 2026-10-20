@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from rift import grants, ingest, markets, ratings, settlement
+from rift import grants, ingest, markets, props, ratings, settlement, timeline
 from rift.adapters.leaguepedia import LeaguepediaSource, make_source
 from rift.adapters.lolesports import LolesportsClient
 from rift.config import Settings, get_settings
@@ -58,10 +58,17 @@ class Worker:
             self._run("history", lambda s, now: ingest.sync_history(s, self.client, datetime(2026, 1, 1, tzinfo=UTC)))
         if self._due("schedule", self._schedule_interval()):
             self._run("schedule", self._sync_schedule)
+        self._run("live", lambda s, now: ingest.mark_live(s, self.client.live(), now))
         self._run("details", self._sync_details)
+        self._run("timeline", self._track_games)
+        if self.secondary.available and self._due("drafts", timedelta(minutes=10)):
+            self._run("drafts", self._sync_drafts)
         self._run("markets", self._price_markets)
         if self._due("futures", timedelta(minutes=10)):
             self._run("futures", self._price_futures)
+        if self._due("lineups", timedelta(minutes=10)):
+            self._run("lineups", lambda s, now: ingest.sync_lineups(s, self._season(s), self.client, now))
+        self._run("early", lambda s, now: props.tighten_early(s, now))
         self._run("lock", lambda s, now: markets.lock_due(s, now))
         self._run("settle", self._settle)
         self._run("grants", self._grants)
@@ -69,15 +76,33 @@ class Worker:
     def _season(self, s: Session) -> Season:
         return s.execute(select(Season).where(Season.code == self.settings.season_code)).scalar_one()
 
-    def _schedule_interval(self) -> timedelta:
+    def busy(self, within: timedelta = timedelta(hours=2)) -> bool:
+        """A series is live, or one is scheduled within `within` and not yet completed."""
         now = self.clock()
         with self.factory() as s:
-            busy = s.execute(select(func.count()).select_from(Fixture).where(
+            return bool(s.execute(select(func.count()).select_from(Fixture).where(
                 (Fixture.status == "LIVE")
-                | ((Fixture.scheduled_at <= now + timedelta(hours=2))
+                | ((Fixture.scheduled_at <= now + within)
                    & (Fixture.scheduled_at >= now - timedelta(hours=8)) & (Fixture.status != "COMPLETED"))
-            )).scalar()
-        return timedelta(minutes=1) if busy else timedelta(minutes=10)
+            )).scalar())
+
+    def _schedule_interval(self) -> timedelta:
+        return timedelta(minutes=1) if self.busy() else timedelta(minutes=10)
+
+    def early_window_open(self) -> bool:
+        """A game loaded within the last few minutes and still running: its early-game window may be open."""
+        now = self.clock()
+        with self.factory() as s:
+            return bool(s.execute(select(func.count()).select_from(Game).where(
+                Game.started_at >= now - props.EARLY_WINDOW - timedelta(seconds=30), Game.ended_at.is_(None)
+            )).scalar())
+
+    def poll_interval(self) -> float:
+        """5 s during a game's first minutes (first blood closes early-game picks), 15 s around live series,
+        60 s otherwise."""
+        if self.early_window_open():
+            return self.settings.early_poll_seconds
+        return self.settings.live_poll_seconds if self.busy(timedelta(minutes=30)) else self.settings.idle_poll_seconds
 
     def _sync_schedule(self, s: Session, now: datetime) -> int:
         return len(ingest.sync_schedule(s, self._season(s), self.client, now))
@@ -88,6 +113,24 @@ class Worker:
             if ingest.needs_details(f, now, ingest.games_complete(s, f)):
                 ingest.sync_fixture_details(s, f, self.client, self.secondary, now)
                 n += 1
+        return n
+
+    def _sync_drafts(self, s: Session, now: datetime) -> int:
+        """Leaguepedia bans and pick order, on a slow cadence: editors fill games in minutes to hours after
+        they end, and its API is rate-limited. Stops at the HOLD -> VOID deadline, when waiting is moot."""
+        since = now - timedelta(hours=self.settings.hold_void_after_hours)
+        fixtures = s.execute(select(Fixture).where(Fixture.status.in_(("LIVE", "COMPLETED")),
+                                                   Fixture.scheduled_at >= since)).scalars().all()
+        return sum(ingest.sync_drafts(s, f, self.secondary, now) for f in fixtures)
+
+    def _track_games(self, s: Session, now: datetime) -> int:
+        n = 0
+        recent = (Fixture.status == "COMPLETED") & (
+            Fixture.completed_at.is_(None) | (Fixture.completed_at >= now - timedelta(hours=6)))
+        for f in s.execute(select(Fixture).where((Fixture.status == "LIVE") | recent)).scalars().all():
+            games = list(s.execute(select(Game).where(Game.fixture_id == f.id)).scalars())
+            for g in ingest.games_to_track(f, games, now):
+                n += timeline.track(g, self.client, now)
         return n
 
     def _model(self, s: Session) -> tuple[ratings.EloModel, str]:
@@ -104,9 +147,27 @@ class Worker:
         fixtures = s.execute(select(Fixture).where(
             Fixture.season_id == season.id, Fixture.status == "SCHEDULED", Fixture.scheduled_at > now,
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+        markets.retire_kind(s, "champion_picked", "Replaced by the champion grid", template_prefix="champion_picked:")
+        markets.retire_kind(s, "total_kills_game", "Kill lines now open when the game loads",
+                            model_key="negbin_tournament_v1")
         for f in fixtures:
             a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
             for spec in markets.fixture_specs(f, a, b, model, stats, confidence):
+                if markets.upsert_market(s, season, f, spec, self.settings, now):
+                    count += 1
+        # Between games of a live series: open (and keep pricing) the next game's markets.
+        live = s.execute(select(Fixture).where(
+            Fixture.season_id == season.id, Fixture.status == "LIVE", Fixture.best_of > 1,
+            Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+        for f in live:
+            games = list(s.execute(select(Game).where(Game.fixture_id == f.id)).scalars())
+            nxt = markets.next_game(f, games)
+            if nxt is None:
+                continue
+            idx, close_at = nxt
+            a, b = s.get(Team, f.team_a_id), s.get(Team, f.team_b_id)
+            q = model.game_probability(a.id, b.id)
+            for spec in markets.game_specs(f, idx, a, b, q, stats, close_at, confidence):
                 if markets.upsert_market(s, season, f, spec, self.settings, now):
                     count += 1
         return count
@@ -120,6 +181,7 @@ class Worker:
             return 0
         teams = {t.id: t for t in s.execute(select(Team).where(Team.id.in_(sim.champion.keys()))).scalars()}
         specs = markets.futures_specs(season, fixtures, teams, sim)
+        markets.retire_kind(s, "swiss_advance", "Replaced by the Swiss Board")
         return sum(1 for spec in specs if markets.upsert_market(s, season, None, spec, self.settings, now))
 
     def _settle(self, s: Session, now: datetime) -> int:
@@ -152,11 +214,13 @@ class Worker:
         return grants.run_match_day_grants(s, self._season(s), now)
 
 
-def run_forever(interval_seconds: int = 60) -> None:
+def run_forever(idle_seconds: int | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    if idle_seconds:
+        settings = settings.model_copy(update={"idle_poll_seconds": idle_seconds})
     worker = Worker(session_factory(), settings, LolesportsClient(settings), make_source(settings))
     while True:
         started = time.monotonic()
         worker.cycle()
-        time.sleep(max(5.0, interval_seconds - (time.monotonic() - started)))
+        time.sleep(max(5.0, worker.poll_interval() - (time.monotonic() - started)))

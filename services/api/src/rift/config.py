@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     leaguepedia_bot_user: str = Field(default="", repr=False)
     leaguepedia_bot_password: str = Field(default="", repr=False)
 
+    # Worker cadence: fast while a series is live or within 30 minutes of one
+    live_poll_seconds: int = 15
+    early_poll_seconds: int = 5  # while an early-game window (game start to 3:00 / first blood) may be open
+    idle_poll_seconds: int = 60
+
     # Market behaviour
     quote_ttl_seconds: int = 20
     settle_delay_seconds: int = 600  # data must be unchanged this long before grading

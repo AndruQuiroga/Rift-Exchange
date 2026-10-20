@@ -8,7 +8,7 @@ export type MarketT = {
   id: string;
   kind: string;
   scope: string;
-  category: "WINNER" | "DRAFT" | "PROPS" | "FUTURES";
+  category: "WINNER" | "DRAFT" | "PROPS" | "FUTURES" | "OBJECTIVES" | "PLAYERS";
   title: string;
   rules: string;
   state: MarketState;
@@ -19,6 +19,8 @@ export type MarketT = {
   params: Record<string, unknown>;
   outcomes: OutcomeT[];
   result: { void: boolean; winning_codes: string[]; reason: string; revision: number } | null;
+  /** Futures markets about one team (Swiss record) carry it here. */
+  team?: Team | null;
 };
 
 export type EventT = {
@@ -33,9 +35,42 @@ export type EventT = {
   score: [number, number];
   winner: "A" | "B" | null;
   market_count?: number;
+  /** Categories with an open market, for the "what's inside" tags on Today. */
+  categories?: string[];
   close_at?: string | null;
   featured?: MarketT | null;
   markets?: MarketT[];
+  games?: GameT[];
+};
+
+export type GameWindow = "OPEN" | "UPCOMING" | "LOCKED" | "DONE" | "NOT_NEEDED";
+
+export type GameT = {
+  index: number;
+  state: string;
+  started_at: string | null;
+  ended_at: string | null;
+  winner: "A" | "B" | null;
+  window: GameWindow;
+  opens_when: string | null;
+  closes_at: string | null;
+  burned_champions: string[];
+};
+
+export type LiveEvent = { type: "first_blood" | "first_tower" | "dragon" | "baron" | "inhibitor"; team: "A" | "B" | null; at_s: number; detail: string | null };
+
+export type LiveT = {
+  status: EventT["status"];
+  game_index: number | null;
+  game_state: string | null;
+  as_of: string | null;
+  game_clock_s: number | null;
+  gold: [number, number] | null;
+  kills: [number, number] | null;
+  towers: [number, number] | null;
+  dragons: [string[], string[]] | null;
+  events: LiveEvent[];
+  my_picks: (Pick & { live: { score?: [number, number]; current?: number; line?: string; needed?: number } | null })[];
 };
 
 export type Wallet = { available_rc: number; open_stake_rc: number; recovery_due_rc: number; granted_rc: number; realized_net_rc: number };
@@ -58,11 +93,13 @@ export type SeasonT = {
 export type Pick = {
   id: string;
   ticket_id: string;
-  status: "OPEN" | "WON" | "LOST" | "VOID";
+  status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID";
   stake_rc: number;
   odds: string;
   return_rc: number;
   potential_return_rc: number;
+  /** Swiss record picks: what a right-side, wrong-record finish returns. */
+  partial_return_rc: number | null;
   market_title: string;
   outcome_label: string;
   market_state: MarketState;
@@ -93,6 +130,7 @@ export type QuoteItem = {
   odds: string;
   odds_version: number;
   potential_return_rc: number;
+  partial_return_rc: number | null;
   market_title: string;
   outcome_label: string;
 };

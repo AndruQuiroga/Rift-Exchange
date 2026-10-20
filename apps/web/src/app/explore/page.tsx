@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
 import useSWR from "swr";
@@ -35,7 +36,7 @@ function Explore() {
   }, [all, query, season]);
 
   const winner = futures?.markets.find((m) => m.kind === "tournament_winner");
-  const advance = (futures?.markets ?? []).filter((m) => m.kind === "swiss_advance");
+  const board = (futures?.markets ?? []).filter((m) => m.kind === "swiss_record");
 
   return (
     <>
@@ -75,19 +76,16 @@ function Explore() {
               <MarketBlock market={winner} eventLabel="Worlds 2026" />
             </div>
           ) : null}
-          {advance.length ? (
-            <>
-              <div className="section-head" style={{ marginTop: 24 }}>
-                <h2>Advance from Swiss</h2>
-              </div>
-              <div className="event" style={{ padding: "0 14px" }}>
-                {advance.map((m) => (
-                  <MarketBlock key={m.id} market={m} eventLabel="Swiss stage" />
-                ))}
-              </div>
-            </>
+          {board.length ? (
+            <Link className="banner" href="/swiss" style={{ marginTop: 14 }}>
+              <span>
+                <span className="t" style={{ display: "block" }}>Swiss Board</span>
+                <span className="s">{board.some((m) => m.state === "OPEN") ? "Call each team's Swiss record" : "Locked · see your picks in My Picks"}</span>
+              </span>
+              <span className="go">Open →</span>
+            </Link>
           ) : null}
-          {!winner && !advance.length ? (
+          {!winner && !board.length ? (
             <div className="empty">
               <h3>Futures not priced yet</h3>
               <p>They open once the Swiss field is set.</p>

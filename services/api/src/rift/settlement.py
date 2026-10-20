@@ -10,8 +10,10 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rift import ledger
+from rift import ledger, props
+from rift.champions import champion_key
 from rift.domain.money import settlement_return
+from rift.markets import SWISS_RECORDS, swiss_side
 from rift.models import (
     Fixture,
     Game,
@@ -22,6 +24,7 @@ from rift.models import (
     Selection,
     Settlement,
     Team,
+    Ticket,
     Wallet,
 )
 
@@ -32,6 +35,7 @@ class Grade:
     winning_codes: list[str] = field(default_factory=list)
     reason: str = ""
     evidence: dict = field(default_factory=dict)
+    partial_codes: list[str] = field(default_factory=list)  # pay the market's consolation share
 
 
 PENDING = Grade("PENDING", reason="Event not finished")
@@ -63,6 +67,10 @@ def grade_market(session: Session, market: Market) -> Grade:
         return Grade("HOLD", reason="Series postponed")
     ev = {"fixture": fixture.provider_id, "score": f"{fixture.team_a_wins}-{fixture.team_b_wins}"}
     kind = market.kind
+    if market.params.get("early"):
+        game = next((g for g in _games(session, fixture) if g.game_index == market.params["game_index"]), None)
+        if game is not None and game.state != "unneeded" and not game.timeline_complete:
+            return Grade("HOLD", reason="Awaiting complete timeline for the early-game cutoff", evidence=ev)
 
     if kind in ("series_winner", "series_score", "total_games"):
         if fixture.status != "COMPLETED":
@@ -93,6 +101,10 @@ def grade_market(session: Session, market: Market) -> Grade:
         return Grade("RESULT", [code], f"Game {idx} winner confirmed",
                      {**ev, "game": game.provider_id, "winner_evidence": game.winner_evidence})
 
+    if kind in props.KINDS:
+        idx = market.params["game_index"]
+        return props.grade(market, fixture, next((g for g in _games(session, fixture) if g.game_index == idx), None))
+
     if kind == "champion_picked":
         champ = market.params["champion"]
         played = [g for g in _games(session, fixture) if g.state == "completed"]
@@ -110,9 +122,41 @@ def grade_market(session: Session, market: Market) -> Grade:
             scoped = played
         if not scoped or any(not g.stats_complete for g in scoped):
             return Grade("HOLD", reason="Awaiting verified draft data", evidence=ev)
-        picks = {p["champion"] for g in scoped for p in g.stats["players"]}
+        side, role = market.params.get("side"), market.params.get("role")
+        team_id = str(fixture.team_a_id if side == "A" else fixture.team_b_id) if side else None
+        picks = {champion_key(p["champion"]) for g in scoped for p in g.stats["players"]
+                 if (team_id is None or p.get("team_id") == team_id) and (role is None or p.get("role") == role)}
+        champ = champion_key(champ)
+        if team_id is not None and not any(p.get("team_id") == team_id for g in scoped for p in g.stats["players"]):
+            return Grade("HOLD", reason="Awaiting verified team draft data", evidence=ev)
+        if role is not None and any(not p.get("role") for g in scoped for p in g.stats["players"]
+                                    if p.get("team_id") == team_id):
+            return Grade("HOLD", reason="Awaiting verified player roles", evidence=ev)
         return Grade("RESULT", ["YES" if champ in picks else "NO"], "Draft confirmed",
                      {**ev, "games": [g.provider_id for g in scoped]})
+
+    if kind in ("champion_banned", "champion_first_pick"):
+        # Bans and pick order come from Leaguepedia (rift.ingest.sync_drafts); HOLD until stored. The worker
+        # voids anything still held after the deadline, which covers Leaguepedia never filling the game in.
+        idx = market.params["game_index"]
+        game = next((g for g in _games(session, fixture) if g.game_index == idx), None)
+        if game is None or game.state != "completed":
+            if fixture.status == "COMPLETED" or (game is not None and game.state == "unneeded"):
+                return Grade("VOID", reason=f"Game {idx} was not played", evidence=ev)
+            return PENDING
+        draft = game.bans or {}
+        champ = champion_key(market.params["champion"])
+        ev = {**ev, "game": game.provider_id, "source": draft.get("source")}
+        if kind == "champion_banned":
+            if "blue" not in draft or "red" not in draft:
+                return Grade("HOLD", reason=f"Awaiting verified Game {idx} bans", evidence=ev)
+            hit = champ in {champion_key(c) for c in draft["blue"] + draft["red"]}
+            return Grade("RESULT", ["YES" if hit else "NO"], "Bans confirmed",
+                         {**ev, "bans": {"blue": draft["blue"], "red": draft["red"]}})
+        if not draft.get("first_pick"):
+            return Grade("HOLD", reason=f"Awaiting verified Game {idx} pick order", evidence=ev)
+        return Grade("RESULT", ["YES" if champion_key(draft["first_pick"]) == champ else "NO"],
+                     "Pick order confirmed", {**ev, "first_pick": draft["first_pick"]})
 
     if kind == "most_kills_game":
         idx = market.params["game_index"]
@@ -158,7 +202,7 @@ def grade_tournament_market(session: Session, market: Market) -> Grade:
             return PENDING
         team = session.get(Team, final[0].winner_team_id)
         return Grade("RESULT", [team.provider_id], "Final completed", {"fixture": final[0].provider_id})
-    if market.kind == "swiss_advance":
+    if market.kind in ("swiss_advance", "swiss_record"):
         team = session.execute(select(Team).where(Team.provider_id == market.params["team"])).scalar_one()
         wins = losses = 0
         swiss = [f for f in fixtures if f.stage == "Swiss" and team.id in (f.team_a_id, f.team_b_id)]
@@ -169,6 +213,15 @@ def grade_tournament_market(session: Session, market: Market) -> Grade:
                 wins += 1
             else:
                 losses += 1
+        if market.kind == "swiss_record":
+            if wins < 3 and losses < 3:
+                return PENDING
+            record = f"{wins}-{losses}"
+            if record not in SWISS_RECORDS:
+                return Grade("HOLD", reason=f"{team.code} Swiss record {record} is not a valid finish")
+            partial = [r for r in SWISS_RECORDS if r != record and swiss_side(r) == swiss_side(record)]
+            return Grade("RESULT", [record], f"{team.code} finished Swiss {record.replace('-', chr(8211))}",
+                         {"record": record, "partial_codes": partial}, partial_codes=partial)
         if wins >= 3:
             return Grade("RESULT", ["YES"], f"{team.code} reached 3 Swiss wins", {"record": f"{wins}-{losses}"})
         if losses >= 3:
@@ -193,13 +246,25 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         market.state, market.state_reason = "HOLD", grade.reason
         return changed
 
+    # Final scans can refine first blood after a market was already locked. Settle against
+    # that timestamp, rather than the poll-time cutoff, and replay if it later changes.
+    effective_cutoff = market.close_at
+    if market.params.get("early") and market.fixture_id is not None:
+        game = session.execute(select(Game).where(Game.fixture_id == market.fixture_id,
+                              Game.game_index == market.params["game_index"])).scalar_one_or_none()
+        if game is not None and props.early_cutoff(game) is not None:
+            effective_cutoff = min(effective_cutoff, props.early_cutoff(game))
+        grade.evidence = {**grade.evidence, "acceptance_cutoff": effective_cutoff.isoformat()}
     void = grade.status == "VOID"
     winning = sorted(grade.winning_codes) if not void else []
+    partial = set(grade.partial_codes) if not void else set()
     last = session.execute(
         select(MarketResult).where(MarketResult.market_id == market.id)
         .order_by(MarketResult.revision.desc()).limit(1)
     ).scalar_one_or_none()
-    if last is not None and last.void == void and sorted(last.winning_codes) == winning:
+    if (last is not None and last.void == void and sorted(last.winning_codes) == winning
+            and (not market.params.get("early") or
+                 last.evidence.get("acceptance_cutoff") == grade.evidence.get("acceptance_cutoff"))):
         return False
 
     revision = market.result_revision + 1
@@ -216,10 +281,18 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         ).scalars()
     }
     locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if selections else {}
+    # A market's cutoff can be pulled back after the fact (a series or game that started before the poll
+    # saw it, first blood inside the early-game window). A pick accepted after the real cutoff is void.
+    accepted = dict(session.execute(select(Ticket.id, Ticket.accepted_at).where(
+        Ticket.id.in_({s.ticket_id for s in selections}))).all()) if selections else {}
 
     for sel in selections:
-        result = "VOID" if void else ("WON" if outcome_codes[sel.outcome_id] in winning else "LOST")
-        new_return = settlement_return(sel.stake_rc, sel.odds, result)
+        code = outcome_codes[sel.outcome_id]
+        late = accepted[sel.ticket_id] >= effective_cutoff
+        result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
+                  else "LOST")
+        new_return = settlement_return(sel.stake_rc, sel.odds, result,
+                                       consolation=sel.rules_snapshot.get("params", {}).get("consolation"))
         wallet = locked[wallet_by_user[sel.user_id].id]
         if sel.settled_revision > 0 and sel.status == result:
             pass  # unchanged outcome for this selection; record the revision without moving credits
@@ -229,9 +302,10 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
                                ref_type="selection", ref_id=str(sel.id),
                                memo=f"Correction: reversed {sel.status.lower()} return")
             if new_return > 0:
+                memo = sel.rules_snapshot.get("title", "")
                 ledger.credit(session, wallet, kind="VOID_REFUND" if result == "VOID" else "PAYOUT",
                               amount_rc=new_return, key=f"settle:{sel.id}:{revision}", ref_type="selection",
-                              ref_id=str(sel.id), memo=sel.rules_snapshot.get("title", ""))
+                              ref_id=str(sel.id), memo=f"{memo} (right side)" if result == "PARTIAL" else memo)
         session.add(Settlement(selection_id=sel.id, revision=revision, result=result, return_rc=new_return))
         sel.status, sel.return_rc, sel.settled_revision, sel.settled_at = result, new_return, revision, now
         session.add(OutboxEvent(type="selection.settled", entity_id=str(sel.id), user_id=sel.user_id,

@@ -78,8 +78,8 @@ Before editing a rule with any accepted ticket: publish a new rule version and o
 
 ## Deferred after the first build (2026-10-20)
 
-- Ban markets (most banned, champion banned) — Leaguepedia credentials are provisioned and live access was verified on 2026-10-20; ban persistence and market generation remain deferred. See the [activation record](../deployment/leaguepedia-live-2026-10-20.md).
-- Player props (most kills, first blood, objectives) — final-frame stats are ingested; rosters are only known at game start, so pre-series player markets need a roster source.
-- Between-game locks (Game 2+ markets) — the draft starts too soon after a game ends to lock safely from a 60s poll.
+- ~~Ban markets~~ — built in the exchange builders work (2026-10-21): bans and pick order are stored from Leaguepedia and champion-banned markets open once 10 games have bans. **First-pick markets stay off** (`draft.FIRST_PICK_VERIFIED`) until blue-side-first is confirmed against real 2026 drafts.
+- ~~Player props~~ — built: lane duels (lineups from each team's last Worlds game, else its latest regional match), any-line kill totals and objective markets, all graded from the per-game livestats timeline.
+- ~~Between-game locks~~ — built: the worker polls every 15 s around live series and Game N markets close 7 minutes after Game N−1 ends (measured gap to the next game's first frame: 19–21 minutes).
 - Second-friend approval for corrections — corrections are automatic (D-014) and fully visible in each ledger.
 - Docker images are written but were not built in the development container (no Docker daemon there).

@@ -5,6 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    JSON,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -18,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -143,6 +145,8 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(128))
     image_url: Mapped[str | None] = mapped_column(Text)
     region: Mapped[str | None] = mapped_column(String(32))
+    # Starting five from the team's latest regional match, until it plays at Worlds: {match, at, players}
+    lineup: Mapped[dict | None] = mapped_column(JSONB)
 
 
 class Fixture(Base):
@@ -189,6 +193,12 @@ class Game(Base):
     stats_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     bans: Mapped[dict | None] = mapped_column(JSONB)
     data_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Livestats timeline (rift.timeline): first/last frame times, objective firsts, dragons, 15-minute and
+    # final player lines, plus the latest live frame summary. Graders that read it HOLD until complete.
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    timeline: Mapped[dict | None] = mapped_column(JSONB)
+    timeline_complete: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     __table_args__ = (UniqueConstraint("fixture_id", "game_index", name="uq_game_index"),)
 
 
@@ -338,7 +348,7 @@ class Selection(Base):
     __table_args__ = (
         CheckConstraint("stake_rc > 0", name="ck_selection_stake"),
         CheckConstraint("odds > 1", name="ck_selection_odds"),
-        CheckConstraint("status IN ('OPEN','WON','LOST','VOID')", name="ck_selection_status"),
+        CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID')", name="ck_selection_status"),
     )
 
 
@@ -385,3 +395,15 @@ class ProviderSync(Base):
     last_ok_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
+
+
+class ReferenceGame(Base):
+    __tablename__ = "reference_games"
+    provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    event: Mapped[str] = mapped_column(String(128))
+    category: Mapped[str] = mapped_column(String(16))
+    played_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    content_hash: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON)

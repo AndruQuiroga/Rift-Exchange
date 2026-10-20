@@ -6,7 +6,7 @@ Accepted selections keep their frozen odds; only OPEN markets are re-priced, eac
 
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -20,7 +20,7 @@ from rift.domain.pricing import (
     series_win_probability,
     total_games_distribution,
 )
-from rift.models import Fixture, Game, Market, OddsSnapshot, OutboxEvent, Outcome, Season, Team
+from rift.models import AuditEvent, Fixture, Game, Market, OddsSnapshot, OutboxEvent, Outcome, Season, Team
 from rift.ratings import EloModel
 from rift.simulate import FuturesProbabilities
 
@@ -56,21 +56,29 @@ class TournamentStats:
     games: int
     pick_rate: dict[str, float]
     kill_totals: list[int]
+    timeline: object | None = None  # rift.props.TimelineData: objective rates and player lines
 
 
 def tournament_stats(session: Session, season: Season) -> TournamentStats:
-    rows = session.execute(
-        select(Game.stats).join(Fixture, Fixture.id == Game.fixture_id)
-        .where(Fixture.season_id == season.id, Game.stats_complete.is_(True))
-    ).scalars().all()
-    counts: dict[str, int] = {}
+    from rift.champions import champion_key
+    from rift.reference import observations
+    rows = [(g.stats, weight) for g, weight in observations(session, season) if g.stats_complete and g.stats]
+    expansion = 4 if any(weight < 1 for _, weight in rows) else 1
+    counts = {}
+    names = {}
     totals = []
-    for stats in rows:
+    n = 0.0
+    for stats, weight in rows:
+        n += weight
         for champ in {p["champion"] for p in stats["players"]}:
-            counts[champ] = counts.get(champ, 0) + 1
-        totals.append(sum(p["kills"] for p in stats["players"]))
-    n = len(rows)
-    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {}, kill_totals=totals)
+            name = names.setdefault(champion_key(champ), champ)
+            counts[name] = counts.get(name, 0) + weight
+        # Exact quarter-game weights, preserving existing distribution consumers. The effective
+        # sample gate uses n, not the expanded list length.
+        totals.extend([sum(p["kills"] for p in stats["players"])] * round(weight * expansion))
+    from rift.props import timeline_data
+    return TournamentStats(games=n, pick_rate={c: k / n for c, k in counts.items()} if n else {},
+                           kill_totals=totals, timeline=timeline_data(session, season))
 
 
 def _nb_cdf(k: int, mean: float, var: float) -> float:
@@ -93,6 +101,58 @@ def champion_label(champ: str) -> str:
                "RekSai": "Rek'Sai", "KaiSa": "Kai'Sa", "Kaisa": "Kai'Sa", "Belveth": "Bel'Veth", "Chogath": "Cho'Gath",
                "Khazix": "Kha'Zix", "Velkoz": "Vel'Koz", "Nunu": "Nunu & Willump", "RenataGlasc": "Renata Glasc"}
     return special.get(champ, champ)
+
+
+NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after Game N-1 ends (draft ~10 min)
+
+
+def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: TournamentStats, close_at: datetime,
+               confidence: str) -> list[MarketSpec]:
+    """Markets scoped to one game, open before it starts. Kill lines and duels open once it loads (rift.props)."""
+    key = fixture.provider_id
+    when = ("Locks at the scheduled series start." if idx == 1 else
+            f"Opens when Game {idx - 1} ends; locks 7 minutes later or when Game {idx} starts, whichever is first.")
+    specs = []
+    if fixture.best_of > 1:
+        specs.append(MarketSpec(
+            f"game_winner:{key}:{idx}", "game_winner", "GAME", "WINNER", f"Game {idx} winner",
+            f"Winner of Game {idx} of this series. {when} Void if Game {idx} is not played.",
+            close_at, "elo_v1", confidence,
+            [OutcomeSpec("A", a.name, q), OutcomeSpec("B", b.name, 1 - q)], {"game_index": idx}))
+    if stats.timeline is not None:
+        from rift.props import objective_specs
+
+        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, close_at, when))
+    return specs
+
+
+def next_game(fixture: Fixture, games: list[Game]) -> tuple[int, datetime] | None:
+    """The game whose markets are open between games: (index, close_at), or None.
+
+    Game N (N >= 2) opens once Game N-1's end is observed with its time known (the schedule says completed,
+    or its final livestats frame is in), only while the series can still reach Game N. The series score
+    must agree with the completed games; a game seen ending in livestats before the score counts it opens
+    the next game only if that game is reachable whoever won.
+    """
+    need = fixture.best_of // 2 + 1
+    if fixture.best_of == 1 or fixture.status != "LIVE":
+        return None
+    done = sorted((g for g in games if g.state == "completed" or (g.ended_at is not None and g.state != "unneeded")),
+                  key=lambda g: g.game_index)
+    n = len(done) + 1
+    if not done or [g.game_index for g in done] != list(range(1, n)) or n > fixture.best_of:
+        return None
+    scored = sum(1 for g in done if g.state == "completed")
+    unscored = len(done) - scored
+    a, b = fixture.team_a_wins, fixture.team_b_wins
+    if a + b != scored or unscored > 1 or max(a, b) + unscored >= need:
+        return None
+    nxt = next((g for g in games if g.game_index == n), None)
+    if nxt is not None and (nxt.state != "unstarted" or nxt.started_at is not None):
+        return None
+    if done[-1].ended_at is None:
+        return None
+    return n, done[-1].ended_at + NEXT_GAME_WINDOW
 
 
 def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: TournamentStats,
@@ -123,39 +183,9 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
             f"Number of games played in the {fmt}. Void if the series is not completed.",
             fixture.scheduled_at, "elo_v1_independent_games", confidence,
             [OutcomeSpec(str(n), f"{n} games", p) for n, p in sorted(totals.items())], {}))
-        specs.append(MarketSpec(
-            f"game_winner:{key}:1", "game_winner", "GAME", "WINNER", "Game 1 winner",
-            "Winner of Game 1 of this series. Void if Game 1 is not played.",
-            fixture.scheduled_at, "elo_v1", confidence,
-            [OutcomeSpec("A", a.name, q), OutcomeSpec("B", b.name, 1 - q)], {"game_index": 1}))
+    specs.extend(game_specs(fixture, 1, a, b, q, stats, fixture.scheduled_at, confidence))
 
-    if stats.games >= MIN_DRAFT_GAMES:
-        mean = sum(stats.kill_totals) / len(stats.kill_totals)
-        var = sum((k - mean) ** 2 for k in stats.kill_totals) / max(len(stats.kill_totals) - 1, 1)
-        line = math.floor(mean) + 0.5
-        under = _nb_cdf(int(line), mean, var)
-        specs.append(MarketSpec(
-            f"total_kills_game:{key}:1:{line}", "total_kills_game", "GAME", "PROPS", f"Game 1 total kills {line}",
-            f"Combined kills by both teams in Game 1. Over means {int(line) + 1} or more. Requires verified "
-            "final game stats; void if Game 1 is not played.",
-            fixture.scheduled_at, "negbin_tournament_v1", "EXPERIMENTAL",
-            [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
-            {"game_index": 1, "line": str(line)}))
-        expected_games = sum(n * p for n, p in total_games_distribution(q, bo).items())
-        contested = sorted(stats.pick_rate.items(), key=lambda kv: -kv[1])
-        chosen = contested[:3] + contested[6:8]  # a few staples and a couple of less certain picks
-        for champ, rate in chosen:
-            rate = min(max(rate, 0.02), 0.97)
-            p_any = 1 - (1 - rate) ** expected_games
-            label = champion_label(champ)
-            scope_text = "Game 1" if bo == 1 else "any game of the series"
-            specs.append(MarketSpec(
-                f"champion_picked:{key}:{champ}", "champion_picked", "SERIES", "DRAFT",
-                f"{label} picked in {scope_text}",
-                f"Yes if either team picks {label} in {scope_text}. Fearless Draft means a champion can be picked "
-                "at most once per series. Requires verified draft data.",
-                fixture.scheduled_at, "pick_rate_tournament_v1", "EXPERIMENTAL",
-                [OutcomeSpec("YES", "Yes", p_any), OutcomeSpec("NO", "No", 1 - p_any)], {"champion": champ}))
+    # Champion markets are created on demand from the champion grid (rift.draft), not pre-picked here.
     return specs
 
 
@@ -175,13 +205,38 @@ def futures_specs(season: Season, fixtures: list[Fixture], teams: dict, sim: Fut
         for t, p in sorted(sim.advance.items(), key=lambda kv: -kv[1]):
             team = teams[t]
             specs.append(MarketSpec(
-                f"swiss_advance:{team.provider_id}", "swiss_advance", "STAGE", "FUTURES",
-                f"{team.name} advance from Swiss",
-                "Yes if the team reaches 3 Swiss wins before 3 losses. Locks before the first Swiss match.",
-                swiss_start, "elo_v1_bracket_sim", "EXPERIMENTAL",
-                [OutcomeSpec("YES", "Advance", p), OutcomeSpec("NO", "Eliminated", 1 - p)],
-                {"team": team.provider_id}))
+                f"swiss_record:{team.provider_id}", "swiss_record", "STAGE", "FUTURES",
+                f"{team.name} Swiss record",
+                f"Pick {team.name}'s final Swiss record. Exact record pays the full price. Right side but wrong "
+                "record (advanced, or eliminated) pays a quarter of the full return. Locks before the first "
+                "Swiss match.",
+                swiss_start, "elo_v1_bracket_sim_record", "EXPERIMENTAL",
+                swiss_record_outcomes(sim.records[t]),
+                {"team": team.provider_id, "consolation": str(SWISS_CONSOLATION)}))
     return specs
+
+
+SWISS_RECORDS = ("3-0", "3-1", "3-2", "2-3", "1-3", "0-3")
+SWISS_CONSOLATION = Decimal("0.25")
+
+
+def swiss_side(record: str) -> str:
+    return "ADVANCE" if record.startswith("3") else "OUT"
+
+
+def swiss_record_outcomes(dist: dict[str, float]) -> list[OutcomeSpec]:
+    """Price each record so exact pays odds and same-side pays odds x consolation at fair value.
+
+    odds = 1 / (P(exact) + c * P(same side, other record)), expressed as the effective probability
+    the generic pricer turns into odds.
+    """
+    c = float(SWISS_CONSOLATION)
+    out = []
+    for r in SWISS_RECORDS:
+        exact = dist.get(r, 0.0)
+        side = sum(p for k, p in dist.items() if k != r and swiss_side(k) == swiss_side(r))
+        out.append(OutcomeSpec(r, r.replace("-", "–"), exact + c * side if exact > 0 else 0.0))
+    return out
 
 
 def upsert_market(session: Session, season: Season, fixture: Fixture | None, spec: MarketSpec,
@@ -238,17 +293,74 @@ def reprice(session: Session, market: Market, spec: MarketSpec, settings: Settin
     return changed
 
 
+def retire_kind(session: Session, kind: str, reason: str, template_prefix: str | None = None,
+                model_key: str | None = None) -> int:
+    """Stop offering a market family. Accepted picks stay valid; markets lock and settle as before."""
+    q = select(Market).where(Market.kind == kind, Market.state == "OPEN")
+    if template_prefix:
+        q = q.where(Market.template_key.startswith(template_prefix))
+    if model_key:
+        q = q.where(Market.model_key == model_key)
+    rows = session.execute(q.with_for_update()).scalars().all()
+    for m in rows:
+        m.state, m.state_reason = "SUSPENDED", reason
+        session.add(AuditEvent(actor="system", action="market.suspended", entity_type="market",
+                               entity_id=str(m.id), data={"reason": reason}))
+    session.flush()
+    return len(rows)
+
+
+def game_index(market: Market) -> int | None:
+    idx = (market.params or {}).get("game_index") if market.scope == "GAME" else None
+    return idx if isinstance(idx, int) else None
+
+
 def lock_due(session: Session, now: datetime) -> int:
-    rows = session.execute(
+    """Lock markets at their cutoff, or earlier when what they predict has started.
+
+    Series markets and Game 1 lock the moment the series is live. A Game N (N >= 2) market opens while the
+    series is live, so it locks only at its own cutoff, when its game is seen in progress, or when the
+    series is over.
+    """
+    locked: dict = {}
+    for m in session.execute(
         select(Market).where(Market.state.in_(("OPEN", "SUSPENDED")), Market.close_at <= now).with_for_update()
-    ).scalars().all()
+    ).scalars():
+        locked[m.id] = (m, "Locked at 3:00 or first blood" if m.params.get("early") else
+                        f"Locked before Game {game_index(m)} draft" if (game_index(m) or 0) > 1 else
+                        "Locked at series start" if m.fixture_id else "Locked")
     live = session.execute(
-        select(Market).join(Fixture, Fixture.id == Market.fixture_id)
-        .where(Market.state == "OPEN", Fixture.status.in_(("LIVE", "COMPLETED"))).with_for_update()
-    ).scalars().all()
-    for m in {*rows, *live}:
-        m.state = "LOCKED"
-        m.state_reason = "Locked at series start" if m.fixture_id else "Locked"
+        select(Market, Fixture).join(Fixture, Fixture.id == Market.fixture_id)
+        .where(Market.state == "OPEN", Fixture.status.in_(("LIVE", "COMPLETED")))
+        .with_for_update(of=Market)
+    ).all()
+    fixture_ids = {f.id for _m, f in live}
+    games = {(g.fixture_id, g.game_index): g for g in session.execute(select(Game).where(
+        Game.fixture_id.in_(fixture_ids))).scalars()} if fixture_ids else {}
+    for m, f in live:
+        idx = game_index(m)
+        g = games.get((f.id, idx or 1))  # series markets take Game 1's start
+        if m.params.get("early"):
+            # Early-game markets are meant to be open while their game runs; they lock at their own cutoff.
+            if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":
+                locked.setdefault(m.id, (m, "Game over"))
+            continue
+        # The real start can precede the poll that noticed it. Pull the cutoff back so a pick that
+        # slipped in after the start is voided at settlement (settlement.apply_grade).
+        start = g.started_at if g is not None else None
+        if idx is None or idx == 1:
+            reason = "Locked at series start"
+            m.close_at = min(m.close_at, now, *([start] if start else []))
+        elif g is not None and (g.state in ("inProgress", "completed") or g.started_at is not None):
+            reason = f"Locked at Game {idx} start"
+            m.close_at = min(m.close_at, now, *([start] if start else []))
+        elif f.status != "LIVE" or (g is not None and g.state == "unneeded"):
+            reason = "Series over"
+        else:
+            continue
+        locked.setdefault(m.id, (m, reason))
+    for m, reason in locked.values():
+        m.state, m.state_reason = "LOCKED", reason
         session.add(OutboxEvent(type="market.locked", entity_id=str(m.id), payload={}))
     session.flush()
-    return len({*rows, *live})
+    return len(locked)

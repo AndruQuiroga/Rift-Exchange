@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from rift import auth, ledger
+from rift import auth, draft, ledger, markets, props
 from rift.api import views
 from rift.config import Settings, get_settings
 from rift.db import db_now, session_factory
@@ -170,7 +170,15 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         fixture = session.get(Fixture, event_id)
         if fixture is None:
             raise ApiError(404, "NOT_FOUND", "Event not found.")
-        return views.event_detail(session, fixture)
+        return views.event_detail(session, fixture, db_now(session))
+
+    @app.get("/api/v1/events/{event_id}/live")
+    def get_event_live(event_id: uuid.UUID, session: Db, user: CurrentUser):
+        # Served from what the worker stored; an API request never calls the feed.
+        fixture = session.get(Fixture, event_id)
+        if fixture is None:
+            raise ApiError(404, "NOT_FOUND", "Event not found.")
+        return views.live_view(session, fixture, user)
 
     @app.get("/api/v1/markets")
     def list_markets(session: Db, user: CurrentUser, category: str | None = None):
@@ -186,6 +194,48 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                              "at": t.isoformat()} for c, v, o, t in rows]}
 
     # ------------------------------------------------------------ slip
+
+    def _market_out(session: Session, market: Market) -> dict:
+        outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
+        return views.market_view(market, outcomes)
+
+    @app.get("/api/v1/events/{event_id}/duels")
+    def duel_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        return props.duels(session, season_of(session), _fixture(session, event_id), game, settings, db_now(session))
+
+    class DuelBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        role: str = Field(pattern="^(top|jungle|mid|bottom|support)$")
+        stat: str = Field(pattern="^(kills|cs15|damage)$")
+
+    @app.post("/api/v1/events/{event_id}/duels")
+    def duel_market(event_id: uuid.UUID, body: DuelBody, session: Db, user: CurrentUser):
+        try:
+            market = props.ensure_duel(session, season_of(session), _fixture(session, event_id), body.game_index,
+                                       body.role, body.stat, settings, db_now(session))
+        except props.PropsError as e:
+            raise ApiError(409, e.code, e.message) from e
+        return _market_out(session, market)
+
+    @app.get("/api/v1/events/{event_id}/kill-lines")
+    def kill_line_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        season = season_of(session)
+        return props.kill_lines(session, _fixture(session, event_id), game, markets.tournament_stats(session, season),
+                                settings, db_now(session))
+
+    class KillLineBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        line: str = Field(pattern=r"^\d{1,2}\.5$")
+
+    @app.post("/api/v1/events/{event_id}/kill-lines")
+    def kill_line_market(event_id: uuid.UUID, body: KillLineBody, session: Db, user: CurrentUser):
+        season = season_of(session)
+        try:
+            market = props.ensure_kill_line(session, season, _fixture(session, event_id), body.game_index, body.line,
+                                            markets.tournament_stats(session, season), settings, db_now(session))
+        except props.PropsError as e:
+            raise ApiError(409, e.code, e.message) from e
+        return _market_out(session, market)
 
     class QuoteBody(BaseModel):
         class Item(BaseModel):
@@ -203,6 +253,37 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                                 now=db_now(session), ttl_seconds=settings.quote_ttl_seconds)
         except PlacementError as e:
             raise placement_error(e) from e
+
+    def _fixture(session: Session, event_id: uuid.UUID) -> Fixture:
+        fixture = session.get(Fixture, event_id)
+        if fixture is None:
+            raise ApiError(404, "NOT_FOUND", "Event not found.")
+        return fixture
+
+    @app.get("/api/v1/events/{event_id}/draft")
+    def draft_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
+        try:
+            return draft.grid(session, season_of(session), _fixture(session, event_id), game, settings)
+        except draft.DraftError as e:
+            raise ApiError(409, e.code, e.message) from e
+
+    class DraftMarketBody(BaseModel):
+        game_index: int = Field(ge=1, le=5)
+        champion: str = Field(min_length=1, max_length=40)
+        scope: str = Field(pattern="^(picked|A|B|banned|first)$")
+        role: str | None = Field(default=None, pattern="^(top|jungle|mid|bottom|support)$")  # scope A/B only
+
+    @app.post("/api/v1/events/{event_id}/draft")
+    def draft_market(event_id: uuid.UUID, body: DraftMarketBody, session: Db, user: CurrentUser):
+        """Create (once, for everyone) the market behind a tapped champion and return it priced."""
+        fixture = _fixture(session, event_id)
+        try:
+            market = draft.ensure_market(session, season_of(session), fixture, body.game_index, body.champion,
+                                         body.scope, settings, db_now(session), role=body.role)
+        except draft.DraftError as e:
+            raise ApiError(409, e.code, e.message) from e
+        outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
+        return views.market_view(market, outcomes)
 
     class TicketBody(BaseModel):
         quote_id: uuid.UUID

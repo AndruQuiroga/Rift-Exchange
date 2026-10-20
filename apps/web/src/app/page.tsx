@@ -5,13 +5,13 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
-import { dayLabel, longDate, rc, venueToday } from "@/lib/format";
-import { useMe, useNow, useSeason } from "@/lib/hooks";
+import { countdown, dayLabel, longDate, rc, venueToday } from "@/lib/format";
+import { useNow, useSeason } from "@/lib/hooks";
+import { teamName } from "@/lib/teams";
 import type { EventT, MarketT, Standing } from "@/lib/types";
 
 export default function TodayPage() {
   const { data: season } = useSeason();
-  const { data: me } = useMe();
   const now = useNow();
   const days = useMemo(() => season?.match_days ?? [], [season]);
   const today = season ? venueToday(season.timezone) : null;
@@ -28,8 +28,10 @@ export default function TodayPage() {
   const { data: futures } = useSWR<{ markets: MarketT[] }>("/markets?category=FUTURES");
   const { data: league } = useSWR<{ standings: Standing[] }>("/league/standings");
 
-  const grantToday = today && days.includes(today);
-  const openFutures = futures?.markets.filter((m) => m.state === "OPEN") ?? [];
+  const open = futures?.markets.filter((m) => m.state === "OPEN") ?? [];
+  const board = open.filter((m) => m.kind === "swiss_record");
+  const boardLock = board[0] ? countdown(board[0].close_at, now) : null;
+  const champion = open.find((m) => m.kind === "tournament_winner");
 
   return (
     <>
@@ -40,36 +42,28 @@ export default function TodayPage() {
         </div>
       </div>
 
-      <div className="wallet" aria-label="Wallet summary">
-        <div className="wallet-main">
-          <div className="label">Available</div>
-          <div className="value num">
-            {me ? rc(me.wallet.available_rc) : "—"}
-            <small>RC</small>
-          </div>
-        </div>
-        <div className="wallet-side num">
-          <div>
-            In play <b>{me ? rc(me.wallet.open_stake_rc) : "—"} RC</b>
-          </div>
-          {grantToday ? <div className="grant">+{rc(season!.match_day_grant_rc)} today</div> : <div>Next grant on match day</div>}
-        </div>
-      </div>
-
       {days.length ? (
-        <div className="section">
-          <div className="chips daytabs" role="tablist" aria-label="Match days">
-            {days.map((d) => {
-              const l = dayLabel(d);
-              return (
-                <button key={d} role="tab" className="chip" aria-selected={d === day} onClick={() => setDay(d)}>
-                  <span>{d === today ? "Today" : l.dow}</span>
-                  <b className="num">{l.date}</b>
-                </button>
-              );
-            })}
-          </div>
+        <div className="chips daytabs" role="tablist" aria-label="Match days">
+          {days.map((d) => {
+            const l = dayLabel(d);
+            return (
+              <button key={d} role="tab" className="chip" aria-selected={d === day} onClick={() => setDay(d)}>
+                <span>{d === today ? "Today" : l.dow}</span>
+                <b className="num">{l.date}</b>
+              </button>
+            );
+          })}
         </div>
+      ) : null}
+
+      {board.length ? (
+        <Link className="banner section" href="/swiss" style={{ marginTop: 14 }}>
+          <span>
+            <span className="t" style={{ display: "block" }}>Swiss Board is open</span>
+            <span className="s">Call each team&apos;s record{boardLock ? ` · locks in ${boardLock}` : ""}</span>
+          </span>
+          <span className="go">Open →</span>
+        </Link>
       ) : null}
 
       <section className="section" aria-label="Matches">
@@ -84,30 +78,30 @@ export default function TodayPage() {
             <p>Pick another match day above, or browse futures while you wait.</p>
           </div>
         ) : (
-          events.events.map((e) => <EventCard key={e.id} event={e} now={now} />)
+          <>
+            <div className="section-head">
+              <h2>Match winner</h2>
+              <span className="muted" style={{ fontSize: 13 }}>Tap a side to add it</span>
+            </div>
+            {events.events.map((e) => <EventCard key={e.id} event={e} now={now} />)}
+          </>
         )}
       </section>
 
       <div className="two-col section">
-        {openFutures.length ? (
+        {champion ? (
           <section>
             <div className="section-head">
-              <h2>Futures</h2>
+              <h2>Worlds champion</h2>
               <Link href="/explore?tab=FUTURES">All futures</Link>
             </div>
             <div className="rows">
-              {openFutures
-                .filter((m) => m.kind === "tournament_winner")
-                .flatMap((m) => m.outcomes.slice(0, 4).map((o) => ({ m, o })))
-                .map(({ m, o }) => (
-                  <Link className="row" key={o.id} href="/explore?tab=FUTURES">
-                    <div>
-                      <div className="title">{o.label}</div>
-                      <div className="sub">{m.title}</div>
-                    </div>
-                    <div className="amount num">{o.odds ? `${Number(o.odds).toFixed(2)}×` : "—"}</div>
-                  </Link>
-                ))}
+              {champion.outcomes.slice(0, 4).map((o) => (
+                <Link className="row" key={o.id} href="/explore?tab=FUTURES">
+                  <div className="title">{teamName({ code: "", name: o.label })}</div>
+                  <div className="amount num">{o.odds ? `${Number(o.odds).toFixed(2)}×` : "—"}</div>
+                </Link>
+              ))}
             </div>
           </section>
         ) : null}
@@ -136,4 +130,3 @@ export default function TodayPage() {
     </>
   );
 }
-

@@ -97,6 +97,7 @@ export function MarketBlock({ market, eventLabel, compact }: { market: MarketT; 
 
 export function PickStatus({ pick }: { pick: Pick }) {
   if (pick.status === "WON") return <span className="status won"><span className="dot" />Won</span>;
+  if (pick.status === "PARTIAL") return <span className="status won"><span className="dot" />Right side</span>;
   if (pick.status === "LOST") return <span className="status lost"><span className="dot" />Lost</span>;
   if (pick.status === "VOID") return <span className="status void"><span className="dot" />Void</span>;
   if (pick.market_state === "HOLD") return <span className="status hold"><span className="dot" />Awaiting data</span>;

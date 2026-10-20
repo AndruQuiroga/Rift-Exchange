@@ -8,9 +8,11 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from rift.domain.money import winning_return
+from rift.domain.money import partial_return, winning_return
+from rift.markets import game_index
 from rift.models import (
     Fixture,
+    Game,
     LedgerEntry,
     Market,
     MarketResult,
@@ -22,6 +24,7 @@ from rift.models import (
     User,
     Wallet,
 )
+from rift.timeline import burned_champions
 
 CENT = Decimal("0.01")
 
@@ -105,13 +108,14 @@ def events(db: Session, season: Season, date: str | None, stage: str | None) -> 
         featured = next((m for m in fm if m.kind == "series_winner"), None)
         out.append({**fixture_view(f, teams),
                     "market_count": len(fm),
+                    "categories": sorted({m.category for m in fm if m.state == "OPEN"}),
                     "close_at": featured.close_at.isoformat() if featured else None,
                     "featured": market_view(featured, outcomes[featured.id], results.get(featured.id))
                     if featured else None})
     return out
 
 
-def event_detail(db: Session, fixture: Fixture) -> dict:
+def event_detail(db: Session, fixture: Fixture, now: datetime) -> dict:
     teams = _teams(db, [fixture.team_a_id, fixture.team_b_id])
     markets = list(db.execute(select(Market).where(Market.fixture_id == fixture.id).order_by(Market.created_at))
                    .scalars())
@@ -120,7 +124,151 @@ def event_detail(db: Session, fixture: Fixture) -> dict:
     order = {"WINNER": 0, "DRAFT": 1, "PROPS": 2}
     markets.sort(key=lambda m: (order.get(m.category, 9), m.created_at))
     return {**fixture_view(fixture, teams),
+            "games": games_view(fixture, _games(db, fixture), markets, now),
             "markets": [market_view(m, outcomes[m.id], results.get(m.id)) for m in markets]}
+
+
+def _games(db: Session, fixture: Fixture) -> list[Game]:
+    return list(db.execute(select(Game).where(Game.fixture_id == fixture.id).order_by(Game.game_index)).scalars())
+
+
+def _side(fixture: Fixture, team_id) -> str | None:
+    return "A" if team_id and team_id == fixture.team_a_id else "B" if team_id and team_id == fixture.team_b_id \
+        else None
+
+
+def games_view(fixture: Fixture, games: list[Game], markets: list[Market], now: datetime) -> list[dict]:
+    """Every game slot of the series with its betting window.
+
+    OPEN: its markets take picks now. UPCOMING: they open later (`opens_when`). LOCKED: picks closed, game not
+    finished. DONE: played. NOT_NEEDED: the series ended (or is decided) before this game.
+    """
+    by_index = {g.game_index: g for g in games}
+    burned = burned_champions(games, fixture.best_of)
+    need = fixture.best_of // 2 + 1
+    decided = fixture.status == "COMPLETED" or max(fixture.team_a_wins, fixture.team_b_wins) >= need
+    out = []
+    for idx in range(1, fixture.best_of + 1):
+        g = by_index.get(idx)
+        scoped = [m for m in markets if game_index(m) == idx or (idx == 1 and game_index(m) is None)]
+        open_ = [m for m in scoped if m.state == "OPEN" and m.close_at > now]
+        played = g is not None and (g.state in ("inProgress", "completed") or g.started_at is not None)
+        if g is not None and g.state == "completed":
+            window = "DONE"
+        elif fixture.status == "POSTPONED" and not played:
+            window = "UPCOMING"
+        elif (g is not None and g.state == "unneeded") or (not played and (decided or fixture.status == "CANCELED")):
+            window = "NOT_NEEDED"
+        elif open_:
+            window = "OPEN"
+        elif played or scoped or (idx == 1 and fixture.status != "SCHEDULED"):
+            window = "LOCKED"
+        else:
+            window = "UPCOMING"
+        opens_when = None
+        if window == "UPCOMING":
+            opens_when = f"When Game {idx - 1} ends" if idx > 1 else (
+                "When both teams are known" if not (fixture.team_a_id and fixture.team_b_id) else None)
+        closes = min((m.close_at for m in open_), default=None)
+        out.append({
+            "index": idx, "state": g.state if g else "unstarted",
+            "started_at": g.started_at.isoformat() if g and g.started_at else None,
+            "ended_at": g.ended_at.isoformat() if g and g.ended_at else None,
+            "winner": _side(fixture, g.winner_team_id) if g else None,
+            "window": window, "opens_when": opens_when,
+            "closes_at": closes.isoformat() if closes else None,
+            "burned_champions": burned[idx],
+        })
+    return out
+
+
+def _a_side(fixture: Fixture, game: Game | None) -> str | None:
+    """Which side team A plays on in this game; None unless both sides are known and consistent."""
+    if game is None or fixture.team_a_id is None or fixture.team_b_id is None:
+        return None
+    if (game.blue_team_id, game.red_team_id) == (fixture.team_a_id, fixture.team_b_id):
+        return "blue"
+    if (game.blue_team_id, game.red_team_id) == (fixture.team_b_id, fixture.team_a_id):
+        return "red"
+    return None
+
+
+def _pair(a_side: str | None, by_side: dict | None) -> list | None:
+    """[team A, team B] from a {blue, red} mapping."""
+    if a_side is None or not by_side:
+        return None
+    return [by_side.get(a_side), by_side.get("red" if a_side == "blue" else "blue")]
+
+
+def current_game(games: list[Game]) -> Game | None:
+    """The game in progress, else the most recently started one."""
+    live = [g for g in games if g.state == "inProgress" or (g.started_at and g.ended_at is None
+                                                             and g.state != "completed")]
+    if live:
+        return max(live, key=lambda g: g.game_index)
+    started = [g for g in games if g.started_at is not None or g.state == "completed"]
+    return max(started, key=lambda g: g.game_index) if started else None
+
+
+def live_view(db: Session, fixture: Fixture, user: User) -> dict:
+    """Live scoreboard from what the worker stored on the games (never the feed itself)."""
+    games = _games(db, fixture)
+    game = current_game(games)
+    tl = (game.timeline or {}) if game else {}
+    live = tl.get("live") or {}
+    a_side = _a_side(fixture, game)
+    events = []
+    if game is not None:
+        side_code = {a_side: "A", {"blue": "red", "red": "blue"}[a_side]: "B"} if a_side else {}
+        firsts = tl.get("firsts") or {}
+        for name, kind in (("blood", "first_blood"), ("tower", "first_tower"), ("inhibitor", "inhibitor")):
+            ev = firsts.get(name)
+            if ev:
+                events.append({"type": kind, "team": side_code.get(ev["side"]), "at_s": ev["at_s"], "detail": None})
+        for d in tl.get("dragons") or []:
+            events.append({"type": "dragon", "team": side_code.get(d["side"]), "at_s": d["at_s"], "detail": d["type"]})
+        for b in tl.get("barons") or []:
+            events.append({"type": "baron", "team": side_code.get(b["side"]), "at_s": b["at_s"], "detail": None})
+        events.sort(key=lambda e: e["at_s"])
+    markets = {m.id: m for m in db.execute(select(Market).where(Market.fixture_id == fixture.id)).scalars()}
+    selections = list(db.execute(
+        select(Selection).join(Ticket, Ticket.id == Selection.ticket_id)
+        .where(Selection.user_id == user.id, Selection.market_id.in_(list(markets)))
+        .order_by(Ticket.accepted_at)).scalars()) if markets else []
+    picks = []
+    by_index = {g.game_index: g for g in games}
+    for row, sel in zip(selection_rows(db, selections), selections, strict=True):
+        picks.append({**row, "live": pick_progress(fixture, markets[sel.market_id], by_index)})
+    return {
+        "status": fixture.status, "game_index": game.game_index if game else None,
+        "game_state": live.get("state"), "as_of": live.get("at"),
+        "game_clock_s": live.get("clock_s"),
+        "gold": _pair(a_side, live.get("gold")), "kills": _pair(a_side, live.get("kills")),
+        "towers": _pair(a_side, live.get("towers")), "dragons": _pair(a_side, live.get("dragons")),
+        "events": events, "my_picks": picks,
+    }
+
+
+def game_kills(game: Game | None) -> int | None:
+    """Kills so far in a game: verified final stats, else the latest live frame."""
+    if game is None:
+        return None
+    if game.stats_complete and game.stats:
+        return sum(p["kills"] for p in game.stats["players"])
+    kills = ((game.timeline or {}).get("live") or {}).get("kills")
+    return sum(kills.values()) if kills else None
+
+
+def pick_progress(fixture: Fixture, market: Market, games: dict[int, Game]) -> dict | None:
+    if market.kind in ("series_winner", "series_score"):
+        return {"score": [fixture.team_a_wins, fixture.team_b_wins]}
+    if market.kind == "total_kills_game":
+        line = market.params["line"]
+        current = game_kills(games.get(market.params["game_index"]))
+        if current is None:
+            return {"current": None, "line": line, "needed": None}
+        return {"current": current, "line": line, "needed": max(int(float(line)) + 1 - current, 0)}
+    return None
 
 
 def season_markets(db: Session, season: Season, category: str | None) -> list[dict]:
@@ -130,7 +278,11 @@ def season_markets(db: Session, season: Season, category: str | None) -> list[di
     markets = list(db.execute(q.order_by(Market.close_at, Market.title)).scalars())
     outcomes = _outcomes_by_market(db, [m.id for m in markets])
     results = _latest_results(db, [m.id for m in markets])
-    return [market_view(m, outcomes[m.id], results.get(m.id)) for m in markets]
+    keys = {m.params["team"] for m in markets if m.params.get("team")}
+    teams = {t.provider_id: t for t in db.execute(select(Team).where(Team.provider_id.in_(keys))).scalars()} \
+        if keys else {}
+    return [{**market_view(m, outcomes[m.id], results.get(m.id)),
+             "team": team_view(teams.get(m.params.get("team", "")))} for m in markets]
 
 
 def wallet_summary(db: Session, wallet: Wallet) -> dict:
@@ -171,6 +323,8 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "id": str(s.id), "ticket_id": str(s.ticket_id), "status": s.status, "stake_rc": s.stake_rc,
             "odds": str(s.odds.quantize(CENT)), "return_rc": s.return_rc,
             "potential_return_rc": winning_return(s.stake_rc, s.odds),
+            "partial_return_rc": partial_return(s.stake_rc, s.odds, s.rules_snapshot["params"]["consolation"])
+            if s.rules_snapshot.get("params", {}).get("consolation") else None,
             "market_title": s.rules_snapshot.get("title"), "outcome_label": s.rules_snapshot.get("outcome"),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
@@ -200,7 +354,7 @@ def standings(db: Session, season: Season) -> list[dict]:
                                  .group_by(Selection.status)).all())
         rows.append({"user": {"id": str(w.user_id), "handle": users[w.user_id].handle,
                               "display_name": users[w.user_id].display_name}, **summary,
-                     "won": record.get("WON", 0), "lost": record.get("LOST", 0)})
+                     "won": record.get("WON", 0) + record.get("PARTIAL", 0), "lost": record.get("LOST", 0)})
     rows.sort(key=lambda r: -r["available_rc"])
     for i, r in enumerate(rows):
         r["rank"] = 1 + sum(1 for o in rows if o["available_rc"] > r["available_rc"])

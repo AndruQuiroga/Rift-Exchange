@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
-import { rc } from "@/lib/format";
-import { useLiveUpdates, useMe } from "@/lib/hooks";
+import { rc, venueToday } from "@/lib/format";
+import { useLiveUpdates, useMe, useSeason } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconArrow, IconExplore, IconLeague, IconPicks, IconProfile, IconToday } from "./icons";
 import { SlipPanel } from "./SlipPanel";
@@ -38,6 +38,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { data: me, error } = useMe();
   const slip = useSlip();
+  const { data: season } = useSeason();
+  const grantToday = season ? season.match_days.includes(venueToday(season.timezone)) : false;
   useLiveUpdates(Boolean(me));
 
   if (pathname.startsWith("/join")) return <>{children}</>;
@@ -66,9 +68,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           <header className="topbar">
             <Brand />
             <span className="sr-only">Rift Exchange</span>
-            <Link href="/profile" className="topbar-balance num" aria-label="Wallet" hidden={pathname === "/"}>
+            <Link href="/profile" className="topbar-balance num" aria-label="Wallet">
               <b>{me ? `${rc(me.wallet.available_rc)} RC` : "—"}</b>
-              <span>Available</span>
+              {grantToday ? <span className="grant">+{rc(season!.match_day_grant_rc)} today</span> : <span>Available</span>}
             </Link>
           </header>
           {children}
@@ -114,10 +116,16 @@ function SlipSheet({ setOpen }: { setOpen: (open: boolean) => void }) {
   useEffect(() => {
     const onClose = () => setOpen(false);
     const opener = document.activeElement as HTMLElement | null;
-    // Browser back closes the sheet without losing picks.
-    history.pushState({ riftSheet: true }, "");
+    // Browser back closes the sheet without losing picks. The history entry is pushed a tick later so
+    // an immediate unmount (React StrictMode runs effects twice in dev) cancels it instead of queueing
+    // a back() that would close the remounted sheet.
+    let pushed = false;
     const onPop = () => onClose();
-    window.addEventListener("popstate", onPop);
+    const timer = window.setTimeout(() => {
+      history.pushState({ riftSheet: true }, "");
+      pushed = true;
+      window.addEventListener("popstate", onPop);
+    }, 0);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") history.back();
       if (e.key === "Tab" && ref.current) {
@@ -138,10 +146,11 @@ function SlipSheet({ setOpen }: { setOpen: (open: boolean) => void }) {
     document.body.style.overflow = "hidden";
     ref.current?.querySelector<HTMLElement>("input, button")?.focus();
     return () => {
+      window.clearTimeout(timer);
       window.removeEventListener("popstate", onPop);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
-      if (history.state?.riftSheet) history.back();
+      if (pushed && history.state?.riftSheet) history.back();
       opener?.focus?.();
     };
   }, [setOpen]);

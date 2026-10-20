@@ -10,8 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from rift import ledger
-from rift.domain.money import winning_return
-from rift.models import Market, OutboxEvent, Outcome, Quote, Selection, Ticket, Wallet
+from rift.domain.money import partial_return, winning_return
+from rift.models import Fixture, Market, OutboxEvent, Outcome, Quote, Selection, Ticket, Wallet
 
 
 class PlacementError(Exception):
@@ -37,7 +37,14 @@ def _wallet(session: Session, season_id: uuid.UUID, user_id: uuid.UUID) -> Walle
     return wallet
 
 
-def _check_open(market: Market, outcome: Outcome, now: datetime) -> None:
+def _check_open(session: Session, market: Market, outcome: Outcome, now: datetime) -> None:
+    if market.params.get("early"):
+        from rift.props import early_window
+
+        fixture = session.get(Fixture, market.fixture_id)
+        if fixture is None or not early_window(session, fixture, market.params["game_index"], now).open:
+            raise PlacementError("MARKET_CLOSED", "This early-game window has closed.",
+                                 {"market_id": str(market.id)})
     if market.state != "OPEN" or market.close_at <= now:
         raise PlacementError("MARKET_CLOSED", "This prediction is no longer open.",
                              {"market_id": str(market.id), "closed_at": market.close_at.isoformat()})
@@ -71,11 +78,13 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
             raise PlacementError("CONFLICTING_PICKS", "Choose one outcome per market on a slip.",
                                  {"market_id": str(market.id)})
         markets_seen.add(market.id)
-        _check_open(market, outcome, now)
+        _check_open(session, market, outcome, now)
         out_items.append({
             "outcome_id": str(outcome.id), "market_id": str(market.id), "stake_rc": item.stake_rc,
             "odds": str(outcome.odds.quantize(Decimal("0.01"))), "odds_version": outcome.odds_version,
             "potential_return_rc": winning_return(item.stake_rc, outcome.odds),
+            "partial_return_rc": partial_return(item.stake_rc, outcome.odds, market.params["consolation"])
+            if market.params.get("consolation") else None,
             "market_title": market.title, "outcome_label": outcome.label,
         })
     total = sum(i.stake_rc for i in items)
@@ -134,7 +143,7 @@ def accept_ticket(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID,
     for item in quote.items:
         outcome = outcomes[uuid.UUID(item["outcome_id"])]
         market = markets[uuid.UUID(item["market_id"])]
-        _check_open(market, outcome, now)
+        _check_open(session, market, outcome, now)
         confirmed = confirm_odds_versions.get(item["outcome_id"])
         if outcome.odds_version != item["odds_version"] or confirmed != item["odds_version"]:
             changed.append(item["outcome_id"])
