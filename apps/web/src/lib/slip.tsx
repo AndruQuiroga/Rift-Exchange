@@ -12,6 +12,8 @@ export type SlipLine = {
   odds: string;
   oddsVersion: number;
   stake: number | null;
+  /** Share of the full return paid for a right-side, wrong-exact result (Swiss record), if any. */
+  consolation?: string;
 };
 
 type SlipCtx = {
@@ -63,6 +65,7 @@ export function SlipProvider({ children }: { children: ReactNode }) {
         odds: outcome.odds!,
         oddsVersion: outcome.odds_version,
         stake: null,
+        consolation: typeof market.params.consolation === "string" ? market.params.consolation : undefined,
       };
       // One outcome per market on a slip: tapping a sibling replaces the earlier choice, keeping its stake.
       const sibling = prev.find((l) => l.marketId === market.id);

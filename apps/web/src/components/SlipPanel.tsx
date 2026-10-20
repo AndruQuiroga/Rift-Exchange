@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
-import { odds as fmtOdds, potentialReturn, rc } from "@/lib/format";
+import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { Quote, QuoteItem, Receipt } from "@/lib/types";
@@ -15,6 +15,73 @@ type Phase =
   | { kind: "review"; quote: Quote; previous?: Record<string, string> }
   | { kind: "busy"; label: string }
   | { kind: "receipt"; receipt: Receipt };
+
+/** Multi-pick stakes in one move: the same amount on every pick, or one total split evenly. */
+function StakeMode({ count, available, apply }: { count: number; available: number; apply: (fn: (line: unknown, i: number) => number | null) => void }) {
+  const [mode, setMode] = useState<"each" | "spread">("each");
+  const [amount, setAmount] = useState<number | null>(null);
+
+  function set(next: number | null, m = mode) {
+    setAmount(next);
+    if (!next) return apply(() => null);
+    if (m === "each") return apply(() => next);
+    const base = Math.floor(next / count);
+    const extra = next % count;
+    apply((_, i) => base + (i < extra ? 1 : 0) || null);
+  }
+
+  const quick =
+    mode === "each"
+      ? [25, 50, 100].map((v) => ({ label: String(v), value: v }))
+      : [
+          { label: "25%", value: Math.floor(available / 4) },
+          { label: "50%", value: Math.floor(available / 2) },
+          { label: "All", value: available },
+        ];
+
+  return (
+    <div className="stake-mode">
+      <div className="segmented" role="tablist" aria-label="Stake mode">
+        {(["each", "spread"] as const).map((m) => (
+          <button
+            key={m}
+            role="tab"
+            aria-selected={mode === m}
+            onClick={() => {
+              setMode(m);
+              set(amount, m);
+            }}
+          >
+            {m === "each" ? "Same stake each" : "Spread a total"}
+          </button>
+        ))}
+      </div>
+      <label className="stake-input">
+        <span className="sr-only">{mode === "each" ? "Stake per pick" : "Total to spread"}</span>
+        <input
+          className="num"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          placeholder={mode === "each" ? "Per pick" : `Total across ${count} picks`}
+          value={amount ?? ""}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/\D/g, "").slice(0, 12);
+            set(digits ? Number(digits) : null);
+          }}
+        />
+        <span>RC</span>
+      </label>
+      <div className="presets" role="group" aria-label="Quick amounts" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginTop: 8 }}>
+        {quick.map((q) => (
+          <button key={q.label} onClick={() => set(q.value || null)}>
+            {q.label}
+          </button>
+        ))}
+      </div>
+      <div className="hint">You can still change any single pick above.</div>
+    </div>
+  );
+}
 
 export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const slip = useSlip();
@@ -248,12 +315,15 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                 <div className="if-correct num">
                   If correct: <b>{l.stake ? `${rc(potentialReturn(l.stake, l.odds))} RC` : "—"}</b>
                   {l.stake ? ` (+${rc(potentialReturn(l.stake, l.odds) - l.stake)} profit)` : ""}
+                  {l.stake && l.consolation ? <> · right side <b>{rc(partialReturn(l.stake, l.odds, l.consolation))} RC</b></> : null}
                 </div>
               </div>
             );
           })}
 
-          {phase.kind === "edit" ? (
+          {phase.kind === "edit" && lines.length > 1 ? (
+            <StakeMode count={lines.length} available={available} apply={slip.setAllStakes} />
+          ) : phase.kind === "edit" ? (
             <div className="presets" role="group" aria-label="Stake shortcuts for the selected pick">
               <button onClick={() => preset("+100")}>+100</button>
               <button onClick={() => preset("25")}>25%</button>

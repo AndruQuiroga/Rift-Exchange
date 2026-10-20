@@ -4,8 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
-import { rc } from "@/lib/format";
-import { useLiveUpdates, useMe } from "@/lib/hooks";
+import { rc, venueToday } from "@/lib/format";
+import { useLiveUpdates, useMe, useSeason } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconArrow, IconExplore, IconLeague, IconPicks, IconProfile, IconToday } from "./icons";
 import { SlipPanel } from "./SlipPanel";
@@ -38,6 +38,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { data: me, error } = useMe();
   const slip = useSlip();
+  const { data: season } = useSeason();
+  const grantToday = season ? season.match_days.includes(venueToday(season.timezone)) : false;
   useLiveUpdates(Boolean(me));
 
   if (pathname.startsWith("/join")) return <>{children}</>;
@@ -66,9 +68,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           <header className="topbar">
             <Brand />
             <span className="sr-only">Rift Exchange</span>
-            <Link href="/profile" className="topbar-balance num" aria-label="Wallet" hidden={pathname === "/"}>
+            <Link href="/profile" className="topbar-balance num" aria-label="Wallet">
               <b>{me ? `${rc(me.wallet.available_rc)} RC` : "—"}</b>
-              <span>Available</span>
+              {grantToday ? <span className="grant">+{rc(season!.match_day_grant_rc)} today</span> : <span>Available</span>}
             </Link>
           </header>
           {children}

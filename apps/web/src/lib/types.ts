@@ -19,6 +19,8 @@ export type MarketT = {
   params: Record<string, unknown>;
   outcomes: OutcomeT[];
   result: { void: boolean; winning_codes: string[]; reason: string; revision: number } | null;
+  /** Futures markets about one team (Swiss record) carry it here. */
+  team?: Team | null;
 };
 
 export type EventT = {
@@ -33,6 +35,8 @@ export type EventT = {
   score: [number, number];
   winner: "A" | "B" | null;
   market_count?: number;
+  /** Categories with an open market, for the "what's inside" tags on Today. */
+  categories?: string[];
   close_at?: string | null;
   featured?: MarketT | null;
   markets?: MarketT[];
@@ -58,11 +62,13 @@ export type SeasonT = {
 export type Pick = {
   id: string;
   ticket_id: string;
-  status: "OPEN" | "WON" | "LOST" | "VOID";
+  status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID";
   stake_rc: number;
   odds: string;
   return_rc: number;
   potential_return_rc: number;
+  /** Swiss record picks: what a right-side, wrong-record finish returns. */
+  partial_return_rc: number | null;
   market_title: string;
   outcome_label: string;
   market_state: MarketState;
@@ -93,6 +99,7 @@ export type QuoteItem = {
   odds: string;
   odds_version: number;
   potential_return_rc: number;
+  partial_return_rc: number | null;
   market_title: string;
   outcome_label: string;
 };

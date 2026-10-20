@@ -105,6 +105,7 @@ def events(db: Session, season: Season, date: str | None, stage: str | None) -> 
         featured = next((m for m in fm if m.kind == "series_winner"), None)
         out.append({**fixture_view(f, teams),
                     "market_count": len(fm),
+                    "categories": sorted({m.category for m in fm if m.state == "OPEN"}),
                     "close_at": featured.close_at.isoformat() if featured else None,
                     "featured": market_view(featured, outcomes[featured.id], results.get(featured.id))
                     if featured else None})
@@ -130,7 +131,11 @@ def season_markets(db: Session, season: Season, category: str | None) -> list[di
     markets = list(db.execute(q.order_by(Market.close_at, Market.title)).scalars())
     outcomes = _outcomes_by_market(db, [m.id for m in markets])
     results = _latest_results(db, [m.id for m in markets])
-    return [market_view(m, outcomes[m.id], results.get(m.id)) for m in markets]
+    keys = {m.params["team"] for m in markets if m.params.get("team")}
+    teams = {t.provider_id: t for t in db.execute(select(Team).where(Team.provider_id.in_(keys))).scalars()} \
+        if keys else {}
+    return [{**market_view(m, outcomes[m.id], results.get(m.id)),
+             "team": team_view(teams.get(m.params.get("team", "")))} for m in markets]
 
 
 def wallet_summary(db: Session, wallet: Wallet) -> dict:

@@ -10,6 +10,13 @@ export function potentialReturn(stake: number, o: string): number {
   return Math.floor((stake * cents + 50) / 100);
 }
 
+/** Right side, wrong exact result: stake × odds × share, ROUND_HALF_UP like the server. */
+export function partialReturn(stake: number, o: string, share: string): number {
+  const cents = Math.round(Number(o) * 100);
+  const bp = Math.round(Number(share) * 10000);
+  return Math.floor((stake * cents * bp + 500000) / 1000000);
+}
+
 export function kickoff(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }

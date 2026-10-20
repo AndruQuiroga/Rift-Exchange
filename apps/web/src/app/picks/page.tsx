@@ -72,11 +72,14 @@ function PickCard({ pick: p }: { pick: Pick }) {
         </div>
         <div>
           {p.status === "OPEN" ? "To return" : "Returned"}
-          <b className={p.status === "WON" ? "win" : p.status === "LOST" ? "loss" : undefined}>
+          <b className={p.status === "WON" || p.status === "PARTIAL" ? "win" : p.status === "LOST" ? "loss" : undefined}>
             {rc(p.status === "OPEN" ? p.potential_return_rc : p.return_rc)}
           </b>
         </div>
       </div>
+      {p.status === "OPEN" && p.partial_return_rc !== null ? (
+        <p className="muted num" style={{ fontSize: 13, marginTop: 8 }}>Right side, wrong record returns {rc(p.partial_return_rc)} RC.</p>
+      ) : null}
       {p.market_state === "HOLD" && p.market_state_reason ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>{p.market_state_reason}</p> : null}
       {p.settled_revision > 1 ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Corrected after a data update (revision {p.settled_revision}).</p> : null}
     </article>
