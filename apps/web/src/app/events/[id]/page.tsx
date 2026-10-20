@@ -5,34 +5,15 @@ import { useParams } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
+import { Choice } from "@/components/Choice";
 import { ChampionGrid } from "@/components/ChampionGrid";
 import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
 import { IconBack } from "@/components/icons";
 import { LiveCard } from "@/components/LiveCard";
+import { KillLine, LaneDuels, Objectives } from "@/components/PropsBuilders";
 import { countdown, kickoff, longDate, odds as fmtOdds } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
-import { useSlip } from "@/lib/slip";
-import type { EventT, GameT, MarketT, OutcomeT } from "@/lib/types";
-
-/** A compact priced choice (scoreline, games played, yes/no) that feeds the slip like any other price. */
-function Choice({ market, outcome, label, className, children }: { market: MarketT; outcome: OutcomeT; label: string; className: string; children: React.ReactNode }) {
-  const slip = useSlip();
-  const selected = slip.isSelected(outcome.id);
-  const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
-  const open = market.state === "OPEN" && outcome.odds !== null;
-  return (
-    <button
-      type="button"
-      className={`${className}${won ? " won" : ""}`}
-      aria-pressed={selected}
-      disabled={!open && !selected}
-      onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${market.title}: ${outcome.label}, ${fmtOdds(outcome.odds)} times${selected ? ", in slip" : ""}`}
-    >
-      {children}
-    </button>
-  );
-}
+import type { EventT, GameT, MarketT } from "@/lib/types";
 
 function Rules({ markets }: { markets: (MarketT | undefined)[] }) {
   const ms = markets.filter(Boolean) as MarketT[];
@@ -77,7 +58,6 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
   const label = eventLabel(event);
   const ofGame = (m: MarketT) => m.params.game_index === game.index;
   const winner = (event.markets ?? []).find((m) => m.kind === "game_winner" && ofGame(m));
-  const kills = (event.markets ?? []).find((m) => m.kind === "total_kills_game" && ofGame(m));
   const a = winner?.outcomes.find((o) => o.code === "A");
   const b = winner?.outcomes.find((o) => o.code === "B");
 
@@ -112,24 +92,20 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
             <SideButton market={winner} outcome={a} team={event.team_a} label={label} />
             <SideButton market={winner} outcome={b} team={event.team_b} label={label} right />
           </div>
-          {kills ? (
-            <div className="inline-q">
-              <span>Total kills</span>
-              <span className="opts">
-                {kills.outcomes.map((o) => (
-                  <Choice key={o.id} market={kills} outcome={o} label={label} className="mini">
-                    {o.label} <b className="num">{fmtOdds(o.odds)}×</b>
-                  </Choice>
-                ))}
-              </span>
-            </div>
-          ) : null}
-          <Rules markets={[winner, kills]} />
+          <Rules markets={[winner]} />
         </section>
       ) : null}
       <div style={{ marginTop: 8 }}>
         <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
           <ChampionGrid event={event} game={game.index} />
+        </Builder>
+        <Builder title="Players" sub="Lane duels · kills, CS at 15:00, damage">
+          <LaneDuels event={event} game={game.index} />
+        </Builder>
+        <Builder title="Game" sub="Kill line · first blood, dragons, Baron, soul">
+          <KillLine event={event} game={game.index} />
+          <Objectives event={event} game={game.index} />
+          <Rules markets={(event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES")} />
         </Builder>
       </div>
     </>

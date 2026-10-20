@@ -67,7 +67,7 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
   );
 }
 
-const TAGS: Record<string, string> = { DRAFT: "Draft", PROPS: "Game props", PLAYERS: "Players", GAME: "Game" };
+const TAGS: Record<string, string> = { DRAFT: "Draft", PROPS: "Kill line", PLAYERS: "Duels", OBJECTIVES: "Objectives" };
 
 export function EventCard({ event, now }: { event: EventT; now: number }) {
   const cd = event.close_at ? countdown(event.close_at, now) : null;
@@ -75,7 +75,8 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
   const a = market?.outcomes.find((o) => o.code === "A");
   const b = market?.outcomes.find((o) => o.code === "B");
   const ready = event.team_a && event.team_b;
-  const tags = (event.categories ?? []).map((c) => TAGS[c]).filter(Boolean);
+  // Draft and duels are created on demand, so they are always available once both teams are known.
+  const tags = [...new Set(["Draft", "Duels", ...(event.categories ?? []).map((c) => TAGS[c]).filter(Boolean)])];
   return (
     <article className="mrow" aria-label={`${teamName(event.team_a)} versus ${teamName(event.team_b)}`}>
       <div className="mrow-meta">

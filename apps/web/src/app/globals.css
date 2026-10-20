@@ -537,6 +537,17 @@ img { display: block; }
 .w.OPEN { color: var(--win); } .w.UPCOMING { color: var(--warn); } .w.LOCKED, .w.DONE, .w.NOT_NEEDED { color: var(--subtle); }
 .upcoming { margin-top: var(--s3); padding: 20px 16px; border-radius: var(--radius-card); border: 1px dashed var(--divider-strong); text-align: center; }
 
+/* ------------------------------------------------------------------ players & game */
+
+.duels { display: grid; gap: 6px; margin-top: 8px; }
+.duel-row { display: grid; grid-template-columns: minmax(0, 1fr) 36px minmax(0, 1fr); align-items: center; gap: 6px; }
+.duel-role { text-align: center; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; color: var(--subtle); }
+.duel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.line-slider { width: 100%; margin-top: 12px; accent-color: var(--accent); min-height: 32px; }
+.objectives { display: grid; gap: 12px; margin-top: 12px; }
+.objective .t { font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+.objective .opts { display: flex; flex-wrap: wrap; gap: 6px; }
+
 /* ------------------------------------------------------------------ slip stake modes */
 
 .stake-mode { margin-top: var(--s3); padding: 10px; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider); }

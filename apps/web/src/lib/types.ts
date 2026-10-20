@@ -8,7 +8,7 @@ export type MarketT = {
   id: string;
   kind: string;
   scope: string;
-  category: "WINNER" | "DRAFT" | "PROPS" | "FUTURES";
+  category: "WINNER" | "DRAFT" | "PROPS" | "FUTURES" | "OBJECTIVES" | "PLAYERS";
   title: string;
   rules: string;
   state: MarketState;
