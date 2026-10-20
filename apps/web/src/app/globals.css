@@ -537,6 +537,17 @@ img { display: block; }
 .w.OPEN { color: var(--win); } .w.UPCOMING { color: var(--warn); } .w.LOCKED, .w.DONE, .w.NOT_NEEDED { color: var(--subtle); }
 .upcoming { margin-top: var(--s3); padding: 20px 16px; border-radius: var(--radius-card); border: 1px dashed var(--divider-strong); text-align: center; }
 
+.slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); margin-top: 12px; }
+.slot {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px; padding: 0 8px; margin-bottom: 6px;
+  border-radius: 8px; border: 1px dashed var(--divider-strong); background: var(--shell); color: var(--muted); text-align: left;
+}
+.slot.filled { border-style: solid; border-color: var(--divider); background: var(--surface-2); color: var(--text); }
+.slot[aria-pressed="true"] { border-style: solid; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.slot .r { width: 30px; font-size: 10px; font-weight: 800; letter-spacing: 0.06em; color: var(--subtle); flex: none; }
+.slot .c { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slot .px { font-size: 12px; font-weight: 800; color: var(--accent); }
+
 /* ------------------------------------------------------------------ players & game */
 
 .duels { display: grid; gap: 6px; margin-top: 8px; }
