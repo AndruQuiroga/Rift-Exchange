@@ -7,6 +7,23 @@ export API_IMAGE=$1 WEB_IMAGE=$2 RELEASE_ID=$3
 . ./target.env
 export DATA_NODE BACKUP_NODE INGRESS_NETWORK
 root="$HOME/rift-exchange"
+mode=${4:-}
+# Preserve provider mode on ordinary releases; old releases default to mock.
+if [ -z "$mode" ] && [ -f "$root/current/release.env" ]; then
+    mode=$(sed -n 's/^RIFT_LEAGUEPEDIA_MODE=//p' "$root/current/release.env")
+fi
+mode=${mode:-mock}
+case "$mode" in mock|live) ;; *) echo 'Invalid Leaguepedia mode' >&2; exit 1 ;; esac
+stack_config() {
+    command=$1
+    shift
+    if [ "$mode" = live ]; then
+        set -- -c stack.yml -c leaguepedia-live.yml "$@"
+    else
+        set -- -c stack.yml "$@"
+    fi
+    docker stack "$command" "$@"
+}
 mkdir -p "$root"
 exec 9>"$root/deploy.lock"
 flock -n 9 || { echo 'Another Rift release is running' >&2; exit 1; }
@@ -15,7 +32,11 @@ test "$(id -un)" = "$EXPECTED_USER"
 test "$(docker info --format '{{.Swarm.Cluster.ID}}')" = "$EXPECTED_SWARM_ID"
 test "$(docker info --format '{{.Swarm.ControlAvailable}}')" = true
 docker network inspect "$INGRESS_NETWORK" >/dev/null
-docker stack config -c stack.yml >/dev/null
+stack_config config >/dev/null
+if [ "$mode" = live ]; then
+    docker secret inspect rift_leaguepedia_bot_user_v1 >/dev/null
+    docker secret inspect rift_leaguepedia_bot_password_v1 >/dev/null
+fi
 if docker stack ls --format '{{.Name}}' | grep -qx rift-exchange &&
    ! docker service inspect rift-exchange_api >/dev/null 2>&1; then
     echo 'Existing Rift stack has no recognizable owner; refusing adoption' >&2
@@ -63,12 +84,22 @@ wait_service() {
 run_job() {
     name="rift-job-$RELEASE_ID-$1"
     shift
-    docker service create --quiet --name "$name" --label io.stache.deployment-owner=ssh-git \
+    if [ "$mode" = live ]; then
+        set -- --secret source=rift_leaguepedia_bot_user_v1,target=leaguepedia_bot_user \
+            --secret source=rift_leaguepedia_bot_password_v1,target=leaguepedia_bot_password \
+            --env RIFT_LEAGUEPEDIA_MODE=live \
+            --env RIFT_LEAGUEPEDIA_BOT_USER_FILE=/run/secrets/leaguepedia_bot_user \
+            --env RIFT_LEAGUEPEDIA_BOT_PASSWORD_FILE=/run/secrets/leaguepedia_bot_password \
+            "$API_IMAGE" "$@"
+    else
+        set -- "$API_IMAGE" "$@"
+    fi
+    docker service create --detach=true --quiet --name "$name" --label io.stache.deployment-owner=ssh-git \
         --constraint "node.hostname==$DATA_NODE" --restart-condition none \
         --network rift-exchange_data --secret source=rift_database_url_v1,target=database_url \
         --env RIFT_DATABASE_URL_FILE=/run/secrets/database_url --env RIFT_COOKIE_SECURE=true \
         --log-driver json-file --log-opt max-size=10m --log-opt max-file=2 \
-        "$API_IMAGE" "$@" >/dev/null
+        "$@" >/dev/null
     for attempt in $(seq 1 240); do
         task=$(docker service ps "$name" --no-trunc --format '{{.ID}}' | head -1)
         if [ -n "$task" ]; then
@@ -92,9 +123,9 @@ run_job() {
 
 if [ "$existing" = true ]; then
     # Stop writes and the scheduler before the snapshot/migration.
-    docker service scale rift-exchange_worker=0 rift-exchange_api=0 >/dev/null
+    docker service scale --detach=true rift-exchange_worker=0 rift-exchange_api=0 >/dev/null
     for attempt in $(seq 1 120); do
-        count=$(docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_api --filter label=com.docker.swarm.service.name=rift-exchange_worker | wc -l)
+        count=$({ docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_api; docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_worker; } | wc -l)
         test "$count" = 0 && break
         sleep 2
     done
@@ -109,12 +140,13 @@ if [ "$existing" = true ]; then
 fi
 
 # Data-only bootstrap. Swarm does not provide Compose's depends_on gating.
-APP_REPLICAS=0 docker stack deploy --detach=true --resolve-image always -c stack.yml rift-exchange
+APP_REPLICAS=0 stack_config deploy --detach=true --resolve-image always rift-exchange
 wait_service rift-exchange_db
 run_job wait-db python -m rift.operations wait-db
 run_job migrate alembic upgrade head
+if [ "$mode" = live ]; then run_job leaguepedia python -m rift.operations check-leaguepedia; fi
 run_job bootstrap python -m rift.operations bootstrap
-APP_REPLICAS=1 docker stack deploy --detach=true --resolve-image always -c stack.yml rift-exchange
+APP_REPLICAS=1 stack_config deploy --detach=true --resolve-image always rift-exchange
 # Take a post-migration dump promptly, including on the first deployment.
 docker service update --force --detach=true rift-exchange_backup >/dev/null
 for svc in api worker web backup; do wait_service "rift-exchange_$svc"; done
@@ -130,6 +162,7 @@ for attempt in $(seq 1 120); do
            [ "$(docker inspect "$web" --format '{{.State.Health.Status}}')" = healthy ] &&
            [ "$(docker inspect "$worker" --format '{{.State.Health.Status}}')" = healthy ]; then
             printf 'API_IMAGE=%s\nWEB_IMAGE=%s\nRELEASE_ID=%s\n' "$API_IMAGE" "$WEB_IMAGE" "$RELEASE_ID" > release.env
+            printf 'RIFT_LEAGUEPEDIA_MODE=%s\n' "$mode" >> release.env
             ln -sfn "$(pwd)" "$root/current"
             echo "Rift release $RELEASE_ID healthy through Traefik"
             exit 0

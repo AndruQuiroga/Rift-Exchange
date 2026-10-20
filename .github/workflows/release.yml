@@ -65,6 +65,7 @@ jobs:
           INGRESS_NETWORK: validation-ingress
         run: |
           docker stack config -c infra/stache/stack.yml > /dev/null
+          docker stack config -c infra/stache/stack.yml -c infra/stache/leaguepedia-live.yml > /dev/null
           sh -n infra/stache/deploy.sh
           sh -n infra/stache/backup.sh
 

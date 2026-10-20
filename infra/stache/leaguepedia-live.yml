@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  api:
+    environment: &leaguepedia-env
+      RIFT_LEAGUEPEDIA_MODE: live
+      RIFT_LEAGUEPEDIA_BOT_USER_FILE: /run/secrets/leaguepedia_bot_user
+      RIFT_LEAGUEPEDIA_BOT_PASSWORD_FILE: /run/secrets/leaguepedia_bot_password
+    secrets: [leaguepedia_bot_user, leaguepedia_bot_password]
+  worker:
+    environment: *leaguepedia-env
+    secrets: [leaguepedia_bot_user, leaguepedia_bot_password]
+
+secrets:
+  leaguepedia_bot_user:
+    external: true
+    name: rift_leaguepedia_bot_user_v1
+  leaguepedia_bot_password:
+    external: true
+    name: rift_leaguepedia_bot_password_v1

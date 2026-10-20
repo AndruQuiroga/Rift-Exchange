@@ -1,6 +1,8 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
@@ -49,9 +51,9 @@ class Settings(BaseSettings):
     # Public key embedded in the lolesports website; not a secret.
     lolesports_api_key: str = "0TvQnueqKa5mxJntVWt0w4LpLfEkrV1Ta8rQBb9Z"
     lolesports_worlds_league_id: str = "98767975604431411"
-    leaguepedia_mode: str = "mock"  # "mock" until bot credentials exist
-    leaguepedia_bot_user: str = ""
-    leaguepedia_bot_password: str = ""
+    leaguepedia_mode: Literal["mock", "live"] = "mock"
+    leaguepedia_bot_user: str = Field(default="", repr=False)
+    leaguepedia_bot_password: str = Field(default="", repr=False)
 
     # Market behaviour
     quote_ttl_seconds: int = 20
