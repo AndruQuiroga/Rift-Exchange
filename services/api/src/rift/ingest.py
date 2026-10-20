@@ -8,8 +8,9 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rift.adapters.leaguepedia import LeaguepediaSource
+from rift.adapters.leaguepedia import LeaguepediaGame, LeaguepediaSource
 from rift.adapters.lolesports import LolesportsClient, ScheduleMatch, TeamRef, team_key
+from rift.champions import champion_id
 from rift.config import Settings
 from rift.models import Fixture, Game, HistoricalResult, OutboxEvent, Season, Team
 
@@ -295,6 +296,76 @@ def sync_lineups(session: Session, season: Season, client: LolesportsClient, now
             team.lineup = {"match": last.provider_id, "at": now.isoformat(), "players": players}
     session.flush()
     return done
+
+
+def needs_draft(game: Game) -> bool:
+    """A completed game whose Leaguepedia bans or pick order are not stored yet."""
+    return game.state == "completed" and (not game.bans or game.bans.get("first_pick") is None)
+
+
+def draft_record(fixture: Fixture, game: Game, row: LeaguepediaGame, team_a: Team, team_b: Team) -> dict | None:
+    """The `Game.bans` value for one Leaguepedia row, or None when it cannot be trusted yet.
+
+    Leaguepedia's Team1 is blue side. Its team must agree with the side livestats reported for the game;
+    otherwise bans would be attributed to the wrong team, so nothing is stored. Bans are required (both lists
+    empty means editors have not filled the game in); pick order is optional and refetched until present.
+    """
+    sides = {(team_a.name, team_b.name): (team_a, team_b), (team_b.name, team_a.name): (team_b, team_a)}
+    if (row.team1, row.team2) not in sides:
+        return None
+    blue, red = sides[(row.team1, row.team2)]
+    if game.blue_team_id is not None and game.blue_team_id != blue.id:
+        log.warning("fixture %s game %s: Leaguepedia sides disagree with livestats", fixture.provider_id,
+                    game.game_index)
+        return None
+    try:
+        bans = {"blue": [c for c in map(champion_id, row.team1_bans) if c],
+                "red": [c for c in map(champion_id, row.team2_bans) if c]}
+        draft = row.draft
+        picks = {"blue": [champion_id(c) for c in draft.team1_picks],
+                 "red": [champion_id(c) for c in draft.team2_picks]} if draft else None
+    except ValueError:
+        log.warning("fixture %s game %s: unreadable Leaguepedia champion", fixture.provider_id, game.game_index)
+        return None
+    if not bans["blue"] and not bans["red"]:
+        return None
+    if picks and not all(all(side) for side in picks.values()):
+        picks = None
+    code = {fixture.team_a_id: "A", fixture.team_b_id: "B"}
+    return {"source": "leaguepedia", **bans,
+            "first_pick": picks["blue"][0] if picks else None, "first_pick_side": "blue" if picks else None,
+            "picks": picks, "roles": {"blue": draft.team1_roles, "red": draft.team2_roles} if picks else None,
+            "sides": {"blue": code.get(blue.id), "red": code.get(red.id)}}
+
+
+def sync_drafts(session: Session, fixture: Fixture, secondary: LeaguepediaSource, now: datetime) -> int:
+    """Store bans and pick order from Leaguepedia on completed games that lack them. Returns games updated.
+
+    One query per fixture per call; the worker runs this on its own slow cadence. Any provider failure
+    leaves the games without bans (their ban/first-pick markets HOLD, then void after the deadline).
+    """
+    games = [g for g in session.execute(select(Game).where(Game.fixture_id == fixture.id)).scalars()
+             if needs_draft(g)]
+    if not games or not secondary.available or fixture.team_a_id is None or fixture.team_b_id is None:
+        return 0
+    team_a, team_b = session.get(Team, fixture.team_a_id), session.get(Team, fixture.team_b_id)
+    try:
+        rows = secondary.series_drafts(team_a.name, team_b.name, fixture.scheduled_at)
+    except (httpx.HTTPError, RuntimeError, KeyError, ValueError) as exc:
+        log.warning("fixture %s: Leaguepedia draft lookup failed (%s)", fixture.provider_id, type(exc).__name__)
+        return 0
+    updated = 0
+    for game in games:
+        row = next((r for r in rows or [] if r.game_in_series == game.game_index), None)
+        record = draft_record(fixture, game, row, team_a, team_b) if row else None
+        if record is None or record == game.bans:
+            continue
+        if game.bans and game.bans.get("first_pick") is not None and record["first_pick"] is None:
+            continue  # never drop pick order already stored because a later read lacked it
+        game.bans, game.data_changed_at = record, now
+        updated += 1
+    session.flush()
+    return updated
 
 
 def sync_history(session: Session, client: LolesportsClient, since: datetime) -> int:

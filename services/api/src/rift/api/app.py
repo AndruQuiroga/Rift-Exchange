@@ -270,7 +270,8 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     class DraftMarketBody(BaseModel):
         game_index: int = Field(ge=1, le=5)
         champion: str = Field(min_length=1, max_length=40)
-        scope: str = Field(pattern="^(picked|A|B)$")
+        scope: str = Field(pattern="^(picked|A|B|banned|first)$")
+        role: str | None = Field(default=None, pattern="^(top|jungle|mid|bottom|support)$")  # scope A/B only
 
     @app.post("/api/v1/events/{event_id}/draft")
     def draft_market(event_id: uuid.UUID, body: DraftMarketBody, session: Db, user: CurrentUser):
@@ -278,7 +279,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         fixture = _fixture(session, event_id)
         try:
             market = draft.ensure_market(session, season_of(session), fixture, body.game_index, body.champion,
-                                         body.scope, settings, db_now(session))
+                                         body.scope, settings, db_now(session), role=body.role)
         except draft.DraftError as e:
             raise ApiError(409, e.code, e.message) from e
         outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())

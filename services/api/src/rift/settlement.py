@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rift import ledger, props
+from rift.champions import champion_key
 from rift.domain.money import settlement_return
 from rift.markets import SWISS_RECORDS, swiss_side
 from rift.models import (
@@ -116,14 +117,41 @@ def grade_market(session: Session, market: Market) -> Grade:
             scoped = played
         if not scoped or any(not g.stats_complete for g in scoped):
             return Grade("HOLD", reason="Awaiting verified draft data", evidence=ev)
-        side = market.params.get("side")
+        side, role = market.params.get("side"), market.params.get("role")
         team_id = str(fixture.team_a_id if side == "A" else fixture.team_b_id) if side else None
-        picks = {p["champion"] for g in scoped for p in g.stats["players"]
-                 if team_id is None or p.get("team_id") == team_id}
+        picks = {champion_key(p["champion"]) for g in scoped for p in g.stats["players"]
+                 if (team_id is None or p.get("team_id") == team_id) and (role is None or p.get("role") == role)}
+        champ = champion_key(champ)
         if team_id is not None and not any(p.get("team_id") == team_id for g in scoped for p in g.stats["players"]):
             return Grade("HOLD", reason="Awaiting verified team draft data", evidence=ev)
+        if role is not None and any(not p.get("role") for g in scoped for p in g.stats["players"]
+                                    if p.get("team_id") == team_id):
+            return Grade("HOLD", reason="Awaiting verified player roles", evidence=ev)
         return Grade("RESULT", ["YES" if champ in picks else "NO"], "Draft confirmed",
                      {**ev, "games": [g.provider_id for g in scoped]})
+
+    if kind in ("champion_banned", "champion_first_pick"):
+        # Bans and pick order come from Leaguepedia (rift.ingest.sync_drafts); HOLD until stored. The worker
+        # voids anything still held after the deadline, which covers Leaguepedia never filling the game in.
+        idx = market.params["game_index"]
+        game = next((g for g in _games(session, fixture) if g.game_index == idx), None)
+        if game is None or game.state != "completed":
+            if fixture.status == "COMPLETED" or (game is not None and game.state == "unneeded"):
+                return Grade("VOID", reason=f"Game {idx} was not played", evidence=ev)
+            return PENDING
+        draft = game.bans or {}
+        champ = champion_key(market.params["champion"])
+        ev = {**ev, "game": game.provider_id, "source": draft.get("source")}
+        if kind == "champion_banned":
+            if "blue" not in draft or "red" not in draft:
+                return Grade("HOLD", reason=f"Awaiting verified Game {idx} bans", evidence=ev)
+            hit = champ in {champion_key(c) for c in draft["blue"] + draft["red"]}
+            return Grade("RESULT", ["YES" if hit else "NO"], "Bans confirmed",
+                         {**ev, "bans": {"blue": draft["blue"], "red": draft["red"]}})
+        if not draft.get("first_pick"):
+            return Grade("HOLD", reason=f"Awaiting verified Game {idx} pick order", evidence=ev)
+        return Grade("RESULT", ["YES" if champion_key(draft["first_pick"]) == champ else "NO"],
+                     "Pick order confirmed", {**ev, "first_pick": draft["first_pick"]})
 
     if kind == "most_kills_game":
         idx = market.params["game_index"]
