@@ -63,7 +63,7 @@ wait_service() {
 run_job() {
     name="rift-job-$RELEASE_ID-$1"
     shift
-    docker service create --quiet --name "$name" --label io.stache.deployment-owner=ssh-git \
+    docker service create --detach=true --quiet --name "$name" --label io.stache.deployment-owner=ssh-git \
         --constraint "node.hostname==$DATA_NODE" --restart-condition none \
         --network rift-exchange_data --secret source=rift_database_url_v1,target=database_url \
         --env RIFT_DATABASE_URL_FILE=/run/secrets/database_url --env RIFT_COOKIE_SECURE=true \
