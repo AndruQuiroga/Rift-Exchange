@@ -61,6 +61,8 @@ class Worker:
         self._run("live", lambda s, now: ingest.mark_live(s, self.client.live(), now))
         self._run("details", self._sync_details)
         self._run("timeline", self._track_games)
+        if self.secondary.available and self._due("drafts", timedelta(minutes=10)):
+            self._run("drafts", self._sync_drafts)
         self._run("markets", self._price_markets)
         if self._due("futures", timedelta(minutes=10)):
             self._run("futures", self._price_futures)
@@ -98,6 +100,14 @@ class Worker:
                 ingest.sync_fixture_details(s, f, self.client, self.secondary, now)
                 n += 1
         return n
+
+    def _sync_drafts(self, s: Session, now: datetime) -> int:
+        """Leaguepedia bans and pick order, on a slow cadence: editors fill games in minutes to hours after
+        they end, and its API is rate-limited. Stops at the HOLD -> VOID deadline, when waiting is moot."""
+        since = now - timedelta(hours=self.settings.hold_void_after_hours)
+        fixtures = s.execute(select(Fixture).where(Fixture.status.in_(("LIVE", "COMPLETED")),
+                                                   Fixture.scheduled_at >= since)).scalars().all()
+        return sum(ingest.sync_drafts(s, f, self.secondary, now) for f in fixtures)
 
     def _track_games(self, s: Session, now: datetime) -> int:
         n = 0

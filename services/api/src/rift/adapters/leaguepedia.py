@@ -16,6 +16,25 @@ API = "https://lol.fandom.com/api.php"
 # Leaguepedia's ScoreboardGames declaration stores aggregate bans here, not PicksAndBansS7.
 GAME_FIELDS = ("SG.Team1, SG.Team2, SG.WinTeam, SG.N_GameInMatch, SG.DateTime_UTC, "
                "SG.Team1Bans__full=Team1Bans, SG.Team2Bans__full=Team2Bans")
+# Pick order lives in PicksAndBansS7 (fields per its Cargo declaration, checked via action=cargofields),
+# joined on the shared GameId. Team1 is blue side in both tables; blue makes the first pick. PB's own team
+# names come back so a row whose sides disagree with the scoreboard is rejected rather than trusted.
+DRAFT_TABLES = "ScoreboardGames=SG, PicksAndBansS7=PB"
+DRAFT_JOIN = "SG.GameId=PB.GameId"
+DRAFT_FIELDS = GAME_FIELDS + ", PB.Team1=PBTeam1, PB.Team2=PBTeam2, " + ", ".join(
+    f"PB.Team{t}{kind}{i}" for t in (1, 2) for kind in ("Pick", "Role") for i in range(1, 6))
+ROLES = {"top": "top", "jungle": "jungle", "mid": "mid", "bot": "bottom", "bottom": "bottom", "adc": "bottom",
+         "support": "support"}
+
+
+@dataclass
+class LeaguepediaDraft:
+    """One game's pick order: champion display names in pick order, with the role each was played in."""
+
+    team1_picks: list[str]
+    team2_picks: list[str]
+    team1_roles: list[str | None]
+    team2_roles: list[str | None]
 # Verified against the October 2026 Play-In scoreboards. No fuzzy team matching.
 PROVIDER_TEAM_NAMES = {"Cloud9 Kia": "Cloud9"}
 
@@ -29,12 +48,18 @@ class LeaguepediaGame:
     played_at: datetime
     team1_bans: list[str]
     team2_bans: list[str]
+    draft: LeaguepediaDraft | None = None  # filled by series_drafts only; None when PB has no full draft
 
 
 class LeaguepediaSource:
     available = False
 
     def series_games(self, team_a: str, team_b: str, on: datetime) -> list[LeaguepediaGame] | None:
+        return None
+
+    def series_drafts(self, team_a: str, team_b: str, on: datetime) -> list[LeaguepediaGame] | None:
+        """Like series_games, plus each game's pick order. A separate query, so a failure here (or a wrong
+        join) can never cost the winner cross-check."""
         return None
 
 
@@ -44,9 +69,14 @@ class MockLeaguepedia(LeaguepediaSource):
     def __init__(self, games: dict[tuple[str, str], list[LeaguepediaGame]] | None = None):
         self.games = games or {}
         self.available = bool(self.games)
+        self.calls = 0
 
     def series_games(self, team_a, team_b, on):
+        self.calls += 1
         return self.games.get((team_a, team_b)) or self.games.get((team_b, team_a))
+
+    def series_drafts(self, team_a, team_b, on):
+        return self.series_games(team_a, team_b, on)
 
 
 class LeaguepediaClient(LeaguepediaSource):
@@ -110,6 +140,12 @@ class LeaguepediaClient(LeaguepediaSource):
         return self._team_names[name]
 
     def series_games(self, team_a, team_b, on):
+        return self._series(team_a, team_b, on, tables="ScoreboardGames=SG", fields=GAME_FIELDS)
+
+    def series_drafts(self, team_a, team_b, on):
+        return self._series(team_a, team_b, on, tables=DRAFT_TABLES, fields=DRAFT_FIELDS, join_on=DRAFT_JOIN)
+
+    def _series(self, team_a, team_b, on, **query):
         # Series can start early after a short preceding match, or finish on the
         # following UTC day. Keep the window tied
         # to its scheduled start, so a next-day rematch is not mixed into it.
@@ -121,7 +157,7 @@ class LeaguepediaClient(LeaguepediaSource):
             raise RuntimeError("Leaguepedia fixture resolves both teams to the same identity")
         a, b = self._quote(canonical_a), self._quote(canonical_b)
         rows = self._query(
-            action="cargoquery", format="json", limit=10, tables="ScoreboardGames=SG", fields=GAME_FIELDS,
+            action="cargoquery", format="json", limit=10, **query,
             where=(f'SG.DateTime_UTC >= "{lower}" AND SG.DateTime_UTC <= "{upper}" '
                    f'AND ((SG.Team1={a} AND SG.Team2={b}) OR (SG.Team1={b} AND SG.Team2={a}))'),
             order_by="SG.N_GameInMatch ASC",
@@ -153,8 +189,23 @@ class LeaguepediaClient(LeaguepediaSource):
                 played_at=datetime.fromisoformat(r["DateTime UTC"]),
                 team1_bans=[b for b in (r.get("Team1Bans") or "").split(",") if b],
                 team2_bans=[b for b in (r.get("Team2Bans") or "").split(",") if b],
+                draft=LeaguepediaClient._parse_draft(r) if "PBTeam1" in r else None,
             ))
         return out
+
+    @staticmethod
+    def _parse_draft(r: dict) -> LeaguepediaDraft | None:
+        """Pick order from a joined PicksAndBansS7 row, or None when it is missing, partial or its sides
+        do not match the scoreboard (an unjoined row comes back with empty PB fields)."""
+        if (r.get("PBTeam1") or "").casefold() != r["Team1"].casefold() or \
+                (r.get("PBTeam2") or "").casefold() != r["Team2"].casefold():
+            return None
+        picks = {t: [(r.get(f"Team{t}Pick{i}") or "").strip() for i in range(1, 6)] for t in (1, 2)}
+        if not all(all(p) for p in picks.values()):
+            return None
+        roles = {t: [ROLES.get((r.get(f"Team{t}Role{i}") or "").strip().casefold()) for i in range(1, 6)]
+                 for t in (1, 2)}
+        return LeaguepediaDraft(picks[1], picks[2], roles[1], roles[2])
 
 
 def make_source(settings: Settings) -> LeaguepediaSource:
