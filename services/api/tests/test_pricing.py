@@ -5,7 +5,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rift.domain.money import settlement_return, winning_return
-from rift.domain.pricing import price, series_score_distribution, series_win_probability, total_games_distribution
+from rift.domain.pricing import (
+    price,
+    series_score_distribution,
+    series_win_probability,
+    total_games_distribution,
+)
 
 
 @given(st.floats(min_value=0.01, max_value=0.99), st.sampled_from([1, 3, 5]))
@@ -25,7 +30,7 @@ def test_known_closed_forms():
 
 
 def test_price_bounds():
-    kw = dict(min_probability=Decimal("0.01"), max_odds=Decimal("100"))
+    kw = dict(min_probability=Decimal("0.01"), max_odds=Decimal(100))
     assert price(0.7, **kw) == Decimal("1.43")
     assert price(0.3, **kw) == Decimal("3.33")
     assert price(0.0, **kw) is None

@@ -1,0 +1,57 @@
+"""Operational entry points: `rift api`, `rift worker`, `rift cycle`, `rift invite`, `rift backtest`."""
+
+import argparse
+import logging
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="rift")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    api = sub.add_parser("api", help="serve the HTTP API")
+    api.add_argument("--host", default="0.0.0.0")
+    api.add_argument("--port", type=int, default=8000)
+    worker = sub.add_parser("worker", help="run the scheduler loop")
+    worker.add_argument("--interval", type=int, default=60)
+    sub.add_parser("cycle", help="run one worker cycle and exit")
+    invite = sub.add_parser("invite", help="create an invite code")
+    invite.add_argument("--admin", action="store_true")
+    sub.add_parser("backtest", help="print the team-strength model backtest")
+    args = parser.parse_args()
+
+    if args.cmd == "api":
+        import uvicorn
+
+        uvicorn.run("rift.api.app:app", host=args.host, port=args.port, proxy_headers=True)
+    elif args.cmd == "worker":
+        from rift.worker import run_forever
+
+        run_forever(args.interval)
+    elif args.cmd == "cycle":
+        from rift.adapters.leaguepedia import make_source
+        from rift.adapters.lolesports import LolesportsClient
+        from rift.config import get_settings
+        from rift.db import session_factory
+        from rift.worker import Worker
+
+        logging.basicConfig(level=logging.INFO)
+        settings = get_settings()
+        Worker(session_factory(), settings, LolesportsClient(settings), make_source(settings)).cycle()
+    elif args.cmd == "invite":
+        from rift.auth import create_invite
+        from rift.db import transaction
+
+        with transaction() as db:
+            code = create_invite(db, "ADMIN" if args.admin else "PLAYER")
+        print(code)
+    elif args.cmd == "backtest":
+        from rift import ratings
+        from rift.db import session_factory
+
+        with session_factory()() as db:
+            bt = ratings.backtest(db)
+        print(f"series={bt.series} log_loss={bt.log_loss:.4f} baseline={bt.baseline_log_loss:.4f} "
+              f"brier={bt.brier:.4f} accuracy={bt.accuracy:.3f} beats_baseline={bt.beats_baseline}")
+
+
+if __name__ == "__main__":
+    main()

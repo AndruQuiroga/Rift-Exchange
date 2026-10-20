@@ -2,9 +2,9 @@ import threading
 from datetime import date, timedelta
 
 import pytest
+from conftest import T0, outcome_id
 from sqlalchemy import func, select
 
-from conftest import T0, outcome_id
 from rift import grants, ledger
 from rift.models import Fixture, LedgerEntry, Market, Outcome, Season, Selection, Wallet
 from rift.placement import PlacementError, QuoteItem, accept_ticket, create_quote

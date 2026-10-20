@@ -6,10 +6,29 @@ from sqlalchemy import select
 
 from rift import grants
 from rift.adapters.leaguepedia import MockLeaguepedia
-from rift.adapters.lolesports import GameRef, GameStats, MatchDetail, PlayerLine, ScheduleMatch, TeamRef, team_key
+from rift.adapters.lolesports import (
+    GameRef,
+    GameStats,
+    MatchDetail,
+    PlayerLine,
+    ScheduleMatch,
+    TeamRef,
+    team_key,
+)
 from rift.config import Settings
 from rift.domain.money import winning_return
-from rift.models import Fixture, Game, HistoricalResult, Market, Outcome, Season, Selection, Team, User, Wallet
+from rift.models import (
+    Fixture,
+    Game,
+    HistoricalResult,
+    Market,
+    Outcome,
+    Season,
+    Selection,
+    Team,
+    User,
+    Wallet,
+)
 from rift.placement import QuoteItem, accept_ticket, create_quote
 from rift.worker import Worker
 

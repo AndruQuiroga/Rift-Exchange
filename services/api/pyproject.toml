@@ -34,3 +34,6 @@ testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 110
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["C408"]
