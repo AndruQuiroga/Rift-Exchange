@@ -50,14 +50,30 @@ def bootstrap() -> None:
                 raise RuntimeError(f"Bootstrap job {job} did not succeed; inspect private admin health")
 
 
+def check_leaguepedia() -> None:
+    from rift.adapters.leaguepedia import LeaguepediaClient
+
+    settings = get_settings()
+    if settings.leaguepedia_mode != "live":
+        raise RuntimeError("Leaguepedia is in mock mode; live coverage is unavailable")
+    client = LeaguepediaClient(settings)
+    try:
+        client.check_access()
+    finally:
+        client.http.close()
+    print("Leaguepedia login and Cargo game/ban query succeeded; fixture and market coverage still require review")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("wait-db", "bootstrap", "check-worker"))
+    parser.add_argument("operation", choices=("wait-db", "bootstrap", "check-worker", "check-leaguepedia"))
     args = parser.parse_args()
     if args.operation == "wait-db":
         wait_database()
     elif args.operation == "bootstrap":
         bootstrap()
+    elif args.operation == "check-leaguepedia":
+        check_leaguepedia()
     else:
         check_worker()
 

@@ -43,6 +43,50 @@ For a failed job, inspect `docker service ps rift-job-<id>-<job>` first. Its log
 may contain provider details; keep them private. After diagnosis remove only that
 temporary job if needed, preserve application volumes, and retry with a new ID.
 
+## Leaguepedia credentials and live mode
+
+Sign in at https://lol.fandom.com/wiki/Special:BotPasswords and create an
+application password named `RiftExchange`. Grant only read/Cargo access offered
+by the site; editing and account-management permissions are unnecessary. Save
+the exact login pair shown by Fandom (including its bot-name format), rather
+than the main account password. See [Fandom's login documentation](https://help.fandom.com/wiki/Logging_in_to_third-party_tools).
+
+Keep the pair out of chat, Git, command arguments and logs. Provision external
+Swarm secrets `rift_leaguepedia_bot_user_v1` and
+`rift_leaguepedia_bot_password_v1` through the existing private SSH connection,
+using stdin or protected files with `docker secret create`. Do not overwrite
+existing secrets blindly; Swarm secrets are immutable. The application reads
+them through the existing `RIFT_*_FILE` settings support.
+
+After the local authenticated probe succeeds, `./infra/stache/provision-leaguepedia.ps1`
+can transfer protected local files through SSH stdin. Its defaults are the
+ignored `artifacts/leaguepedia-bot-user.txt` and `artifacts/leaguepedia-bot-password.txt`.
+It verifies the deployment target and refuses to replace either existing secret.
+If interrupted after creating one secret, inspect the partial provisioning before
+retrying. The helper does not enable live mode.
+
+Deploy validated images built from these changes using the usual command plus
+`-LeaguepediaMode live`. The helper checks that both secrets exist before
+pausing the application, merges `leaguepedia-live.yml`, and runs
+`python -m rift.operations check-leaguepedia` as a private release job before
+bootstrap. A failed login, Cargo error, or empty/unparseable game probe blocks
+the release. Subsequent releases preserve the last successful mode; explicitly
+use `-LeaguepediaMode mock` to disable it.
+
+The probe confirms login and a query against the game/ban tables. It does not
+prove current tournament coverage or safe grading. Inspect representative
+fixtures and provider errors separately. Leaguepedia currently supplies winner
+cross-checks; its ban rows are parsed but not yet persisted or used by a ban
+market generator. Champion picks and total-kill props use LoL Esports final
+frames and require enough verified tournament games. Pre-series player props
+remain deferred pending a roster source. Enabling live mode alone does not
+enable these missing market types.
+
+For a local probe, set `RIFT_LEAGUEPEDIA_MODE=live` and point
+`RIFT_LEAGUEPEDIA_BOT_USER_FILE` / `RIFT_LEAGUEPEDIA_BOT_PASSWORD_FILE` to
+protected files, then run `python -m rift.operations check-leaguepedia` from the
+backend environment. This probe does not require a database.
+
 ## Data and status
 
 Postgres uses `rift-exchange_database` on the configured data node. Backups use
