@@ -1,0 +1,29 @@
+{
+  "name": "rift-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "e2e": "node e2e/walkthrough.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "15.5.28",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "swr": "^2.5.1"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "15.5.28",
+    "typescript": "^5"
+  }
+}

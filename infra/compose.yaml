@@ -1,0 +1,50 @@
+# Local/dev stack. Production: put `web` behind your reverse proxy / tunnel; never expose `api` or `db` directly.
+name: rift-exchange
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rift
+      POSTGRES_PASSWORD: ${RIFT_DB_PASSWORD:-rift}
+      POSTGRES_DB: rift
+    volumes: [rift-db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rift"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    build: ../services/api
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-env
+      RIFT_DATABASE_URL: postgresql+psycopg://rift:${RIFT_DB_PASSWORD:-rift}@db:5432/rift
+      RIFT_COOKIE_SECURE: ${RIFT_COOKIE_SECURE:-false}
+      RIFT_LEAGUEPEDIA_MODE: ${RIFT_LEAGUEPEDIA_MODE:-mock}
+      RIFT_LEAGUEPEDIA_BOT_USER: ${RIFT_LEAGUEPEDIA_BOT_USER:-}
+      RIFT_LEAGUEPEDIA_BOT_PASSWORD: ${RIFT_LEAGUEPEDIA_BOT_PASSWORD:-}
+    depends_on: { db: { condition: service_healthy } }
+
+  api:
+    build: ../services/api
+    command: ["rift", "api"]
+    environment: *api-env
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  worker:
+    build: ../services/api
+    command: ["rift", "worker"]
+    environment: *api-env
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    restart: unless-stopped
+
+  web:
+    build: ../apps/web
+    environment:
+      RIFT_API_ORIGIN: http://api:8000
+    ports: ["${RIFT_WEB_PORT:-3000}:3000"]
+    depends_on: [api]
+    restart: unless-stopped
+
+volumes:
+  rift-db:

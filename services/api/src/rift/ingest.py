@@ -93,6 +93,9 @@ def needs_details(f: Fixture, now: datetime, games_done: bool) -> bool:
     if f.status == "LIVE":
         return True
     if f.status == "COMPLETED" and not games_done:
+        # Keep polling briefly for late stats; after that the market HOLD → VOID path takes over.
+        if f.completed_at and now - f.completed_at > timedelta(hours=6):
+            return False
         return f.details_synced_at is None or now - f.details_synced_at > timedelta(minutes=2)
     return False
 

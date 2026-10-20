@@ -1,0 +1,118 @@
+// Drives the real stack (web + API + Postgres) through the core flow and captures reference screenshots.
+// Usage: node e2e/walkthrough.mjs <baseUrl> <outDir> <invite1> <invite2> <invite3>
+import { chromium } from "@playwright/test";
+import { mkdirSync } from "node:fs";
+
+const [base = "http://localhost:3000", out = "screens", ...codes] = process.argv.slice(2);
+mkdirSync(out, { recursive: true });
+const browser = await chromium.launch({ executablePath: process.env.CHROMIUM ?? "/opt/pw-browsers/chromium" });
+const handles = ["andru", "kai", "mika"];
+const names = ["Andru", "Kai", "Mika"];
+const failures = [];
+const check = (cond, msg) => {
+  if (!cond) failures.push(msg);
+  console.log(`${cond ? "PASS" : "FAIL"} ${msg}`);
+};
+
+async function noHScroll(page, label) {
+  const [sw, cw] = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  check(sw <= cw, `${label}: no horizontal scroll (${sw} <= ${cw})`);
+}
+
+const contexts = [];
+for (let i = 0; i < codes.length; i++) {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => failures.push(`pageerror: ${e.message}`));
+  await page.goto(`${base}/join?code=${codes[i]}`);
+  await page.fill("#handle", handles[i]);
+  await page.fill("#name", names[i]);
+  await page.click("button:has-text('Join the league')");
+  await page.waitForURL(`${base}/`);
+  contexts.push({ ctx, page });
+}
+
+const { page } = contexts[0];
+await page.waitForSelector(".event");
+await page.waitForTimeout(800);
+await page.screenshot({ path: `${out}/01-today-390.png` });
+const firstOdds = page.locator(".event .odds").first();
+check(await firstOdds.isVisible(), "390: first match odds visible above the fold");
+const box = await firstOdds.boundingBox();
+check(box && box.y + box.height <= 844 - 64, `390: first odds tile within first viewport (bottom ${box && Math.round(box.y + box.height)})`);
+await noHScroll(page, "today 390");
+
+await firstOdds.click();
+check((await firstOdds.getAttribute("aria-pressed")) === "true", "odds tile toggles aria-pressed");
+await page.click(".slipbar");
+await page.fill(".sheet .stake-input input", "75");
+await page.fill(".sheet .stake-input input", "400");
+await page.screenshot({ path: `${out}/02-slip-390.png` });
+await page.click(".sheet button:has-text('Review picks')");
+await page.waitForSelector(".sheet button:has-text('Place 1 pick')");
+await page.click(".sheet button:has-text('Place 1 pick')");
+await page.waitForSelector(".sheet h2:has-text('Picks placed')");
+await page.screenshot({ path: `${out}/03-receipt-390.png` });
+check((await page.locator(".sheet .notice.success").count()) === 1, "ticket accepted with receipt");
+await page.keyboard.press("Escape");
+
+// Second pick from the event detail page (draft tab if present).
+await page.locator(".event .link").first().click();
+await page.waitForSelector(".scoreboard");
+await page.waitForTimeout(500);
+await page.screenshot({ path: `${out}/04-event-390.png`, fullPage: true });
+await noHScroll(page, "event 390");
+
+await page.goto(`${base}/picks`);
+await page.waitForSelector(".pick");
+await page.screenshot({ path: `${out}/05-picks-390.png` });
+
+// Kai bets too, then everyone views the league.
+const kai = contexts[1].page;
+await kai.reload();
+await kai.waitForSelector(".event .odds");
+await kai.locator(".event .odds").nth(1).click();
+await kai.click(".slipbar");
+await kai.click(".sheet .presets button:has-text('25%')");
+await kai.click(".sheet button:has-text('Review picks')");
+await kai.click(".sheet button:has-text('Place 1 pick')");
+await kai.waitForSelector(".sheet h2:has-text('Picks placed')");
+
+await page.goto(`${base}/league`);
+await page.waitForSelector(".standing");
+await page.screenshot({ path: `${out}/06-league-390.png` });
+check((await page.locator(".standing").count()) === codes.length, "league lists every member");
+check((await page.locator(".pick").count()) === 0, "friends' open picks stay hidden before lock");
+
+await page.goto(`${base}/explore?tab=FUTURES`);
+await page.waitForSelector(".market");
+await page.screenshot({ path: `${out}/07-futures-390.png` });
+
+for (const width of [320, 768]) {
+  await page.setViewportSize({ width, height: 844 });
+  await page.goto(`${base}/`);
+  await page.waitForSelector(".event");
+  await noHScroll(page, `today ${width}`);
+  if (width === 320) await page.screenshot({ path: `${out}/08-today-320.png` });
+}
+
+const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, storageState: await contexts[0].ctx.storageState() });
+const dp = await desk.newPage();
+await dp.goto(`${base}/`);
+await dp.waitForSelector(".event .odds");
+await dp.locator(".event .odds").nth(2).click();
+await dp.fill(".sliprail .stake-input input", "250");
+await dp.waitForTimeout(400);
+await dp.screenshot({ path: `${out}/09-today-1440.png` });
+await noHScroll(dp, "today 1440");
+await dp.locator(".event .link").first().click();
+await dp.waitForSelector(".scoreboard");
+await dp.waitForTimeout(400);
+await dp.screenshot({ path: `${out}/10-event-1440.png` });
+
+await browser.close();
+if (failures.length) {
+  console.error(`\n${failures.length} failure(s):\n` + failures.join("\n"));
+  process.exit(1);
+}
+console.log("\nAll walkthrough checks passed.");

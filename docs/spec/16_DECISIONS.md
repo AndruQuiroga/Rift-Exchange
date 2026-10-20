@@ -19,6 +19,10 @@
 | D-013 | Odds are model-generated (Elo from 2026 league results → per-game q → Bo1/3/5 distributions); markets only open when their model has data. Series markets lock at scheduled series start; between-game locks deferred | Build decision 2026-10-19 | No admin pricing available under D-008. |
 | D-014 | Auto-settlement once a game/series is `completed` and the data has been stable for a settle delay; incomplete data → HOLD → auto-VOID at deadline; later source changes produce automatic reversal + regrade | Build decision 2026-10-19 | Follows D-008 and settlement invariants. |
 | D-015 | Real team names are used (no ATLAS/NOVA in production); app stays private and invite-only, and is not published | User-confirmed 2026-10-19 | Owner accepts Riot-policy risk; supersedes A-015 for live data. |
+| D-016 | Team model: game-level Elo with regional priors, K=12, shrink 0.85, tuned on a walk-forward backtest of 67 international 2026 series (log loss 0.590 vs 0.693 coin-flip, 69% accuracy). Re-run with `make backtest` | Build decision 2026-10-20 | Lower K scored marginally better but leans on editorial regional priors; kept the middle ground. |
+| D-017 | Game winners come only from forced evidence: a series sweep, or the series-score change between two polls (the worker polls every minute during live series); otherwise Leaguepedia, otherwise HOLD | Build decision 2026-10-20 | The live-stats feed has no explicit per-game winner. |
+| D-018 | Futures: "advance from Swiss" closes at the first Swiss match (the opening betting phase); "Worlds champion" stays open, re-priced after every result, until quarterfinals start | Build decision 2026-10-20 | Matches D-010; accepted odds stay frozen. |
+| D-019 | Draft (champion picked) and game-1 total-kills markets open once ≥15 Worlds games have verified stats; priced from this tournament's pick rates / kill totals and labelled experimental | Build decision 2026-10-20 | Play-Ins supply the first 22 games. |
 
 ## Chosen defaults, configurable (not yet separately confirmed)
 
@@ -71,3 +75,11 @@
 ## Change-control instructions
 
 Before editing a rule with any accepted ticket: publish a new rule version and only apply it to *new* tickets; never rewrite accepted terms. For economy rule changes, freeze before the affected match day and record an audit event visible to all members. For source changes, stage adapter in shadow mode and compare at least five graded fixtures before enabling automatic confirmation.
+
+## Deferred after the first build (2026-10-20)
+
+- Ban markets (most banned, champion banned) — need Leaguepedia bot credentials; adapter is written and runs in mock mode.
+- Player props (most kills, first blood, objectives) — final-frame stats are ingested; rosters are only known at game start, so pre-series player markets need a roster source.
+- Between-game locks (Game 2+ markets) — the draft starts too soon after a game ends to lock safely from a 60s poll.
+- Second-friend approval for corrections — corrections are automatic (D-014) and fully visible in each ledger.
+- Docker images are written but were not built in the development container (no Docker daemon there).
