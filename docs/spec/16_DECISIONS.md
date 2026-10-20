@@ -78,7 +78,7 @@ Before editing a rule with any accepted ticket: publish a new rule version and o
 
 ## Deferred after the first build (2026-10-20)
 
-- Ban markets (most banned, champion banned) — need Leaguepedia bot credentials; adapter is written and runs in mock mode.
+- Ban markets (most banned, champion banned) — Leaguepedia credentials are provisioned and live access was verified on 2026-10-20; ban persistence and market generation remain deferred. See the [activation record](../deployment/leaguepedia-live-2026-10-20.md).
 - Player props (most kills, first blood, objectives) — final-frame stats are ingested; rosters are only known at game start, so pre-series player markets need a roster source.
 - Between-game locks (Game 2+ markets) — the draft starts too soon after a game ends to lock safely from a 60s poll.
 - Second-friend approval for corrections — corrections are automatic (D-014) and fully visible in each ledger.
