@@ -43,6 +43,10 @@ OFFERED_OBJECTIVES = ("first_blood", "first_tower", "baron_before")
 RETIRED_OBJECTIVES = tuple(k for k in OBJECTIVE_KINDS if k not in OFFERED_OBJECTIVES)
 KINDS = (*OBJECTIVE_KINDS, "lane_duel")
 LINES = [x + 0.5 for x in range(14, 45)]
+# Kill lines stay clear of what the first three minutes have already settled: at least 5 kills above the
+# game's kill count so far (D-024).
+KILL_LINE_FLOOR = LINES[0]
+KILL_LINE_MARGIN = 5
 
 
 class PropsError(Exception):
@@ -245,9 +249,9 @@ def duel_probability(data: TimelineData, a: dict, b: dict, role: str, stat: str)
 # ------------------------------------------------------------------ early-game window
 #
 # Duels and kill lines need the champions, which only exist once the game loads (the feed has no live
-# champion select). They open on the game's first livestats frame and close at 3:00 of game time, or at
-# the first kill if that comes sooner. Times are the feed's own frame timestamps, so a pick accepted after
-# the real cutoff is voided at settlement even though the worker only notices the kill on its next poll.
+# champion select). They open on the game's first livestats frame and close at 3:00 of game time; an early
+# kill no longer closes them (D-024). Times are the feed's own frame timestamps, so a pick accepted after
+# the real cutoff is voided at settlement.
 
 EARLY_WINDOW = timedelta(minutes=3)
 EARLY_KINDS = ("lane_duel", "total_kills_game")
@@ -263,14 +267,10 @@ class EarlyWindow:
 
 
 def early_cutoff(game: Game) -> datetime | None:
-    """3:00 of game time, or the first kill if earlier, as wall time from the feed's frames."""
+    """3:00 of game time, as wall time from the feed's frames."""
     if game.started_at is None:
         return None
-    cutoff = game.started_at + EARLY_WINDOW
-    blood = ((game.timeline or {}).get("firsts") or {}).get("blood")
-    if blood:
-        cutoff = min(cutoff, game.started_at + timedelta(seconds=blood["at_s"]))
-    return cutoff
+    return game.started_at + EARLY_WINDOW
 
 
 def early_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
@@ -344,7 +344,7 @@ def _open_early(session: Session, fixture: Fixture, game_index: int, now: dateti
     w = early_window(session, fixture, game_index, now)
     if not w.open:
         raise PropsError("NOT_OPEN", f"Game {game_index} early-game picks open when the game loads and close at "
-                         "3:00 or first blood.")
+                         "3:00.")
     return w
 
 
@@ -366,7 +366,7 @@ def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: 
     spec = MarketSpec(
         f"lane_duel:{fixture.provider_id}:{game_index}:{role}:{stat}:{a['player_id']}:{b['player_id']}",
         "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role}: {a['name']} vs {b['name']}",
-        f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00 or first blood; a pick "
+        f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00; a pick "
         f"accepted after that is void. An exact tie is void{cs_note}. Settles from the game's live data.",
         w.close_at, "player_champion_normal_v1", "EXPERIMENTAL",
         [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
@@ -389,11 +389,18 @@ def _kill_dist(stats: TournamentStats) -> tuple[float, float] | None:
     return mean, var
 
 
-def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings) -> list[dict]:
+def kill_line_floor(game: Game | None) -> float:
+    """The lowest kill line offered right now: at least 5 above the kills already scored."""
+    from rift.api.views import game_kills
+
+    return max(KILL_LINE_FLOOR, (game_kills(game) or 0) + KILL_LINE_MARGIN + 0.5)
+
+
+def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings, floor: float = KILL_LINE_FLOOR) -> list[dict]:
     rows = []
     if dist is None:
         return rows
-    for line in LINES:
+    for line in (x for x in LINES if x >= floor):
         under = _nb_cdf(int(line), *dist)
         over_px, under_px = _px(1 - under, settings), _px(under, settings)
         if over_px and under_px:
@@ -408,7 +415,7 @@ def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: Tourn
     return {"game_index": game_index, **_window_view(w),
             "champions": game_lineup(w.game, fixture) if w.game else {},
             "typical": str(math.floor(dist[0]) + 0.5) if dist else None,
-            "lines": _kill_line_rows(dist, settings) if w.open else []}
+            "lines": _kill_line_rows(dist, settings, kill_line_floor(w.game)) if w.open else []}
 
 
 def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_index: int, line: str,
@@ -416,6 +423,8 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
     if float(line) not in LINES:
         raise PropsError("BAD_LINE", "Lines run from 14.5 to 44.5 kills.")
     w = _open_early(session, fixture, game_index, now)
+    if float(line) < (floor := kill_line_floor(w.game)):
+        raise PropsError("BAD_LINE", f"Kill lines start at {floor} right now.")
     dist = _kill_dist(stats)
     if dist is None:
         raise PropsError("NOT_OFFERED", "Not enough games yet to price kill lines.")
@@ -427,7 +436,7 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
         f"total_kills_game:{fixture.provider_id}:{game_index}:{line}", "total_kills_game", "GAME", "PROPS",
         f"Game {game_index} total kills {line}",
         f"Combined kills by both teams in Game {game_index}. Over means {int(float(line)) + 1} or more. Open from "
-        "game start until 3:00 or first blood; a pick accepted after that is void. Requires verified final game "
+        "game start until 3:00; a pick accepted after that is void. Requires verified final game "
         f"stats; void if Game {game_index} is not played.",
         w.close_at, "negbin_early_v1", "EXPERIMENTAL",
         [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
@@ -439,7 +448,7 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
 
 
 def tighten_early(session: Session, now: datetime) -> int:
-    """Pull each open early-game market's cutoff to first blood once the timeline records it."""
+    """Pull each open early-game market's cutoff in line with 3:00 of the game's recorded start."""
     rows = session.execute(select(Market).where(Market.kind.in_(EARLY_KINDS), Market.state == "OPEN",
                                                 Market.fixture_id.is_not(None)).with_for_update()).scalars().all()
     changed = 0

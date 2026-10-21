@@ -117,7 +117,7 @@ def test_full_series_lifecycle(factory):
         user = s.execute(select(User)).scalar_one()
         grants.join_season(s, season, user.id, now[0])
         kinds = sorted(m.kind for m in s.execute(select(Market)).scalars())
-        assert kinds == ["game_winner", "series_score", "series_winner", "total_games"]
+        assert kinds == ["game_winner", "series_score", "series_winner"]
         winner_mkt = s.execute(select(Market).where(Market.kind == "series_winner")).scalar_one()
         g1_mkt = s.execute(select(Market).where(Market.kind == "game_winner")).scalar_one()
         atlas = s.execute(select(Outcome).where(Outcome.market_id == winner_mkt.id, Outcome.code == "A")).scalar_one()

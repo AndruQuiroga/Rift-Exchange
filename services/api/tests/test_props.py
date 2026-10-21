@@ -136,13 +136,13 @@ def test_early_window_opens_at_game_load_and_closes_at_three_minutes(factory, se
         assert not props.duels(s, season, fx, 1, SETTINGS, T0 + timedelta(minutes=3))["open"]
 
 
-def test_first_blood_closes_the_window_early(factory, season_games):
+def test_first_blood_does_not_close_the_window(factory, season_games):
     _live_game1(factory, season_games, blood_at=95)
     with factory() as s:
         fx = s.get(Fixture, season_games["fixture"])
-        w = props.early_window(s, fx, 1, T0 + timedelta(seconds=60))
-        assert w.open and w.close_at == T0 + timedelta(seconds=95)
-        assert not props.early_window(s, fx, 1, T0 + timedelta(seconds=96)).open
+        w = props.early_window(s, fx, 1, T0 + timedelta(seconds=96))
+        assert w.open and w.close_at == T0 + timedelta(minutes=3)
+        assert not props.early_window(s, fx, 1, T0 + timedelta(minutes=3)).open
 
 
 def test_lane_duel_priced_created_once_and_graded(factory, season_games):
@@ -163,7 +163,7 @@ def test_lane_duel_priced_created_once_and_graded(factory, season_games):
         assert grade_market(s, s.get(Market, tie_id)).status == "VOID"
 
 
-def test_pick_accepted_after_first_blood_is_void(factory, season_games):
+def test_picks_after_first_blood_stand_and_after_three_minutes_are_void(factory, season_games):
     from test_money import balance, join, place
 
     from rift.markets import lock_due
@@ -180,33 +180,31 @@ def test_pick_accepted_after_first_blood_is_void(factory, season_games):
     join(factory, season_games, "alice")
     join(factory, season_games, "bob")
     place(factory, season_games, "alice", [(outcome_id, 100)], "early", now=at)
-    place(factory, season_games, "bob", [(outcome_id, 100)], "late", now=T0 + timedelta(seconds=100))
-    # First blood happened at 1:30 by the feed's clock; the worker only sees it on a later poll.
+    # First blood at 1:30 by the feed's clock no longer closes anything: Bob's pick at 2:40 stands.
     with factory() as s, s.begin():
         g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
         g.timeline = {**g.timeline, "firsts": {"blood": {"side": "blue", "team_id": str(g.blue_team_id), "at_s": 90}}}
+    place(factory, season_games, "bob", [(outcome_id, 100)], "after-blood", now=T0 + timedelta(seconds=160))
     with factory() as s, s.begin():
-        assert props.tighten_early(s, T0 + timedelta(seconds=105)) == 1
-        lock_due(s, T0 + timedelta(seconds=105))
+        assert props.tighten_early(s, T0 + timedelta(seconds=170)) == 0
+        lock_due(s, T0 + timedelta(minutes=3))
         assert s.get(Market, duel_id).state == "LOCKED"
     _finish_game1(factory, season_games)
     with factory() as s, s.begin():
         apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=1))
-    rows = {}
     with factory() as s:
-        for sel in s.execute(select(Selection)).scalars():
-            rows[sel.user_id] = sel
-    assert rows[season_games["alice"]].status == "WON"
-    assert rows[season_games["bob"]].status == "VOID" and rows[season_games["bob"]].return_rc == 100
-    assert balance(factory, season_games, "bob") == (2000, 0)
+        rows = {sel.user_id: sel for sel in s.execute(select(Selection)).scalars()}
+    assert rows[season_games["alice"]].status == rows[season_games["bob"]].status == "WON"
 
-    # A corrected final scan moves first blood before Alice's pick, without changing the winner.
+    # A corrected final scan puts the game's start 30 s earlier: Bob's pick (now 3:10 in) is void.
     with factory() as s, s.begin():
         g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
-        g.timeline = {**g.timeline, "firsts": {"blood": {"at_s": 50}}}
+        g.started_at = T0 - timedelta(seconds=30)
         assert apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
-        assert not apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
-    assert balance(factory, season_games, "alice") == (2000, 0)
+    with factory() as s:
+        bob = s.execute(select(Selection).where(Selection.user_id == season_games["bob"])).scalar_one()
+    assert bob.status == "VOID" and bob.return_rc == 100
+    assert balance(factory, season_games, "bob") == (2000, 0)
 
 
 def test_any_kill_line_is_one_shared_market(factory, season_games):
@@ -218,15 +216,23 @@ def test_any_kill_line_is_one_shared_market(factory, season_games):
         assert props.kill_lines(s, fx, 1, stats, SETTINGS, T0 - timedelta(minutes=5))["lines"] == []  # not loaded
         grid = props.kill_lines(s, fx, 1, stats, SETTINGS, at)
         offered = [row["line"] for row in grid["lines"]]
-        assert grid["open"] and offered and "14.5" not in offered  # every game had 40 kills: 14.5 is a lock
+        assert grid["open"] and offered and min(float(x) for x in offered) >= props.KILL_LINE_FLOOR
         line = offered[len(offered) // 2]
         m = props.ensure_kill_line(s, season, fx, 1, line, stats, SETTINGS, at)
         again = props.ensure_kill_line(s, season, fx, 1, line, stats, SETTINGS, at)
         assert m.id == again.id and m.params == {"game_index": 1, "line": line, "early": True}
         assert m.close_at == T0 + timedelta(minutes=3)
-        for bad in ("31.0", "14.5"):  # not a half line; a line nobody should be offered
+        for bad in ("31.0", "14.5"):  # not a half line; a line nobody should be offered (every game had 40)
             with pytest.raises(props.PropsError):
                 props.ensure_kill_line(s, season, fx, 1, bad, stats, SETTINGS, at)
+        # Twelve kills in the first minutes lift the lowest line to 17.5 (5 clear of the count so far).
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        g.timeline = {**g.timeline, "live": {"kills": {"A": 7, "B": 5}}}
+        s.flush()
+        assert props.kill_line_floor(g) == 17.5
+        assert all(float(r["line"]) >= 17.5 for r in props.kill_lines(s, fx, 1, stats, SETTINGS, at)["lines"])
+        with pytest.raises(props.PropsError, match="start at 17.5"):
+            props.ensure_kill_line(s, season, fx, 1, "16.5", stats, SETTINGS, at)
 
 
 class _RegionalFeed:
@@ -262,7 +268,7 @@ def test_regional_lineup_until_a_team_plays_at_worlds(factory, world):
         assert atlas.lineup["players"]["mid"] == {"player_id": "red-mid", "name": "RED mid"}
         assert props.lineups(s, s.get(Fixture, world["fixture"]))["A"]["mid"]["name"] == "RED mid"
 
-def test_quote_rejects_recorded_first_blood_before_worker_locks(factory, season_games):
+def test_quote_after_first_blood_is_fine_but_not_after_three_minutes(factory, season_games):
     from test_money import join
 
     from rift.placement import PlacementError, QuoteItem, create_quote
@@ -276,6 +282,9 @@ def test_quote_rejects_recorded_first_blood_before_worker_locks(factory, season_
         game = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
         game.timeline = {**game.timeline, "firsts": {"blood": {"at_s": 90}}}
     join(factory, season_games, "alice")
-    with factory() as s, s.begin(), pytest.raises(PlacementError, match="window has closed"):
+    with factory() as s, s.begin():  # first blood at 1:30 no longer closes the window
         create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
                      items=[QuoteItem(oid, 100)], now=T0 + timedelta(seconds=100), ttl_seconds=20)
+    with factory() as s, s.begin(), pytest.raises(PlacementError, match="window has closed"):  # before the worker locks
+        create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
+                     items=[QuoteItem(oid, 100)], now=T0 + timedelta(seconds=181), ttl_seconds=20)

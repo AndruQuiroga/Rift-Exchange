@@ -99,7 +99,7 @@ class Worker:
             )).scalar())
 
     def poll_interval(self) -> float:
-        """5 s during a game's first minutes (first blood closes early-game picks), 15 s around live series,
+        """5 s during a game's first minutes (early-game picks close at 3:00), 15 s around live series,
         60 s otherwise."""
         if self.early_window_open():
             return self.settings.early_poll_seconds
@@ -142,7 +142,7 @@ class Worker:
 
     def _price_markets(self, s: Session, now: datetime) -> int:
         season = self._season(s)
-        for kind in props.RETIRED_OBJECTIVES:  # D-023: no longer offered; placed picks still settle
+        for kind in (*props.RETIRED_OBJECTIVES, "total_games"):  # D-023/D-024: placed picks still settle
             markets.retire_kind(s, kind, "No longer offered")
         model, confidence = self._model(s)
         stats = markets.tournament_stats(s, season)

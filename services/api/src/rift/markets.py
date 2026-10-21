@@ -19,7 +19,6 @@ from rift.domain.pricing import (
     price,
     series_score_distribution,
     series_win_probability,
-    total_games_distribution,
 )
 from rift.models import AuditEvent, Fixture, Game, Market, OddsSnapshot, OutboxEvent, Outcome, Season, Team
 from rift.ratings import EloModel
@@ -178,12 +177,7 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
             fixture.scheduled_at, "elo_v1_independent_games", confidence,
             [OutcomeSpec(f"{x}-{y}", f"{a.code if x > y else b.code} {max(x, y)}–{min(x, y)}", dist[(x, y)])
              for x, y in order], {}))
-        totals = total_games_distribution(q, bo)
-        specs.append(MarketSpec(
-            f"total_games:{key}", "total_games", "SERIES", "WINNER", "Games played",
-            f"Number of games played in the {fmt}. Void if the series is not completed.",
-            fixture.scheduled_at, "elo_v1_independent_games", confidence,
-            [OutcomeSpec(str(n), f"{n} games", p) for n, p in sorted(totals.items())], {}))
+        # "Games played" is no longer offered (D-024): the exact score already says it. Earlier ones still settle.
     specs.extend(game_specs(fixture, 1, a, b, q, stats, fixture.scheduled_at, confidence))
 
     # Champion markets are created on demand from the champion grid (rift.draft), not pre-picked here.
@@ -328,7 +322,7 @@ def lock_due(session: Session, now: datetime) -> int:
     for m in session.execute(
         select(Market).where(Market.state.in_(("OPEN", "SUSPENDED")), Market.close_at <= now).with_for_update()
     ).scalars():
-        locked[m.id] = (m, "Locked at 3:00 or first blood" if m.params.get("early") else
+        locked[m.id] = (m, "Locked at 3:00" if m.params.get("early") else
                         f"Locked before Game {game_index(m)} draft" if (game_index(m) or 0) > 1 else
                         "Locked at series start" if m.fixture_id else "Locked")
     live = session.execute(

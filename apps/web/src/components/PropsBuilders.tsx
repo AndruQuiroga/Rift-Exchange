@@ -17,7 +17,7 @@ function WindowNote({ data, now }: { data: WindowState; now: number }) {
   const seconds = data.close_at ? Math.max(0, Math.ceil((Date.parse(data.close_at) - now) / 1000)) : 0;
   const text = data.state === "UPCOMING" ? "Opens after draft, when champions are confirmed."
     : data.open && seconds > 0
-      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)} · earlier at first blood`
+      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)}`
     : "Early-game picks closed.";
   return <p className="muted num" role="status" style={{ fontSize: 13, marginTop: 12 }}>{text}</p>;
 }
@@ -125,7 +125,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         })}
       </div>
       {notice}
-      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00 or first blood. Ties void.</p>
+      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00. Ties void.</p>
     </div>
   );
 }

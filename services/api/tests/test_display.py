@@ -35,7 +35,7 @@ def test_void_reason_in_plain_words():
     early = SimpleNamespace(kind="first_blood", params={"early": True})
     series = SimpleNamespace(kind="series_winner", params={})
     void = lambda reason: SimpleNamespace(void=True, reason=reason)
-    assert void_reason(pick, early, SimpleNamespace(void=False, reason=None)) == "Placed after first blood or 3:00"
+    assert void_reason(pick, early, SimpleNamespace(void=False, reason=None)) == "Placed after 3:00"
     assert void_reason(pick, series, None) == "Placed after the start"
     assert void_reason(pick, early, void("Exact tie (void rule)")) == "Tie"
     assert void_reason(pick, series, void("Game 3 was not played")) == "Game 3 not played"

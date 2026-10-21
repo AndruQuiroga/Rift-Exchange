@@ -71,7 +71,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00 or first blood.
+          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00.
         </p>
         <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
       </div>
@@ -125,7 +125,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         </Section>
       ) : null}
 
-      <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00 or first blood" : undefined}>
+      <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00" : undefined}>
         {early === "OPEN" ? (
           <>
             <LaneDuels event={event} game={game.index} />
@@ -134,7 +134,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         ) : early === "UPCOMING" && game.window !== "DONE" ? (
           <div className="mp-locked">
             <span className="t"><IconLock width={14} height={14} aria-hidden="true" /> Opens when the game loads</span>
-            <span>Lane duels and the kill line are open from the loading screen until 3:00 or first blood.</span>
+            <span>Lane duels and the kill line are open from the loading screen until 3:00.</span>
             <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
           </div>
         ) : (
@@ -151,7 +151,6 @@ function SeriesPanel({ event }: { event: EventT }) {
   const label = eventLabel(event);
   const winner = markets.find((m) => m.kind === "series_winner");
   const score = markets.find((m) => m.kind === "series_score");
-  const games = markets.find((m) => m.kind === "total_games");
   const props = markets.filter((m) => m.category === "PROPS" && m.params.game_index === undefined);
   // Scores are coded from the first team's side ("2-1"); a row pairs it with the mirror win ("1-2").
   const scoreRows = (score?.outcomes ?? [])
@@ -166,7 +165,7 @@ function SeriesPanel({ event }: { event: EventT }) {
             <span className="muted">Bo{event.best_of}</span>
           </div>
           <WinnerCards event={event} market={winner} caption="Series winner" />
-          <Rules markets={[winner, score, games]} summary="Settles on the official series result; void if it isn't completed." />
+          <Rules markets={[winner, score]} summary="Settles on the official series result; void if it isn't completed." />
         </section>
       ) : null}
       <H2HHead event={event} />
@@ -175,11 +174,6 @@ function SeriesPanel({ event }: { event: EventT }) {
           {scoreRows.map((r) => (
             <H2HRow key={r.label} event={event} market={score} label={r.label} left={r.left} right={r.right} />
           ))}
-        </Section>
-      ) : null}
-      {games ? (
-        <Section title="Games played">
-          <ChoiceRow event={event} market={games} label="Series length" short={(o) => o.label} />
         </Section>
       ) : null}
       {props.length ? (

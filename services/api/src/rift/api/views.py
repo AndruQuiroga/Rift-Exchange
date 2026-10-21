@@ -191,7 +191,7 @@ def games_view(fixture: Fixture, games: list[Game], markets: list[Market], now: 
             "winner": _side(fixture, g.winner_team_id) if g else None,
             "window": window, "opens_when": opens_when,
             "closes_at": closes.isoformat() if closes else None,
-            # Duels and kill lines: UPCOMING until the game loads, OPEN until 3:00 or first blood, then CLOSED.
+            # Duels and kill lines: UPCOMING until the game loads, OPEN until 3:00, then CLOSED.
             "early": early.state,
             "burned_champions": burned[idx],
         })
@@ -332,7 +332,7 @@ def void_reason(s: Selection, m: Market, result: MarketResult | None) -> str | N
     if m.kind == "swiss_record" and s.settled_revision == 0:
         return "Moved to the free record card · stake refunded"
     if result is None or not result.void:  # the market settled, but this pick came in after the real cutoff
-        return "Placed after first blood or 3:00" if (m.params or {}).get("early") else "Placed after the start"
+        return "Placed after 3:00" if (m.params or {}).get("early") else "Placed after the start"
     reason = result.reason or ""
     if "not played" in reason:
         return reason.replace(" was not played", " not played")

@@ -247,8 +247,8 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         market.state, market.state_reason = "HOLD", grade.reason
         return changed
 
-    # Final scans can refine first blood after a market was already locked. Settle against
-    # that timestamp, rather than the poll-time cutoff, and replay if it later changes.
+    # Final scans can refine a game's start after an early-game market locked. Settle against 3:00 of
+    # that start, rather than the poll-time cutoff, and replay if it later changes.
     effective_cutoff = market.close_at
     if market.params.get("early") and market.fixture_id is not None:
         game = session.execute(select(Game).where(Game.fixture_id == market.fixture_id,
@@ -284,7 +284,7 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
     }
     locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if wallet_by_user else {}
     # A market's cutoff can be pulled back after the fact (a series or game that started before the poll
-    # saw it, first blood inside the early-game window). A pick accepted after the real cutoff is void.
+    # saw it, or a refined start for the 3:00 early-game window). A pick accepted after the real cutoff is void.
     accepted = dict(session.execute(select(Ticket.id, Ticket.accepted_at).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).all()) if selections else {}
 
