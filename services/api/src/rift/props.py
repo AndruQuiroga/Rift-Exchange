@@ -37,6 +37,10 @@ STATS = {
 }
 SHRINK_GAMES = 3  # pseudo-games of the role average added to each player's own record
 OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul")
+# Offered for new games (D-023). First dragon element and dragon soul are no longer offered; existing ones
+# still lock and settle from the timeline like the rest.
+OFFERED_OBJECTIVES = ("first_blood", "first_tower", "baron_before")
+RETIRED_OBJECTIVES = tuple(k for k in OBJECTIVE_KINDS if k not in OFFERED_OBJECTIVES)
 KINDS = (*OBJECTIVE_KINDS, "lane_duel")
 LINES = [x + 0.5 for x in range(14, 45)]
 
@@ -134,11 +138,6 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
 # ------------------------------------------------------------------ objectives (open with each game)
 
 
-def _smoothed(counts: Counter, keys) -> dict[str, float]:
-    total = sum(counts[k] for k in keys) + len(keys)
-    return {k: (counts[k] + 1) / total for k in keys}
-
-
 def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data: TimelineData,
                     close_at: datetime, when: str) -> list[MarketSpec]:
     if data.games < MIN_DRAFT_GAMES:
@@ -153,12 +152,6 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
             f"Team that gets {title.lower()} in Game {idx}. {when} {void}",
             close_at, "timeline_rates_v1", "EXPERIMENTAL",
             [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)], {"game_index": idx}))
-    dragon = _smoothed(data.first_dragon, DRAGONS)
-    specs.append(MarketSpec(
-        f"first_dragon_type:{key}:{idx}", "first_dragon_type", "GAME", "OBJECTIVES", f"Game {idx} first dragon",
-        f"Element of the first dragon taken in Game {idx}, by either team. Void if no dragon is taken. {when} {void}",
-        close_at, "timeline_rates_v1", "EXPERIMENTAL",
-        [OutcomeSpec(t, t.capitalize(), dragon[t]) for t in DRAGONS], {"game_index": idx}))
     early = (data.early_baron + 1) / (data.games + 2)
     specs.append(MarketSpec(
         f"baron_before:{key}:{idx}", "baron_before", "GAME", "OBJECTIVES", f"Game {idx} Baron before 25:00",
@@ -166,13 +159,6 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
         f"later or never. {when} {void}",
         close_at, "timeline_rates_v1", "EXPERIMENTAL",
         [OutcomeSpec("YES", "Yes", early), OutcomeSpec("NO", "No", 1 - early)], {"game_index": idx}))
-    soul = _smoothed(data.soul, (*DRAGONS, "none"))
-    specs.append(MarketSpec(
-        f"dragon_soul:{key}:{idx}", "dragon_soul", "GAME", "OBJECTIVES", f"Game {idx} dragon soul",
-        f"Element of the dragon soul claimed in Game {idx}, or No soul if nobody claims one. {when} {void}",
-        close_at, "timeline_rates_v1", "EXPERIMENTAL",
-        [OutcomeSpec(t.upper() if t == "none" else t, "No soul" if t == "none" else t.capitalize(), soul[t])
-         for t in (*DRAGONS, "none")], {"game_index": idx}))
     return specs
 
 

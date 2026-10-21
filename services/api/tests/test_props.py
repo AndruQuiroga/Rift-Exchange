@@ -60,10 +60,10 @@ def test_objective_markets_open_with_each_game(factory, season_games):
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
         specs = {sp.kind: sp for sp in game_specs(fx, 2, a, b, 0.6, tournament_stats(s, season), T0, "EXPERIMENTAL")}
-    assert set(props.OBJECTIVE_KINDS) <= set(specs)
+    assert set(props.OFFERED_OBJECTIVES) <= set(specs)
+    assert not set(props.RETIRED_OBJECTIVES) & set(specs)  # dragon element and soul are no longer offered
     blood = {o.code: o.probability for o in specs["first_blood"].outcomes}
     assert blood["A"] > 0.5  # A is the stronger side and winners have taken first blood every time
-    assert specs["dragon_soul"].outcomes[-1].code == "NONE"
     assert specs["baron_before"].params == {"game_index": 2}
 
 

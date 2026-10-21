@@ -56,7 +56,7 @@ function Section({ title, sub, children }: { title: string; sub?: string; childr
   );
 }
 
-const OBJECTIVES = ["first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul"];
+const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
 
 /** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
 function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: number }) {

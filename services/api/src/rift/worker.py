@@ -142,6 +142,8 @@ class Worker:
 
     def _price_markets(self, s: Session, now: datetime) -> int:
         season = self._season(s)
+        for kind in props.RETIRED_OBJECTIVES:  # D-023: no longer offered; placed picks still settle
+            markets.retire_kind(s, kind, "No longer offered")
         model, confidence = self._model(s)
         stats = markets.tournament_stats(s, season)
         count = 0
