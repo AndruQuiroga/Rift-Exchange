@@ -269,7 +269,8 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         try:
             return create_quote(session, season_id=season.id, user_id=user.id,
                                 items=[QuoteItem(i.outcome_id, i.stake_rc) for i in body.items],
-                                now=db_now(session), ttl_seconds=settings.quote_ttl_seconds)
+                                now=db_now(session), ttl_seconds=settings.quote_ttl_seconds,
+                                stake_cap_rc=settings.stake_cap_rc)
         except PlacementError as e:
             raise placement_error(e) from e
 
@@ -282,7 +283,8 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     @app.get("/api/v1/events/{event_id}/draft")
     def draft_grid(event_id: uuid.UUID, session: Db, user: CurrentUser, game: int = Query(1, ge=1, le=5)):
         try:
-            return draft.grid(session, season_of(session), _fixture(session, event_id), game, settings)
+            return draft.grid(session, season_of(session), _fixture(session, event_id), game, settings,
+                              db_now(session))
         except draft.DraftError as e:
             raise ApiError(409, e.code, e.message) from e
 
@@ -350,7 +352,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                 ticket, created = accept_ticket(
                     session, season_id=season.id, user_id=user.id, quote_id=body.quote_id,
                     confirm_odds_versions=body.confirm_odds_versions, idempotency_key=idempotency_key,
-                    now=db_now(session))
+                    now=db_now(session), stake_cap_rc=settings.stake_cap_rc)
                 response.status_code = 201 if created else 200
                 return ticket_view(session, ticket)
         except PlacementError as e:
@@ -363,7 +365,8 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                     new_quote = create_quote(
                         session, season_id=season.id, user_id=user.id,
                         items=[QuoteItem(uuid.UUID(i["outcome_id"]), i["stake_rc"]) for i in previous],
-                        now=db_now(session), ttl_seconds=settings.quote_ttl_seconds)
+                        now=db_now(session), ttl_seconds=settings.quote_ttl_seconds,
+                                stake_cap_rc=settings.stake_cap_rc)
                 except PlacementError as inner:
                     raise placement_error(inner) from inner
             raise ApiError(409, "ODDS_CHANGED", e.message,

@@ -46,3 +46,20 @@ def test_return_arithmetic_matches_spec_examples():
     assert winning_return(1, Decimal("1.50")) == 2  # half-up
     assert settlement_return(300, Decimal("2.10"), "VOID") == 300
     assert settlement_return(300, Decimal("2.10"), "LOST") == 0
+
+
+def test_champion_future_is_left_out_while_paused():
+    from datetime import UTC, datetime
+    from types import SimpleNamespace
+
+    from rift import markets
+    from rift.simulate import FuturesProbabilities
+
+    t0 = datetime(2026, 10, 23, tzinfo=UTC)
+    teams = {i: SimpleNamespace(provider_id=f"t{i}", code=f"T{i}", name=f"Team {i}") for i in range(2)}
+    fixtures = [SimpleNamespace(stage="Swiss", scheduled_at=t0), SimpleNamespace(stage="Quarterfinals", scheduled_at=t0)]
+    sim = FuturesProbabilities(advance={0: .6, 1: .4}, champion={0: .7, 1: .3}, sims=1,
+                               records={i: {"3-0": .5, "0-3": .5} for i in range(2)})
+    kinds = lambda **kw: {s.kind for s in markets.futures_specs(None, fixtures, teams, sim, **kw)}
+    assert kinds() == {"tournament_winner", "swiss_record"}
+    assert kinds(tournament_winner=False) == {"swiss_record"}

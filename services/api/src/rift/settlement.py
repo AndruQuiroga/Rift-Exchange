@@ -288,9 +288,12 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
     accepted = dict(session.execute(select(Ticket.id, Ticket.accepted_at).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).all()) if selections else {}
 
+    # A live-priced pick whose price hadn't seen a kill that came before its acceptance is void (D-028).
+    game = props.market_game(session, market) if timed and market.fixture_id is not None else None
     for sel in selections:
         code = outcome_codes[sel.outcome_id]
-        late = accepted[sel.ticket_id] >= effective_cutoff
+        late = accepted[sel.ticket_id] >= effective_cutoff or props.priced_before_a_kill(
+            sel.rules_snapshot.get("params", {}), game, accepted[sel.ticket_id])
         result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
                   else "LOST")
         new_return = settlement_return(sel.stake_rc, sel.odds, result,

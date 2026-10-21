@@ -197,8 +197,15 @@ class Worker:
         if sim is None:
             return 0
         teams = {t.id: t for t in s.execute(select(Team).where(Team.id.in_(sim.champion.keys()))).scalars()}
-        specs = markets.futures_specs(season, fixtures, teams, sim)
+        offer = self.settings.offer_tournament_winner
+        specs = markets.futures_specs(season, fixtures, teams, sim, tournament_winner=offer)
         markets.retire_kind(s, "swiss_advance", "Replaced by the Swiss Board")
+        if offer:  # resume a paused champion market; picks placed before the pause still stand
+            for m in s.execute(select(Market).where(Market.kind == "tournament_winner", Market.state == "SUSPENDED",
+                                                    Market.state_reason == markets.TOURNAMENT_WINNER_PAUSED)):
+                m.state, m.state_reason = "OPEN", None
+        else:
+            markets.retire_kind(s, "tournament_winner", markets.TOURNAMENT_WINNER_PAUSED)
         return sum(1 for spec in specs if markets.upsert_market(s, season, None, spec, self.settings, now))
 
     def _settle(self, s: Session, now: datetime) -> int:

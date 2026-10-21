@@ -193,11 +193,15 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
     return specs
 
 
-def futures_specs(season: Season, fixtures: list[Fixture], teams: dict, sim: FuturesProbabilities) -> list[MarketSpec]:
+TOURNAMENT_WINNER_PAUSED = "Paused until after the Swiss stage"
+
+
+def futures_specs(season: Season, fixtures: list[Fixture], teams: dict, sim: FuturesProbabilities,
+                  tournament_winner: bool = True) -> list[MarketSpec]:
     swiss_start = min((f.scheduled_at for f in fixtures if f.stage == "Swiss"), default=None)
     qf_start = min((f.scheduled_at for f in fixtures if f.stage == "Quarterfinals"), default=None)
     specs = []
-    if qf_start:
+    if qf_start and tournament_winner:
         champ = normalise({str(t): max(p, 1e-9) for t, p in sim.champion.items()})
         specs.append(MarketSpec(
             "tournament_winner", "tournament_winner", "TOURNAMENT", "FUTURES", "Worlds 2026 champion",
@@ -327,7 +331,7 @@ def lock_due(session: Session, now: datetime) -> int:
 
     Series markets and Game 1 lock the moment the series is live. A Game N (N >= 2) market opens while the
     series is live, so it locks only at its own cutoff, when its game is seen in progress, or when the
-    series is over.
+    series is over; Game N champion calls also lock before its draft.
     """
     locked: dict = {}
     for m in session.execute(
@@ -357,6 +361,14 @@ def lock_due(session: Session, now: datetime) -> int:
             if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":
                 locked.setdefault(m.id, (m, "Game over"))
             continue
+        if m.category == "DRAFT" and (idx or 1) > 1:
+            # Champion calls close before the draft: NEXT_GAME_WINDOW after the previous game ends (D-026).
+            prev = games.get((f.id, idx - 1))
+            if prev is not None and prev.ended_at is not None:
+                m.close_at = min(m.close_at, prev.ended_at + NEXT_GAME_WINDOW)
+                if m.close_at <= now:
+                    locked.setdefault(m.id, (m, f"Locked before Game {idx} draft"))
+                    continue
         # The real start can precede the poll that noticed it. Pull the cutoff back so a pick that
         # slipped in after the start is voided at settlement (settlement.apply_grade).
         start = g.started_at if g is not None else None

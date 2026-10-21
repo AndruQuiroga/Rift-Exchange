@@ -238,3 +238,53 @@ def test_raising_the_opening_grant_tops_up_existing_members_once(factory, world)
     assert balance(factory, world, "alice") == (6000, 0)
     join(factory, world, "bob")  # a later joiner gets the new amount straight away, no top-up
     assert balance(factory, world, "bob") == (6000, 0)
+
+
+def _quote(factory, ids, picks, cap=1000, now=T0):
+    with factory() as s, s.begin():
+        return create_quote(s, season_id=ids["season"], user_id=ids["alice"], items=[QuoteItem(o, st) for o, st in picks],
+                            now=now, ttl_seconds=20, stake_cap_rc=cap)
+
+
+def test_stake_cap_counts_every_pick_on_the_market(factory, world):
+    join(factory, world, "alice")
+    a = outcome_id(factory, world["market"], "A")
+    b = outcome_id(factory, world["market"], "B")
+    with pytest.raises(PlacementError) as e:
+        _quote(factory, world, [(a, 1001)])
+    assert e.value.code == "STAKE_LIMIT" and e.value.details["max_stake_rc"] == 1000
+    q = _quote(factory, world, [(a, 700)])
+    with factory() as s, s.begin():
+        accept_ticket(s, season_id=world["season"], user_id=world["alice"], quote_id=q["quote_id"],
+                      confirm_odds_versions={i["outcome_id"]: i["odds_version"] for i in q["items"]},
+                      idempotency_key="cap-1", now=T0, stake_cap_rc=1000)
+    with pytest.raises(PlacementError) as e:  # the other side of the same market shares the room
+        _quote(factory, world, [(b, 301)])
+    assert e.value.details["max_stake_rc"] == 300 and "700 RC on it already" in e.value.message
+    # A quote made before the room was used is checked again when it is accepted.
+    early = _quote(factory, world, [(b, 300)])
+    stale = _quote(factory, world, [(b, 300)])
+    with factory() as s, s.begin():
+        accept_ticket(s, season_id=world["season"], user_id=world["alice"], quote_id=early["quote_id"],
+                      confirm_odds_versions={i["outcome_id"]: i["odds_version"] for i in early["items"]},
+                      idempotency_key="cap-2", now=T0, stake_cap_rc=1000)
+    with pytest.raises(PlacementError) as e, factory() as s, s.begin():
+        accept_ticket(s, season_id=world["season"], user_id=world["alice"], quote_id=stale["quote_id"],
+                      confirm_odds_versions={i["outcome_id"]: i["odds_version"] for i in stale["items"]},
+                      idempotency_key="cap-3", now=T0, stake_cap_rc=1000)
+    assert e.value.code == "STAKE_LIMIT"
+
+
+def test_knockouts_uncap_predictions_that_close_before_the_draft(factory, world):
+    from conftest import make_market
+    with factory() as s, s.begin():
+        fixture = s.get(Fixture, world["fixture"])
+        fixture.stage = "Quarterfinals"
+        g1 = make_market(s, s.get(Season, world["season"]), fixture, "game_winner", [("A", "Atlas", "1.60"), ("B", "Nova", "2.50")],
+                         params={"game_index": 1, "through_draft": True}, scope="GAME")
+        g1_id = g1.id
+    join(factory, world, "alice")
+    assert _quote(factory, world, [(outcome_id(factory, world["market"], "A"), 1500)])["total_stake_rc"] == 1500
+    with pytest.raises(PlacementError) as e:  # Game 1 winner stays open through the draft: still capped
+        _quote(factory, world, [(outcome_id(factory, g1_id, "A"), 1500)])
+    assert e.value.code == "STAKE_LIMIT"

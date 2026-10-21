@@ -66,6 +66,11 @@ class Settings(BaseSettings):
     hold_void_after_hours: int = 48  # unresolved markets void after this
     max_decimal_odds: str = "100.00"
     min_probability: str = "0.01"
+    # Most one player can stake on one prediction (all their picks on it together). Every market is capped
+    # in the Swiss stage; from the quarterfinals only predictions open after the draft is seen stay capped.
+    stake_cap_rc: int = 1000
+    # The Worlds champion future is paused until the Swiss stage is over (owner decision 2026-10-21).
+    offer_tournament_winner: bool = False
 
     session_days: int = 60
     cookie_secure: bool = False

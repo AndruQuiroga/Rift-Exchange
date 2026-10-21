@@ -1,8 +1,8 @@
 """Level-1 team strength model (docs/spec/06_ODDS_ENGINE.md): game-level Elo with regional priors.
 
 Each series contributes its individual game results (order unknown, so wins are interleaved).
-International events carry the cross-region signal. Probabilities are shrunk toward 0.5 to avoid
-overconfidence; the walk-forward backtest decides whether the model is labelled EXPERIMENTAL.
+International events carry the cross-region signal. The rating gap is scaled by GAP_SCALE when pricing a
+game; the walk-forward backtest decides whether the model is labelled EXPERIMENTAL.
 """
 
 import math
@@ -19,8 +19,11 @@ from rift.models import Fixture, HistoricalResult, Team, TeamRating
 MODEL_KEY = "elo_v1"
 REGION_PRIOR = {"LCK": 1600.0, "LPL": 1600.0, "LEC": 1510.0, "LCP": 1460.0, "LCS": 1450.0, "CBLOL": 1400.0}
 DEFAULT_PRIOR = 1450.0
-K = 12.0  # tuned on the walk-forward backtest (2026-10-20); lower K leans on regional priors
-SHRINK = 0.85
+# Refit on the 2026-10-21 walk-forward backtest (international log loss 0.590 -> 0.579, all 2026 series
+# 0.627 -> 0.625). The old K=12 with a 0.85 shrink toward 0.5 was underconfident: within regions its 65%
+# favourites won 73%. Lower K leans on regional priors; GAP_SCALE > 1 sharpens and always stays in (0, 1).
+K = 8.0
+GAP_SCALE = 1.2
 INTERNATIONAL = {"worlds", "msi", "first_stand", "ewc_lol"}
 
 
@@ -44,8 +47,8 @@ class EloModel:
         return self.ratings.get(team, self.priors.get(team, DEFAULT_PRIOR))
 
     def game_probability(self, a: uuid.UUID, b: uuid.UUID) -> float:
-        raw = elo_expectation(self.rating(a), self.rating(b))
-        return 0.5 + SHRINK * (raw - 0.5)
+        ra, rb = self.rating(a), self.rating(b)
+        return elo_expectation(rb + GAP_SCALE * (ra - rb), rb)
 
     def update(self, rec: SeriesRecord) -> None:
         results = []
