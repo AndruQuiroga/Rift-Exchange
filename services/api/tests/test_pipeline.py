@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from test_timeline import ScriptedGame
 
-from rift import grants, markets
+from rift import grants, ingest, markets
 from rift.adapters.leaguepedia import MockLeaguepedia
 from rift.adapters.lolesports import (
     GameRef,
@@ -363,3 +363,28 @@ def test_open_markets_pick_up_new_rules_on_the_next_pricing_pass(factory, world)
                                   {"game_index": 1, "through_draft": True})
         markets.upsert_market(s, season, fx, spec, Settings(season_code="test"), START - timedelta(days=30))
         assert old.params == {"game_index": 1, "through_draft": True} and old.rules_text == "new rules"
+
+
+def test_backfill_scans_finished_games_the_live_tracker_never_saw(factory):
+    feed = FakeFeed()
+    played = START - timedelta(days=5)  # long before this deployment's worker was running
+    now = [START - timedelta(days=2)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    with factory() as s, s.begin():
+        season = ingest.ensure_season(s, worker.settings)
+        a, b = Team(provider_id="t-a", code="ATL", name="Atlas"), Team(provider_id="t-b", code="NOV", name="Nova")
+        s.add_all([a, b])
+        s.flush()
+        fx = Fixture(season_id=season.id, provider_id="old", stage="Play-Ins", best_of=1, team_a_id=a.id,
+                     team_b_id=b.id, scheduled_at=played, local_date=played.date(), status="COMPLETED",
+                     completed_at=played + timedelta(hours=1), winner_team_id=a.id, team_a_wins=1)
+        s.add(fx)
+        s.flush()
+        s.add(Game(fixture_id=fx.id, provider_id="g-old", game_index=1, state="completed"))
+    feed.scripted["g-old"] = ScriptedGame("g-old", played, 1800)
+    for _ in range(12):  # a few passes within the per-game request budget
+        with factory() as s, s.begin():
+            worker._backfill_timelines(s, now[0])
+    with factory() as s:
+        g = s.execute(select(Game).where(Game.provider_id == "g-old")).scalar_one()
+        assert g.timeline_complete and g.started_at == played and g.timeline["at_15"]

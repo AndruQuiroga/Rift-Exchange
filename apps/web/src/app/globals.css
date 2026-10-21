@@ -33,6 +33,7 @@
   --s6: 32px;
 
   --nav-h: 64px;
+  --topbar-h: 60px; /* the sticky top bar; anything else sticky sits just below it */
   --font-ui: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-display-face), var(--font-ui);
 }
@@ -74,7 +75,8 @@ img { display: block; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
-  padding: calc(env(safe-area-inset-top) + 10px) var(--s4) 10px;
+  box-sizing: border-box; height: calc(var(--topbar-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--s4) 0;
   margin: 0 calc(-1 * var(--s4));
   background: var(--canvas);
   border-bottom: 1px solid var(--divider);
@@ -111,7 +113,7 @@ img { display: block; }
   .shell { grid-template-columns: 232px minmax(0, 1fr); }
   .bottomnav { display: none; }
   .main { padding: 0 var(--s6) var(--s6); }
-  .topbar { margin: 0 calc(-1 * var(--s6)); padding: 14px var(--s6); }
+  .topbar { margin: 0 calc(-1 * var(--s6)); padding: 0 var(--s6); }
   .topbar .brand { display: none; }
   .siderail {
     display: flex; flex-direction: column; gap: var(--s5);
@@ -754,7 +756,8 @@ button.sb-side[aria-pressed="true"] { background: var(--accent); color: var(--ac
 
 /* Rows: the first team on the left, the second on the right, the question in the middle; codes pinned above. */
 .h2h-head {
-  position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); align-items: center;
+  position: sticky; top: calc(var(--topbar-h) + env(safe-area-inset-top)); z-index: 5;
+  display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); align-items: center;
   margin: var(--s4) calc(-1 * var(--s4)) 0; padding: 8px var(--s4); background: var(--canvas); border-bottom: 1px solid var(--divider);
   font-weight: 800; font-size: 14px;
 }
