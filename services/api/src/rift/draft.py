@@ -21,6 +21,7 @@ a ban on them and a "banned" market on one is a certain NO.
 
 from collections import Counter
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -30,7 +31,7 @@ from rift.champions import champion_key
 from rift.config import Settings
 from rift.display import team_name
 from rift.domain.pricing import price
-from rift.markets import MarketSpec, OutcomeSpec, champion_label, upsert_market
+from rift.markets import MarketSpec, OutcomeSpec, champion_label, next_game, upsert_market
 from rift.models import Fixture, Game, Market, Season, Team
 from rift.timeline import burned_champions
 
@@ -130,13 +131,23 @@ def burned(session: Session, fixture: Fixture, game_index: int) -> list[str]:
     return sorted(burned_champions(games, fixture.best_of).get(game_index, []))
 
 
-def game_market_window(session: Session, fixture: Fixture, game_index: int) -> Market | None:
-    """The market whose lock defines this game's betting window: series winner for Game 1, else that
-    game's winner market, which opens when the previous game ends."""
-    markets = session.execute(select(Market).where(Market.fixture_id == fixture.id)).scalars().all()
+@dataclass
+class DraftWindow:
+    open: bool
+    close_at: datetime | None
+
+
+def draft_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> DraftWindow:
+    """When this game's champion calls can be made: they close before its draft starts (D-026), unlike the
+    winner markets that stay open through it. Game 1 closes at the series start (or once the series is live);
+    Game N opens when Game N-1 ends and closes NEXT_GAME_WINDOW later, before Game N's draft."""
     if game_index == 1:
-        return next((m for m in markets if m.kind == "series_winner"), None)
-    return next((m for m in markets if m.kind == "game_winner" and m.params.get("game_index") == game_index), None)
+        return DraftWindow(fixture.status == "SCHEDULED" and now < fixture.scheduled_at, fixture.scheduled_at)
+    games = list(session.execute(select(Game).where(Game.fixture_id == fixture.id)).scalars())
+    nxt = next_game(fixture, games)
+    if nxt is None or nxt[0] != game_index:
+        return DraftWindow(False, None)
+    return DraftWindow(now < nxt[1], nxt[1])
 
 
 def probabilities(rates: Rates, champ: str, fixture: Fixture, gone: list[str]) -> dict:
@@ -182,10 +193,11 @@ def _odds(p: float | None, settings: Settings) -> str | None:
     return str(o) if o is not None else None
 
 
-def grid(session: Session, season: Season, fixture: Fixture, game_index: int, settings: Settings) -> dict:
+def grid(session: Session, season: Season, fixture: Fixture, game_index: int, settings: Settings,
+         now: datetime) -> dict:
     if not 1 <= game_index <= fixture.best_of:
         raise DraftError("BAD_GAME", f"Game {game_index} is not part of this Bo{fixture.best_of}.")
-    window = game_market_window(session, fixture, game_index)
+    window = draft_window(session, fixture, game_index, now)
     rates = tournament_rates(session, season)
     gone = burned(session, fixture, game_index)
     seen = set(rates.picked) | set(rates.banned) | set(rates.first)
@@ -205,8 +217,8 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
         })
     return {
         "game_index": game_index,
-        "open": window is not None and window.state == "OPEN",
-        "close_at": window.close_at.isoformat() if window else None,
+        "open": window.open,
+        "close_at": window.close_at.isoformat() if window.close_at else None,
         "games_observed": rates.games,
         "scopes": offered_scopes(rates),
         "burned": [{"champion": c, "label": champion_label(c)} for c in gone],
@@ -221,8 +233,8 @@ def ensure_market(session: Session, season: Season, fixture: Fixture, game_index
         raise DraftError("BAD_SCOPE", "Scope must be picked, A, B, banned or first.")
     if role is not None and (scope not in ("A", "B") or role not in ROLES):
         raise DraftError("BAD_ROLE", "A role needs scope A or B and one of top, jungle, mid, bottom, support.")
-    window = game_market_window(session, fixture, game_index)
-    if window is None or window.state != "OPEN" or window.close_at <= now:
+    window = draft_window(session, fixture, game_index, now)
+    if not window.open:
         raise DraftError("NOT_OPEN", f"Game {game_index} draft picks are not open.")
     rates = tournament_rates(session, season)
     champ = rates.name(champ) or champ
@@ -261,6 +273,7 @@ def ensure_market(session: Session, season: Season, fixture: Fixture, game_index
         rules = (f"Yes if {label} is picked by {who}{where} in Game {g}. Fearless Draft: a champion played earlier "
                  f"in the series can't be picked again. Settles from the game's verified draft; void if Game {g} "
                  "is not played.")
+    rules = f"{rules} Closes before the Game {g} draft."
     spec = MarketSpec(template, kind, "GAME", "DRAFT", title, rules, window.close_at, model, "EXPERIMENTAL",
                       [OutcomeSpec("YES", "Yes", p), OutcomeSpec("NO", "No", 1 - p)], params)
     market = upsert_market(session, season, fixture, spec, settings, now)

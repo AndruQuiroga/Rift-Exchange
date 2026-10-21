@@ -325,13 +325,17 @@ def ledger_view(db: Session, wallet: Wallet, limit: int = 100) -> list[dict]:
              "memo": e.memo, "created_at": e.created_at.isoformat()} for e in rows]
 
 
-def void_reason(s: Selection, m: Market, result: MarketResult | None) -> str | None:
+def void_reason(s: Selection, m: Market, result: MarketResult | None, accepted_at: datetime | None = None) -> str | None:
     """Why a pick was void, in a few plain words for My Picks."""
     if s.status != "VOID":
         return None
     if m.kind == "swiss_record" and s.settled_revision == 0:
         return "Moved to the free record card · stake refunded"
     if result is None or not result.void:  # the market settled, but this pick came in after the real cutoff
+        if (s.rules_snapshot.get("params") or {}).get("priced_at") and result and accepted_at:
+            cutoff = (result.evidence or {}).get("acceptance_cutoff")
+            if cutoff and accepted_at < datetime.fromisoformat(cutoff):  # in time, but on a stale live price
+                return "A kill came before the price caught up"
         return "Placed after 3:00" if (m.params or {}).get("early") else "Placed after the start"
     reason = result.reason or ""
     if "not played" in reason:
@@ -390,7 +394,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "market_title": relabel(s.rules_snapshot.get("title"), named),
             "outcome_label": relabel(s.rules_snapshot.get("outcome"), named),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
-            "void_reason": void_reason(s, m, results.get(m.id)),
+            "void_reason": void_reason(s, m, results.get(m.id), tickets[s.ticket_id].accepted_at),
             "swiss_record": swiss.get(m.params.get("team"), "0-0") if m.kind == "swiss_record" else None,
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
             "settled_at": s.settled_at.isoformat() if s.settled_at else None,

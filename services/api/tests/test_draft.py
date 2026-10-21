@@ -3,14 +3,16 @@
 from datetime import date, timedelta
 
 import pytest
-from conftest import T0, make_market
+from conftest import T0, make_market, outcome_id
 from sqlalchemy import select
 from test_api import H, api, signup  # noqa: F401  (api is a fixture)
+from test_money import join, place
 
 from rift import draft
 from rift.config import Settings
-from rift.models import Fixture, Game, Market, Season, Team
-from rift.settlement import grade_market
+from rift.markets import lock_due
+from rift.models import Fixture, Game, Market, Season, Selection, Team
+from rift.settlement import apply_grade, grade_market
 
 SETTINGS = Settings()
 A_CHAMPS = ["Aatrox", "Vi", "Ahri", "Jinx", "Nautilus"]
@@ -49,7 +51,7 @@ def _fixture(s, world):
 
 def test_grid_prices_seen_champions_and_team_scopes(factory, history):
     with factory() as s:
-        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 1, SETTINGS)
+        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 1, SETTINGS, T0)
     assert g["open"] and g["burned"] == [] and g["games_observed"] == 4
     by = {c["champion"]: c for c in g["champions"]}
     # Vi was picked in all four games: shortest price, and Atlas (team A) played it every time.
@@ -74,7 +76,7 @@ def test_fearless_removes_earlier_picks(factory, history):
         s.add(Game(fixture_id=history["fixture"], provider_id="g1", game_index=1, state="completed",
                    stats_complete=True, stats={"players": players(history["team_a"], history["team_b"])}))
     with factory() as s:
-        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 2, SETTINGS)
+        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 2, SETTINGS, T0)
     offered = {c["champion"] for c in g["champions"]}
     assert {c["champion"] for c in g["burned"]} == set(A_CHAMPS + B_CHAMPS)
     assert not offered & set(A_CHAMPS + B_CHAMPS)
@@ -115,7 +117,7 @@ def test_ban_and_first_pick_scopes_need_ten_games_of_data(factory, history, monk
     with factory() as s, s.begin():
         ban_records(s, history, 9)
     with factory() as s:
-        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 1, SETTINGS)
+        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 1, SETTINGS, T0)
     assert g["scopes"] == ["picked", "A", "B"]
     assert all(c["odds"]["banned"] is None and c["odds"]["first"] is None for c in g["champions"])
     with factory() as s, s.begin():
@@ -124,7 +126,7 @@ def test_ban_and_first_pick_scopes_need_ten_games_of_data(factory, history, monk
                    bans={"source": "leaguepedia", "blue": ["Ahri"], "red": ["Jax"], "first_pick": "Vi"}))
     with factory() as s, s.begin():
         season, fx = s.get(Season, history["season"]), _fixture(s, history)
-        g = draft.grid(s, season, fx, 1, SETTINGS)
+        g = draft.grid(s, season, fx, 1, SETTINGS, T0)
         assert g["scopes"] == ["picked", "A", "B", "banned", "first"]
         by = {c["champion"]: c for c in g["champions"]}
         assert by["Ahri"]["odds"]["banned"] == "2.00" and by["Vi"]["odds"]["first"] == "1.43"
@@ -139,7 +141,7 @@ def test_ban_and_first_pick_scopes_need_ten_games_of_data(factory, history, monk
 def test_role_picks_shrink_team_record_toward_global_role_rate(factory, history):
     with factory() as s, s.begin():
         season, fx = s.get(Season, history["season"]), _fixture(s, history)
-        by = {c["champion"]: c for c in draft.grid(s, season, fx, 1, SETTINGS)["champions"]}
+        by = {c["champion"]: c for c in draft.grid(s, season, fx, 1, SETTINGS, T0)["champions"]}
         # Atlas played Ahri mid in 2 of its 4 games; Nova has no games, so it gets half the global role rate.
         assert by["Ahri"]["roles"] == {"A": {"mid": "2.86"}, "B": {"mid": "4.00"}}
         assert by["Vi"]["roles"]["A"] == {"jungle": "1.43"}
@@ -207,7 +209,7 @@ def test_burned_champions_are_not_offered_to_ban(factory, history):
         s.add(Game(fixture_id=history["fixture"], provider_id="g1", game_index=1, state="completed",
                    stats_complete=True, stats={"players": players(history["team_a"], history["team_b"])}))
     with factory() as s:
-        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 2, SETTINGS)
+        g = draft.grid(s, s.get(Season, history["season"]), _fixture(s, history), 2, SETTINGS, T0)
         offered = {c["champion"] for c in g["champions"]}
         assert "Ahri" not in offered and "Rell" not in offered and "Jax" in offered
 
@@ -227,3 +229,67 @@ def test_draft_api_shape(api, history):  # noqa: F811
         r = client.post(f"/api/v1/events/{event}/draft", headers=H,
                         json={"game_index": 1, "champion": "Ahri", "scope": scope})
         assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_OFFERED"
+
+
+def _game_two_open(s, history, start):
+    """Game 1 of the Bo3 over at 35:00, Game 2 not loaded; its winner market stays open through the draft."""
+    fx = _fixture(s, history)
+    fx.status, fx.team_a_wins = "LIVE", 1
+    s.add(Game(fixture_id=fx.id, provider_id="g1", game_index=1, state="completed", started_at=start,
+               ended_at=start + timedelta(minutes=35), winner_team_id=fx.team_a_id))
+    s.add(Game(fixture_id=fx.id, provider_id="g2", game_index=2, state="unstarted"))
+    return fx
+
+
+def test_game_two_calls_close_before_its_draft(factory, history):
+    """D-026: winner markets stay open through the draft, champion calls don't."""
+    start = T0 + timedelta(hours=2)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, history["season"]), _game_two_open(s, history, start)
+        between = start + timedelta(minutes=37)
+        g = draft.grid(s, season, fx, 2, SETTINGS, between)
+        assert g["open"] and g["close_at"] == (start + timedelta(minutes=42)).isoformat()
+        market = draft.ensure_market(s, season, fx, 2, "Ahri", "picked", SETTINGS, between)
+        assert market.close_at == start + timedelta(minutes=42)
+        mid_draft = start + timedelta(minutes=47)
+        assert not draft.grid(s, season, fx, 2, SETTINGS, mid_draft)["open"]
+        with pytest.raises(draft.DraftError) as e:
+            draft.ensure_market(s, season, fx, 2, "Vi", "picked", SETTINGS, mid_draft)
+        assert e.value.code == "NOT_OPEN"
+        lock_due(s, mid_draft)
+        assert market.state == "LOCKED"
+
+
+def test_bo1_calls_close_at_the_series_start(factory, history):
+    start = T0 + timedelta(hours=2)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, history["season"]), _fixture(s, history)
+        fx.best_of = 1
+        assert draft.grid(s, season, fx, 1, SETTINGS, start - timedelta(minutes=1))["open"]
+        fx.status = "LIVE"  # broadcast on, draft running: the Bo1 match winner is still open, calls are not
+        assert not draft.grid(s, season, fx, 1, SETTINGS, start - timedelta(minutes=1))["open"]
+        with pytest.raises(draft.DraftError):
+            draft.ensure_market(s, season, fx, 1, "Ahri", "picked", SETTINGS, start + timedelta(minutes=5))
+
+
+def test_a_call_made_with_the_old_late_cutoff_is_clamped_and_late_picks_void(factory, history):
+    start = T0 + timedelta(hours=2)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, history["season"]), _game_two_open(s, history, start)
+        late = make_market(s, season, fx, "champion_picked", [("YES", "Yes", "2.00"), ("NO", "No", "2.00")],
+                           params={"champion": "Ahri", "game_index": 2}, scope="GAME")
+        late.category, late.close_at = "DRAFT", start + timedelta(minutes=132)  # through-draft cutoff
+        mid = late.id
+    join(factory, history, "alice")
+    yes = outcome_id(factory, mid, "YES")
+    place(factory, history, "alice", [(yes, 500)], "k-late", now=start + timedelta(minutes=46))
+    with factory() as s, s.begin():
+        lock_due(s, start + timedelta(minutes=46, seconds=15))
+        m = s.get(Market, mid)
+        assert (m.state, m.close_at) == ("LOCKED", start + timedelta(minutes=42))
+        g2 = s.execute(select(Game).where(Game.provider_id == "g2")).scalar_one()
+        g2.state, g2.stats_complete, g2.stats = "completed", True, {"players": players(history["team_a"],
+                                                                                       history["team_b"])}
+        apply_grade(s, mid, grade_market(s, m), start + timedelta(hours=2))
+        sel = s.execute(select(Selection).where(Selection.market_id == mid)).scalar_one()
+        assert sel.status == "VOID" and sel.return_rc == 500

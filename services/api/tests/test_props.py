@@ -370,3 +370,93 @@ def test_through_draft_markets_close_at_three_minutes_and_first_blood_at_the_kil
         assert props.tighten_early(s, T0 + timedelta(seconds=100)) == 2
         cutoffs = {m.kind: m.close_at for m in s.execute(select(Market).where(Market.kind.in_(made))).scalars()}
     assert cutoffs == {"game_winner": T0 + timedelta(minutes=3), "first_blood": T0 + timedelta(seconds=90)}
+
+
+def _state(kills=(0, 0), gap=0, clock=150, gold=None):
+    return props.LiveState(T0 + timedelta(seconds=clock), clock, {"A": kills[0], "B": kills[1]}, gap, gold or {})
+
+
+def test_live_prices_follow_the_kills_and_gold_so_far():
+    assert props.race_probability(0.5, 5, 5) == pytest.approx(0.5)
+    assert props.five_kills_probability(0.55, _state()) == pytest.approx(0.55, abs=1e-6)
+    ahead = props.five_kills_probability(0.5, _state((2, 0)))
+    assert ahead > 0.75 and props.five_kills_probability(0.5, _state((0, 2))) == pytest.approx(1 - ahead)
+    assert props.five_kills_probability(0.5, _state((5, 1))) is None  # already won
+    dist = (26.5, 49.0)
+    quiet, bloody = (1 - props.kill_under_probability(26.5, dist, _state(k)) for k in ((0, 0), (3, 1)))
+    assert bloody > 1 - props.kill_under_probability(26.5, dist, None) > quiet
+    assert props.gold_lead_probability(0.6, 2500, None) == 0.6
+    assert props.gold_lead_probability(0.5, 2500, _state(gap=1000)) > 0.6
+    assert props.gold_lead_probability(0.5, 2500, _state(gap=-1000)) < 0.4
+
+
+def _frame(factory, at_s, kills, kill_times=()):
+    """Game 1's latest live frame at `at_s` seconds, and the kills recorded so far (side, seconds)."""
+    with factory() as s, s.begin():
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        g.timeline = {**g.timeline, "live": {"at": (T0 + timedelta(seconds=at_s)).isoformat(), "clock_s": at_s,
+                                             "kills": {"blue": kills[0], "red": kills[1]},
+                                             "gold": {"blue": 2500 + 300 * kills[0], "red": 2500 + 300 * kills[1]}},
+                      "kills_at": [{"side": side, "at": (T0 + timedelta(seconds=t)).isoformat()} for side, t in kill_times]}
+
+
+def test_a_pick_on_a_price_that_had_not_seen_a_kill_is_void(factory, season_games):
+    from test_money import join, place
+
+    from rift.settlement import apply_grade
+
+    _live_game1(factory, season_games)
+    _frame(factory, 60, (0, 0))
+    with factory() as s, s.begin():
+        season = s.get(Season, season_games["season"])
+        props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(seconds=90))
+        race = s.execute(select(Market).where(Market.kind == "five_kills")).scalar_one()
+        assert race.params["priced_at"] == (T0 + timedelta(seconds=60)).isoformat()
+        a = s.execute(select(Outcome).where(Outcome.market_id == race.id, Outcome.code == "A")).scalar_one()
+        race_id, a_id, even = race.id, a.id, a.odds
+    join(factory, season_games, "alice")
+    join(factory, season_games, "bob")
+    # Blue's kill at 1:40 is not in the 1:00 frame yet; Alice picks at 1:30 (before it), Bob at 1:50 (after it).
+    place(factory, season_games, "alice", [(a_id, 100)], "before-kill", now=T0 + timedelta(seconds=90))
+    place(factory, season_games, "bob", [(a_id, 100)], "stale", now=T0 + timedelta(seconds=110))
+    _frame(factory, 120, (1, 0), [("blue", 100)])  # the next frame shows it: the price moves
+    with factory() as s, s.begin():
+        props.open_early_team_markets(s, s.get(Season, season_games["season"]), SETTINGS, _Model(),
+                                      T0 + timedelta(seconds=150))
+        moved = s.get(Outcome, a_id)
+        assert moved.odds < even and s.get(Market, race_id).params["priced_at"] == (T0 + timedelta(seconds=120)).isoformat()
+    with factory() as s, s.begin():
+        from rift.models import User
+        s.add(User(handle="cai", display_name="Cai"))
+        season_games["cai"] = s.execute(select(User.id).where(User.handle == "cai")).scalar_one()
+    join(factory, season_games, "cai")
+    place(factory, season_games, "cai", [(a_id, 100)], "fresh", now=T0 + timedelta(seconds=160))
+    _finish_game1(factory, season_games)
+    with factory() as s, s.begin():
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        g.timeline = {**g.timeline, "kills_at": [{"side": "blue", "at": (T0 + timedelta(seconds=100)).isoformat()}]}
+        apply_grade(s, race_id, grade_market(s, s.get(Market, race_id)), T0 + timedelta(hours=1))
+    with factory() as s:
+        result = {sel.user_id: sel.status for sel in s.execute(select(Selection)).scalars()}
+    assert result[season_games["alice"]] == "WON"
+    assert result[season_games["bob"]] == "VOID"
+    assert result[season_games["cai"]] == "WON"
+
+
+def test_open_kill_lines_and_duels_reprice_from_each_frame(factory, season_games):
+    _live_game1(factory, season_games)
+    _frame(factory, 30, (0, 0))
+    at = T0 + timedelta(seconds=40)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        line = props.ensure_kill_line(s, season, fx, 1, "44.5", tournament_stats(s, season), SETTINGS, at)
+        duel = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, at)
+        over = s.execute(select(Outcome).where(Outcome.market_id == line.id, Outcome.code == "OVER")).scalar_one()
+        ids, before = (line.id, duel.id, over.id), over.odds
+    _frame(factory, 150, (3, 2), [("blue", 60), ("red", 70), ("blue", 80), ("red", 90), ("blue", 100)])
+    with factory() as s, s.begin():
+        props.open_early_team_markets(s, s.get(Season, season_games["season"]), SETTINGS, _Model(),
+                                      T0 + timedelta(seconds=155))
+        stamp = (T0 + timedelta(seconds=150)).isoformat()
+        assert s.get(Outcome, ids[2]).odds < before  # five kills already: the over is shorter
+        assert s.get(Market, ids[0]).params["priced_at"] == s.get(Market, ids[1]).params["priced_at"] == stamp

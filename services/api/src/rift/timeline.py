@@ -120,8 +120,12 @@ def summarise(events: dict, team_ids: dict, t0: datetime, complete: bool) -> dic
         elemental = [d["type"] for d in dragons if d["side"] == side and d["type"] != "elder"]
         if len(elemental) >= 4:
             soul, soul_side = elemental[3], side
+    # When each recorded kill happened (the first five per side): live prices that hadn't seen a kill yet
+    # void the picks accepted after it (rift.props.priced_before_a_kill).
+    kills_at = sorted(({"side": key.split(":")[1], "at": ev["at"]} for key, ev in events.items()
+                       if key.startswith("kills:")), key=lambda k: k["at"])
     return {"firsts": firsts, "dragons": dragons, "barons": barons, "soul": soul, "soul_side": soul_side,
-            "elder": any(d["type"] == "elder" for d in dragons)}
+            "elder": any(d["type"] == "elder" for d in dragons), "kills_at": kills_at}
 
 
 def live_summary(frame: Frame, t0: datetime) -> dict:
@@ -129,6 +133,7 @@ def live_summary(frame: Frame, t0: datetime) -> dict:
             **{metric: {side: frame.teams[side].count(metric) for side in SIDES}
                for metric in ("kills", "towers", "inhibitors", "barons")},
             "gold": {side: frame.teams[side].gold for side in SIDES},
+            "players": {str(pid): p["gold"] for pid, p in sorted(frame.players.items())},
             "dragons": {side: list(frame.teams[side].dragons) for side in SIDES}}
 
 

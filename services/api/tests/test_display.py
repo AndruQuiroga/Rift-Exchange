@@ -1,5 +1,6 @@
 """Display names: one table for teams, team prefixes stripped from player names."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from rift.api.views import void_reason
@@ -31,14 +32,19 @@ def test_player_name_strips_only_a_known_team_prefix():
 
 
 def test_void_reason_in_plain_words():
-    pick = SimpleNamespace(status="VOID", settled_revision=1)
+    pick = SimpleNamespace(status="VOID", settled_revision=1, rules_snapshot={})
     early = SimpleNamespace(kind="first_blood", params={"early": True})
     series = SimpleNamespace(kind="series_winner", params={})
     void = lambda reason: SimpleNamespace(void=True, reason=reason)
     assert void_reason(pick, early, SimpleNamespace(void=False, reason=None)) == "Placed after 3:00"
     assert void_reason(pick, series, None) == "Placed after the start"
+    live = SimpleNamespace(status="VOID", settled_revision=1, rules_snapshot={"params": {"priced_at": "x"}})
+    settled = SimpleNamespace(void=False, reason=None, evidence={"acceptance_cutoff": "2026-10-23T15:03:00+00:00"})
+    at = lambda m, s_: datetime(2026, 10, 23, 15, m, s_, tzinfo=UTC)
+    assert void_reason(live, early, settled, at(2, 10)) == "A kill came before the price caught up"
+    assert void_reason(live, early, settled, at(3, 5)) == "Placed after 3:00"
     assert void_reason(pick, early, void("Exact tie (void rule)")) == "Tie"
     assert void_reason(pick, series, void("Game 3 was not played")) == "Game 3 not played"
     assert void_reason(SimpleNamespace(status="WON"), series, None) is None
-    moved = SimpleNamespace(status="VOID", settled_revision=0)
+    moved = SimpleNamespace(status="VOID", settled_revision=0, rules_snapshot={})
     assert void_reason(moved, SimpleNamespace(kind="swiss_record", params={}), None).startswith("Moved to the free")

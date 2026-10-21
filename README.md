@@ -38,7 +38,7 @@ Run `./infra/stache/preflight.ps1` from PowerShell for read-only SSH/Swarm check
 The [v0 launch record](docs/deployment/v0-launch-2026-10-20.md) records the live release,
 validation and known limitations; [release commands](infra/stache/README.md) cover updates.
 
-Environment variables (prefix `RIFT_`, see `services/api/src/rift/config.py`): `DATABASE_URL`, `COOKIE_SECURE` (set `true` behind HTTPS), `LEAGUEPEDIA_MODE` (`mock` until the bot account exists, then `live` with `LEAGUEPEDIA_BOT_USER`/`LEAGUEPEDIA_BOT_PASSWORD`), `SETTLE_DELAY_SECONDS`, `HOLD_VOID_AFTER_HOURS`.
+Environment variables (prefix `RIFT_`, see `services/api/src/rift/config.py`): `DATABASE_URL`, `COOKIE_SECURE` (set `true` behind HTTPS), `LEAGUEPEDIA_MODE` (`mock` until the bot account exists, then `live` with `LEAGUEPEDIA_BOT_USER`/`LEAGUEPEDIA_BOT_PASSWORD`), `SETTLE_DELAY_SECONDS`, `HOLD_VOID_AFTER_HOURS`, `STAKE_CAP_RC` (most one player can stake on one prediction, D-027), `OFFER_TOURNAMENT_WINNER` (off until after Swiss, D-029).
 
 ## Tests
 

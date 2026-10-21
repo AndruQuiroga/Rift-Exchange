@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,36 @@ class PlacementError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+KNOCKOUT_STAGES = ("Quarterfinals", "Semifinals", "Finals")
+
+
+def stake_cap(session: Session, market: Market, cap_rc: int) -> int | None:
+    """The most one player may stake on this market in total, or None when it is uncapped.
+
+    Capped: everything in the Swiss stage, and anything you can still pick after seeing the draft (game
+    winners, objectives, early-window races, duels and kill lines). From the quarterfinals, predictions that
+    close before the draft (series winner, exact score, champion calls) are uncapped for catch-up plays.
+    """
+    fixture = session.get(Fixture, market.fixture_id) if market.fixture_id else None
+    after_draft = bool(market.params.get("through_draft") or market.params.get("early"))
+    if fixture is not None and fixture.stage in KNOCKOUT_STAGES and not after_draft:
+        return None
+    return cap_rc
+
+
+def _check_cap(session: Session, market: Market, user_id: uuid.UUID, stake_rc: int, cap_rc: int) -> None:
+    cap = stake_cap(session, market, cap_rc)
+    if cap is None:
+        return
+    placed = session.execute(select(func.coalesce(func.sum(Selection.stake_rc), 0)).where(
+        Selection.market_id == market.id, Selection.user_id == user_id, Selection.status != "VOID")).scalar()
+    room = max(cap - int(placed), 0)
+    if stake_rc > room:
+        already = f" You have {int(placed):,} RC on it already." if placed else ""
+        raise PlacementError("STAKE_LIMIT", f"Up to {cap:,} RC per prediction.{already}",
+                             {"market_id": str(market.id), "cap_rc": cap, "max_stake_rc": room})
 
 
 @dataclass
@@ -66,7 +96,7 @@ def _check_open(session: Session, market: Market, outcome: Outcome, now: datetim
 
 
 def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, items: list[QuoteItem],
-                 now: datetime, ttl_seconds: int) -> dict:
+                 now: datetime, ttl_seconds: int, stake_cap_rc: int | None = None) -> dict:
     if not items:
         raise PlacementError("EMPTY_SLIP", "Add at least one pick.")
     if any(i.stake_rc <= 0 for i in items):
@@ -91,6 +121,8 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
                                  {"market_id": str(market.id)})
         markets_seen.add(market.id)
         _check_open(session, market, outcome, now)
+        if stake_cap_rc is not None:
+            _check_cap(session, market, user_id, item.stake_rc, stake_cap_rc)
         out_items.append({
             "outcome_id": str(outcome.id), "market_id": str(market.id), "stake_rc": item.stake_rc,
             "odds": str(outcome.odds.quantize(Decimal("0.01"))), "odds_version": outcome.odds_version,
@@ -122,7 +154,7 @@ def quote_view(quote: Quote, available_rc: int) -> dict:
 
 def accept_ticket(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, quote_id: uuid.UUID,
                   confirm_odds_versions: dict[str, int], idempotency_key: str,
-                  now: datetime) -> tuple[Ticket, bool]:
+                  now: datetime, stake_cap_rc: int | None = None) -> tuple[Ticket, bool]:
     """Atomically validate and accept. Returns (ticket, created). Replays return the original ticket."""
     if not idempotency_key or len(idempotency_key) > 100:
         raise PlacementError("BAD_IDEMPOTENCY_KEY", "A valid Idempotency-Key header is required.")
@@ -167,6 +199,9 @@ def accept_ticket(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID,
         raise PlacementError("QUOTE_EXPIRED", "That quote expired. Review the current prices.")
 
     wallet = ledger.lock_wallet(session, _wallet(session, season_id, user_id).id)
+    if stake_cap_rc is not None:  # under the wallet lock, so two slips at once can't both use the same room
+        for item in quote.items:
+            _check_cap(session, markets[uuid.UUID(item["market_id"])], user_id, item["stake_rc"], stake_cap_rc)
     if quote.total_stake_rc > wallet.available_rc:
         raise PlacementError("INSUFFICIENT_CREDITS",
                              f"Available {wallet.available_rc:,} RC; your slip needs {quote.total_stake_rc:,} RC.",
