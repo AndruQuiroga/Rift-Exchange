@@ -33,7 +33,7 @@ def test_player_name_strips_only_a_known_team_prefix():
 def test_void_reason_in_plain_words():
     pick = SimpleNamespace(status="VOID")
     early, series = SimpleNamespace(params={"early": True}), SimpleNamespace(params={})
-    void = lambda reason: SimpleNamespace(void=True, reason=reason)  # noqa: E731
+    void = lambda reason: SimpleNamespace(void=True, reason=reason)
     assert void_reason(pick, early, SimpleNamespace(void=False, reason=None)) == "Placed after first blood or 3:00"
     assert void_reason(pick, series, None) == "Placed after the start"
     assert void_reason(pick, early, void("Exact tie (void rule)")) == "Tie"

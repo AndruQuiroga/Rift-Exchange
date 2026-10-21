@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from rift.display import relabel, team_name
 from rift.domain.money import partial_return, winning_return
 from rift.markets import game_index
-from rift.props import early_state, early_window
 from rift.models import (
     Fixture,
     Game,
@@ -26,6 +25,7 @@ from rift.models import (
     User,
     Wallet,
 )
+from rift.props import early_state, early_window
 from rift.timeline import burned_champions
 
 CENT = Decimal("0.01")

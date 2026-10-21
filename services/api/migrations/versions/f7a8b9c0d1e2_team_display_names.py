@@ -1,6 +1,6 @@
 """Display team names in stored market titles, rules and outcome labels. Accepted picks keep their own snapshot."""
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 from rift.display import team_name
 
