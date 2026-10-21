@@ -37,4 +37,4 @@ lint:
 	cd $(API) && uv run ruff check src tests
 
 e2e:              ## make e2e CODES="code1 code2 code3" (fresh invites; web on :3000)
-	cd $(WEB) && node e2e/walkthrough.mjs http://localhost:3000 ../../docs/screens $(CODES)
+	cd $(WEB) && node e2e/walkthrough.mjs $(or $(BASE),http://localhost:3000) ../../docs/screens $(CODES)

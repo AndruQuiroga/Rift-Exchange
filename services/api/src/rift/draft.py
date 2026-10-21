@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 from rift.champions import champion_key
 from rift.config import Settings
+from rift.display import team_name
 from rift.domain.pricing import price
 from rift.markets import MarketSpec, OutcomeSpec, champion_label, upsert_market
 from rift.models import Fixture, Game, Market, Season, Team
@@ -252,7 +253,7 @@ def ensure_market(session: Session, season: Season, fixture: Fixture, game_index
         else:
             team = session.get(Team, fixture.team_a_id if scope == "A" else fixture.team_b_id)
             title, who = (f"{team.code} play {label} {ROLE_LABEL[role]} in Game {g}" if role else
-                          f"{team.code} pick {label} in Game {g}"), team.name
+                          f"{team.code} pick {label} in Game {g}"), team_name(team.code, team.name)
             params["side"] = scope
             if role:
                 params["role"] = role

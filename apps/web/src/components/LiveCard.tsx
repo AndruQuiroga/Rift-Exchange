@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { rc } from "@/lib/format";
 import type { EventT, LiveEvent, LiveT } from "@/lib/types";
@@ -14,13 +15,34 @@ const EVENT_LABEL: Record<LiveEvent["type"], string> = {
   inhibitor: "Inhibitor",
 };
 
+const SPOILER_KEY = "rift.hideLiveScore";
+
+/** "Hide score" for anyone watching on delay: remembered on this device, off by default. */
+function useHideScore(): [boolean, (v: boolean) => void] {
+  const [hide, setHide] = useState(false);
+  useEffect(() => {
+    try {
+      setHide(localStorage.getItem(SPOILER_KEY) === "1");
+    } catch {}
+  }, []);
+  return [hide, (v) => {
+    setHide(v);
+    try {
+      localStorage.setItem(SPOILER_KEY, v ? "1" : "0");
+    } catch {}
+  }];
+}
+
 /** Read-only while a series is live: the game state and how each of your picks on it is doing. */
 export function LiveCard({ event }: { event: EventT }) {
   const { data: live } = useSWR<LiveT>(`/events/${event.id}/live`, { refreshInterval: 15000 });
+  const [hide, setHide] = useHideScore();
+  const [peek, setPeek] = useState(false);
   if (!live || live.status !== "LIVE") return null;
   const code = (t: "A" | "B" | null) => (t === "A" ? event.team_a?.code : t === "B" ? event.team_b?.code : "—");
   const lead = live.gold ? live.gold[0] - live.gold[1] : 0;
   const share = live.gold ? Math.min(Math.abs(lead) / 10000, 1) * 50 : 0;
+  const masked = hide && !peek;
 
   return (
     <section className="card livecard" aria-label="Live">
@@ -29,10 +51,21 @@ export function LiveCard({ event }: { event: EventT }) {
           <span className="status live" style={{ marginRight: 8 }}><span className="dot" />Live</span>
           {live.game_index ? `Game ${live.game_index}` : "Between games"}
         </h2>
-        <span className="sub num">{live.game_clock_s !== null ? clock(live.game_clock_s) : ""}</span>
+        <span className="sub num">
+          {live.game_clock_s !== null && !masked ? clock(live.game_clock_s) : ""}
+          <button type="button" className="link-btn" aria-pressed={hide} onClick={() => { setHide(!hide); setPeek(false); }}>
+            {hide ? "Score hidden" : "Hide score"}
+          </button>
+        </span>
       </div>
 
-      {live.gold ? (
+      {masked ? (
+        <button type="button" className="spoiler-cover" onClick={() => setPeek(true)}>
+          Score, gold and events are hidden for anyone watching on delay. <b>Tap to show</b>
+        </button>
+      ) : null}
+
+      {live.gold && !masked ? (
         <>
           <div className="live-nums num">
             <span>{event.team_a?.code} <b>{live.kills?.[0] ?? 0}</b></span>
@@ -49,7 +82,7 @@ export function LiveCard({ event }: { event: EventT }) {
         </>
       ) : null}
 
-      {live.events.length ? (
+      {live.events.length && !masked ? (
         <div className="live-events">
           {live.events.slice(-6).map((e, i) => (
             <span className="tagpill num" key={i}>
@@ -68,12 +101,14 @@ export function LiveCard({ event }: { event: EventT }) {
                 <div style={{ fontWeight: 700, fontSize: 14 }}>{p.outcome_label}</div>
                 <div className="muted" style={{ fontSize: 12 }}>
                   {p.market_title}
+                  {masked ? null : <>
                   {p.live?.needed !== undefined && p.live.needed > 0 ? ` · ${p.live.current} so far, ${p.live.needed} more needed` : ""}
                   {p.live?.needed === 0 ? ` · ${p.live.current} so far, over the line` : ""}
                   {p.live?.score ? ` · ${p.live.score[0]}–${p.live.score[1]}` : ""}
+                  </>}
                 </div>
               </div>
-              <PickStatus pick={p} />
+              {masked ? null : <PickStatus pick={p} />}
             </div>
           ))}
         </div>

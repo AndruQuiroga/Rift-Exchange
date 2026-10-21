@@ -9,24 +9,31 @@ import { Choice } from "@/components/Choice";
 import { ChampionGrid } from "@/components/ChampionGrid";
 import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
 import { IconBack } from "@/components/icons";
+import { FriendsPicks } from "@/components/FriendsPicks";
+import { NotifyButton } from "@/components/GameAlerts";
 import { LiveCard } from "@/components/LiveCard";
 import { KillLine, LaneDuels, Objectives } from "@/components/PropsBuilders";
-import { countdown, kickoff, longDate, odds as fmtOdds } from "@/lib/format";
+import { countdown, kickoff, longDate } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import type { EventT, GameT, MarketT } from "@/lib/types";
+import { Odds } from "@/components/Odds";
 
-function Rules({ markets }: { markets: (MarketT | undefined)[] }) {
+/** One plain sentence on how these settle; each market's full rules one tap away. */
+function Rules({ markets, summary }: { markets: (MarketT | undefined)[]; summary: string }) {
   const ms = markets.filter(Boolean) as MarketT[];
   if (!ms.length) return null;
   return (
-    <details className="rules">
-      <summary>How these settle</summary>
-      {ms.map((m) => (
-        <p key={m.id} style={{ marginTop: 6 }}>
-          <b>{m.title}.</b> {m.rules}
-        </p>
-      ))}
-    </details>
+    <div className="rules">
+      <p className="muted">{summary}</p>
+      <details>
+        <summary>Full rules</summary>
+        {ms.map((m) => (
+          <p key={m.id} style={{ marginTop: 6 }}>
+            <b>{m.title}.</b> {m.rules}
+          </p>
+        ))}
+      </details>
+    </div>
   );
 }
 
@@ -68,6 +75,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
           Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00 or first blood.
         </p>
+        <NotifyButton event={event.id} game={game.index} label={label} />
       </div>
     );
   }
@@ -80,6 +88,15 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
     );
   }
   const lock = game.closes_at ? countdown(game.closes_at, now) : null;
+  const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
+  const objectives = (event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES");
+  const early = game.early ?? "UPCOMING";
+  const later =
+    early === "UPCOMING" && game.window !== "DONE"
+      ? "Lane duels and the kill line open when the game loads, until 3:00 or first blood."
+      : !pregame && early !== "OPEN"
+        ? game.window === "DONE" ? `Game ${game.index} is over.` : `Game ${game.index} picks are closed.`
+        : null;
   return (
     <>
       {winner && a && b ? (
@@ -92,21 +109,33 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
             <SideButton market={winner} outcome={a} team={event.team_a} label={label} />
             <SideButton market={winner} outcome={b} team={event.team_b} label={label} right />
           </div>
-          <Rules markets={[winner]} />
+          <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
         </section>
       ) : null}
+      {/* Only the builders that take picks right now; the rest are one line saying when they open. */}
       <div style={{ marginTop: 8 }}>
-        <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
-          <ChampionGrid event={event} game={game.index} />
-        </Builder>
-        <Builder title="Players" sub="Lane duels · kills, CS at 15:00, damage">
-          <LaneDuels event={event} game={game.index} />
-        </Builder>
-        <Builder title="Game" sub="Kill line · first blood, dragons, Baron, soul">
-          <KillLine event={event} game={game.index} />
-          <Objectives event={event} game={game.index} />
-          <Rules markets={(event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES")} />
-        </Builder>
+        {pregame ? (
+          <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
+            <ChampionGrid event={event} game={game.index} />
+          </Builder>
+        ) : null}
+        {objectives.some((m) => m.state === "OPEN") ? (
+          <Builder title="Objectives" sub="First blood, tower, dragon · Baron, soul">
+            <Objectives event={event} game={game.index} />
+            <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
+          </Builder>
+        ) : null}
+        {early === "OPEN" ? (
+          <>
+            <Builder title="Lane duels" sub="Kills, CS at 15:00, damage · until 3:00 or first blood" open>
+              <LaneDuels event={event} game={game.index} />
+            </Builder>
+            <Builder title="Kill line" sub="Total kills · until 3:00 or first blood">
+              <KillLine event={event} game={game.index} />
+            </Builder>
+          </>
+        ) : null}
+        {later ? <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{later}</p> : null}
       </div>
     </>
   );
@@ -175,13 +204,13 @@ export default function EventPage() {
       <LiveCard event={event} />
 
       {gameList.length ? (
-        <div className="gametabs" role="tablist" aria-label="Series and games">
-          <button role="tab" className="gametab" aria-selected={current === 0} onClick={() => setTab(0)}>
+        <div className="gametabs" role="group" aria-label="Series and games">
+          <button className="gametab" aria-pressed={current === 0} onClick={() => setTab(0)}>
             <span className="t">Series</span>
             <span className={`w ${winner?.state === "OPEN" ? "OPEN" : "LOCKED"}`}>{winner?.state === "OPEN" ? "Open" : "Locked"}</span>
           </button>
           {gameList.map((g) => (
-            <button key={g.index} role="tab" className="gametab" aria-selected={current === g.index} onClick={() => setTab(g.index)}>
+            <button key={g.index} className="gametab" aria-pressed={current === g.index} onClick={() => setTab(g.index)}>
               <span className="t">Game {g.index}</span>
               <span className={`w ${g.index === 1 && g.window === "UPCOMING" ? "OPEN" : g.window}`}>{windowText(g, event)}</span>
             </button>
@@ -216,7 +245,7 @@ export default function EventPage() {
                       <Choice key={o.id} market={score} outcome={o} label={label} className="sl">
                         <span className="t">{o.label.slice(0, cut)}</span>
                         <span className="s num">{o.label.slice(cut + 1)}</span>
-                        <span className="p num">{fmtOdds(o.odds)}×</span>
+                        <span className="p num"><Odds value={o.odds} /></span>
                       </Choice>
                     );
                   })}
@@ -228,13 +257,13 @@ export default function EventPage() {
                   <span className="opts">
                     {games.outcomes.map((o) => (
                       <Choice key={o.id} market={games} outcome={o} label={label} className="mini">
-                        {o.label.replace(" games", "")} <b className="num">{fmtOdds(o.odds)}×</b>
+                        {o.label.replace(" games", "")} <b className="num"><Odds value={o.odds} /></b>
                       </Choice>
                     ))}
                   </span>
                 </div>
               ) : null}
-              <Rules markets={[winner, score, games]} />
+              <Rules markets={[winner, score, games]} summary="Settles on the official series result; void if it isn't completed." />
             </section>
           ) : null}
 
@@ -265,6 +294,7 @@ export default function EventPage() {
           ) : null}
         </>
       )}
+      <FriendsPicks event={event} />
       <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
         Every pick is a single with its own price. Nothing is multiplied together.
       </p>

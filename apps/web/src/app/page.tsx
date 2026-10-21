@@ -5,10 +5,11 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
+import { SwissSummary } from "@/components/SwissProgress";
 import { countdown, dayLabel, longDate, rc, venueToday } from "@/lib/format";
 import { useNow, useSeason } from "@/lib/hooks";
-import { teamName } from "@/lib/teams";
 import type { EventT, MarketT, Standing } from "@/lib/types";
+import { Odds } from "@/components/Odds";
 
 export default function TodayPage() {
   const { data: season } = useSeason();
@@ -43,11 +44,11 @@ export default function TodayPage() {
       </div>
 
       {days.length ? (
-        <div className="chips daytabs" role="tablist" aria-label="Match days">
+        <div className="chips daytabs" role="group" aria-label="Match days">
           {days.map((d) => {
             const l = dayLabel(d);
             return (
-              <button key={d} role="tab" className="chip" aria-selected={d === day} onClick={() => setDay(d)}>
+              <button key={d} className="chip" aria-pressed={d === day} onClick={() => setDay(d)}>
                 <span>{d === today ? "Today" : l.dow}</span>
                 <b className="num">{l.date}</b>
               </button>
@@ -64,6 +65,8 @@ export default function TodayPage() {
           </span>
           <span className="go">Open →</span>
         </Link>
+      ) : futures?.markets.some((m) => m.kind === "swiss_record") ? (
+        <SwissSummary />
       ) : null}
 
       <section className="section" aria-label="Matches">
@@ -98,8 +101,8 @@ export default function TodayPage() {
             <div className="rows">
               {champion.outcomes.slice(0, 4).map((o) => (
                 <Link className="row" key={o.id} href="/explore?tab=FUTURES">
-                  <div className="title">{teamName({ code: "", name: o.label })}</div>
-                  <div className="amount num">{o.odds ? `${Number(o.odds).toFixed(2)}×` : "—"}</div>
+                  <div className="title">{o.label}</div>
+                  <div className="amount num"><Odds value={o.odds} /></div>
                 </Link>
               ))}
             </div>

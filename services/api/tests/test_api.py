@@ -61,11 +61,16 @@ def test_place_retry_and_privacy(api, factory, world):
     assert kai.get("/api/v1/me").json()["wallet"]["open_stake_rc"] == 400
     # Friends can't see an open market's picks...
     assert mika.get("/api/v1/league/activity").json()["activity"] == []
+    event_id = events[0]["id"]
+    assert mika.get(f"/api/v1/events/{event_id}/league").json()["picks"] == []
     with factory() as s, s.begin():
         s.execute(update(Market).values(state="LOCKED"))
     # ...until it locks.
     act = mika.get("/api/v1/league/activity").json()["activity"]
     assert act[0]["user"]["handle"] == "kai" and act[0]["stake_rc"] == 400
+    on_match = mika.get(f"/api/v1/events/{event_id}/league").json()["picks"]
+    assert [p["user"]["handle"] for p in on_match] == ["kai"]
+    assert kai.get(f"/api/v1/events/{event_id}/league").json()["picks"] == []  # never your own
     standings = mika.get("/api/v1/league/standings").json()["standings"]
     assert {r["user"]["handle"] for r in standings} == {"kai", "mika"}
 
@@ -134,7 +139,7 @@ def test_event_games_and_live_scoreboard(api, factory, world):
     assert g1["winner"] == "A" and g1["burned_champions"] == [] and g1["ended_at"] is not None
     assert g2["burned_champions"] == CHAMPS and g2["state"] == "inProgress" and g2["winner"] is None
     assert g3 == {"index": 3, "state": "unstarted", "started_at": None, "ended_at": None, "winner": None,
-                  "window": "UPCOMING", "opens_when": "When Game 2 ends", "closes_at": None,
+                  "window": "UPCOMING", "opens_when": "When Game 2 ends", "closes_at": None, "early": "UPCOMING",
                   "burned_champions": CHAMPS + ["Rumble"]}
     assert detail["markets"]  # existing fields stay
 

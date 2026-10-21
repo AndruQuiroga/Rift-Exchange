@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
-import { countdown, kickoff, odds as fmtOdds } from "@/lib/format";
+import { countdown, kickoff, oddsSpoken } from "@/lib/format";
+import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
+import { Odds } from "./Odds";
 
 export function eventLabel(e: EventT) {
   return `${e.team_a?.code ?? "TBD"} vs ${e.team_b?.code ?? "TBD"}`;
@@ -44,6 +46,7 @@ export function Matchup({ event, large }: { event: EventT; large?: boolean }) {
 export function SideButton({ market, outcome, team, label, right }: { market: MarketT; outcome: OutcomeT; team: Team | null; label: string; right?: boolean }) {
   const slip = useSlip();
   const selected = slip.isSelected(outcome.id);
+  const placed = usePlaced().has(outcome.id);
   const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
   const open = market.state === "OPEN" && outcome.odds !== null;
   return (
@@ -51,9 +54,10 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
       type="button"
       className={`side${right ? " right" : ""}${won ? " won" : ""}`}
       aria-pressed={selected}
+      data-placed={placed || undefined}
       disabled={!open && !selected}
       onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${teamName(team)} to win, ${fmtOdds(outcome.odds)} times${selected ? ", in slip" : ""}`}
+      aria-label={`${teamName(team)} to win, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${placed ? ", already placed" : ""}`}
     >
       <span className="who">
         <TeamMark team={team} />
@@ -62,12 +66,24 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
           <span className="nm">{teamName(team)}</span>
         </span>
       </span>
-      <span className="px num">{won ? "Won" : fmtOdds(outcome.odds)}</span>
+      <span className="px num">{won ? "Won" : <Odds value={outcome.odds} />}</span>
     </button>
   );
 }
 
-const TAGS: Record<string, string> = { DRAFT: "Draft", PROPS: "Kill line", PLAYERS: "Duels", OBJECTIVES: "Objectives" };
+/** Only what can be tapped now, plus one line saying when the in-game picks open. */
+function matchTags(event: EventT): { now: string[]; later: string | null } {
+  const cats = event.categories ?? [];
+  const pregame = event.featured?.state === "OPEN";
+  const between = event.status === "LIVE" && cats.includes("WINNER"); // the next game's winner and draft are open
+  const now: string[] = [];
+  if (pregame && event.best_of > 1) now.push("Score");
+  if (pregame || between) now.push("Draft");
+  if (cats.includes("OBJECTIVES")) now.push("Objectives");
+  if (event.early_open) now.push("Duels", "Kill line");
+  const later = !event.early_open && (pregame || between) ? "Duels at game start" : null;
+  return { now, later };
+}
 
 export function EventCard({ event, now }: { event: EventT; now: number }) {
   const cd = event.close_at ? countdown(event.close_at, now) : null;
@@ -75,8 +91,7 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
   const a = market?.outcomes.find((o) => o.code === "A");
   const b = market?.outcomes.find((o) => o.code === "B");
   const ready = event.team_a && event.team_b;
-  // Draft and duels are created on demand, so they are always available once both teams are known.
-  const tags = [...new Set(["Draft", "Duels", ...(event.categories ?? []).map((c) => TAGS[c]).filter(Boolean)])];
+  const tags = matchTags(event);
   return (
     <article className="mrow" aria-label={`${teamName(event.team_a)} versus ${teamName(event.team_b)}`}>
       <div className="mrow-meta">
@@ -97,9 +112,10 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
       {ready ? (
         <Link className="mrow-foot" href={`/events/${event.id}`}>
           <span className="tags">
-            {(event.best_of > 1 ? ["Score", ...tags] : tags).map((t) => (
+            {tags.now.map((t) => (
               <span className="tagpill" key={t}>{t}</span>
             ))}
+            {tags.later ? <span className="tagpill later">{tags.later}</span> : null}
           </span>
           <span className="link">Match →</span>
         </Link>

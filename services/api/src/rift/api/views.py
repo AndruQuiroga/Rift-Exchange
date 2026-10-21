@@ -8,6 +8,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from rift.display import relabel, team_name
 from rift.domain.money import partial_return, winning_return
 from rift.markets import game_index
 from rift.models import (
@@ -24,6 +25,7 @@ from rift.models import (
     User,
     Wallet,
 )
+from rift.props import early_state, early_window
 from rift.timeline import burned_champions
 
 CENT = Decimal("0.01")
@@ -32,7 +34,7 @@ CENT = Decimal("0.01")
 def team_view(team: Team | None) -> dict | None:
     if team is None:
         return None
-    return {"id": str(team.id), "code": team.code, "name": team.name, "image_url": team.image_url,
+    return {"id": str(team.id), "code": team.code, "name": team_name(team.code, team.name), "image_url": team.image_url,
             "region": team.region}
 
 
@@ -87,7 +89,16 @@ def _teams(db: Session, ids) -> dict[uuid.UUID, Team]:
     return {t.id: t for t in db.execute(select(Team).where(Team.id.in_(ids))).scalars()} if ids else {}
 
 
-def events(db: Session, season: Season, date: str | None, stage: str | None) -> list[dict]:
+def _early_open(db: Session, fixture: Fixture, now: datetime | None) -> bool:
+    """Whether duels and kill lines can be picked right now (the loaded game's first minutes)."""
+    if now is None or fixture.status != "LIVE":
+        return False
+    game = current_game(_games(db, fixture))
+    return bool(game and early_window(db, fixture, game.game_index, now).open)
+
+
+def events(db: Session, season: Season, date: str | None, stage: str | None,
+           now: datetime | None = None) -> list[dict]:
     q = select(Fixture).where(Fixture.season_id == season.id).order_by(Fixture.scheduled_at)
     if date:
         q = q.where(Fixture.local_date == datetime.fromisoformat(date).date())
@@ -109,6 +120,7 @@ def events(db: Session, season: Season, date: str | None, stage: str | None) -> 
         out.append({**fixture_view(f, teams),
                     "market_count": len(fm),
                     "categories": sorted({m.category for m in fm if m.state == "OPEN"}),
+                    "early_open": _early_open(db, f, now),
                     "close_at": featured.close_at.isoformat() if featured else None,
                     "featured": market_view(featured, outcomes[featured.id], results.get(featured.id))
                     if featured else None})
@@ -170,6 +182,7 @@ def games_view(fixture: Fixture, games: list[Game], markets: list[Market], now: 
             opens_when = f"When Game {idx - 1} ends" if idx > 1 else (
                 "When both teams are known" if not (fixture.team_a_id and fixture.team_b_id) else None)
         closes = min((m.close_at for m in open_), default=None)
+        early = early_state(fixture, g, idx, now)
         out.append({
             "index": idx, "state": g.state if g else "unstarted",
             "started_at": g.started_at.isoformat() if g and g.started_at else None,
@@ -177,6 +190,8 @@ def games_view(fixture: Fixture, games: list[Game], markets: list[Market], now: 
             "winner": _side(fixture, g.winner_team_id) if g else None,
             "window": window, "opens_when": opens_when,
             "closes_at": closes.isoformat() if closes else None,
+            # Duels and kill lines: UPCOMING until the game loads, OPEN until 3:00 or first blood, then CLOSED.
+            "early": early.state,
             "burned_champions": burned[idx],
         })
     return out
@@ -307,12 +322,53 @@ def ledger_view(db: Session, wallet: Wallet, limit: int = 100) -> list[dict]:
              "memo": e.memo, "created_at": e.created_at.isoformat()} for e in rows]
 
 
+def void_reason(s: Selection, m: Market, result: MarketResult | None) -> str | None:
+    """Why a pick was void, in a few plain words for My Picks."""
+    if s.status != "VOID":
+        return None
+    if result is None or not result.void:  # the market settled, but this pick came in after the real cutoff
+        return "Placed after first blood or 3:00" if (m.params or {}).get("early") else "Placed after the start"
+    reason = result.reason or ""
+    if "not played" in reason:
+        return reason.replace(" was not played", " not played")
+    if "tie" in reason.lower():
+        return "Tie"
+    if reason == "Series cancelled":
+        return "Match cancelled"
+    if "did not play" in reason:
+        return "A player didn't play"
+    if "15:00" in reason:
+        return "Game ended before 15:00"
+    if "elemental" in reason:
+        return "No elemental dragon"
+    return "No verified result"
+
+
+def swiss_records(db: Session, season_ids: set, teams) -> dict[str, str]:
+    """team provider id -> its Swiss record so far ("2-1"), from completed Swiss series."""
+    if not season_ids:
+        return {}
+    by_id = {t.id: t.provider_id for t in teams}
+    record: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for f in db.execute(select(Fixture).where(Fixture.season_id.in_(season_ids), Fixture.stage == "Swiss",
+                                              Fixture.status == "COMPLETED")).scalars():
+        if f.winner_team_id is None:
+            continue
+        loser = f.team_b_id if f.winner_team_id == f.team_a_id else f.team_a_id
+        record[by_id.get(f.winner_team_id)][0] += 1
+        record[by_id.get(loser)][1] += 1
+    return {pid: f"{w}-{lo}" for pid, (w, lo) in record.items() if pid}
+
+
 def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
     markets = {m.id: m for m in db.execute(select(Market).where(
         Market.id.in_({s.market_id for s in selections}))).scalars()} if selections else {}
     fixtures = {f.id: f for f in db.execute(select(Fixture).where(
         Fixture.id.in_({m.fixture_id for m in markets.values() if m.fixture_id}))).scalars()} if markets else {}
     teams = _teams(db, [t for f in fixtures.values() for t in (f.team_a_id, f.team_b_id)])
+    named = db.execute(select(Team)).scalars().all() if selections else []  # futures picks have no fixture
+    swiss = swiss_records(db, {m.season_id for m in markets.values() if m.kind == "swiss_record"}, named)
+    results = _latest_results(db, list(markets))
     tickets = {t.id: t for t in db.execute(select(Ticket).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).scalars()} if selections else {}
     out = []
@@ -320,13 +376,17 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
         m = markets[s.market_id]
         f = fixtures.get(m.fixture_id) if m.fixture_id else None
         out.append({
-            "id": str(s.id), "ticket_id": str(s.ticket_id), "status": s.status, "stake_rc": s.stake_rc,
+            "id": str(s.id), "ticket_id": str(s.ticket_id), "market_id": str(s.market_id),
+            "outcome_id": str(s.outcome_id), "status": s.status, "stake_rc": s.stake_rc,
             "odds": str(s.odds.quantize(CENT)), "return_rc": s.return_rc,
             "potential_return_rc": winning_return(s.stake_rc, s.odds),
             "partial_return_rc": partial_return(s.stake_rc, s.odds, s.rules_snapshot["params"]["consolation"])
             if s.rules_snapshot.get("params", {}).get("consolation") else None,
-            "market_title": s.rules_snapshot.get("title"), "outcome_label": s.rules_snapshot.get("outcome"),
+            "market_title": relabel(s.rules_snapshot.get("title"), named),
+            "outcome_label": relabel(s.rules_snapshot.get("outcome"), named),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
+            "void_reason": void_reason(s, m, results.get(m.id)),
+            "swiss_record": swiss.get(m.params.get("team"), "0-0") if m.kind == "swiss_record" else None,
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
             "settled_at": s.settled_at.isoformat() if s.settled_at else None,
             "event": fixture_view(f, teams) if f else None,
@@ -365,12 +425,17 @@ def standings(db: Session, season: Season) -> list[dict]:
     return rows
 
 
-def activity(db: Session, season: Season, limit: int = 50) -> list[dict]:
-    """Friends' picks, but only once the market has locked (A-010)."""
+def activity(db: Session, season: Season, limit: int = 50, fixture_id: uuid.UUID | None = None,
+             exclude_user_id: uuid.UUID | None = None) -> list[dict]:
+    """Friends' picks, but only once the market has locked (A-010). Optionally one match, without your own."""
     q = (select(Selection).join(Market, Market.id == Selection.market_id)
          .join(Ticket, Ticket.id == Selection.ticket_id)
-         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED")
-         .order_by(Ticket.accepted_at.desc()).limit(limit))
+         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED"))
+    if fixture_id is not None:
+        q = q.where(Market.fixture_id == fixture_id)
+    if exclude_user_id is not None:
+        q = q.where(Selection.user_id != exclude_user_id)
+    q = q.order_by(Ticket.accepted_at.desc()).limit(limit)
     selections = list(db.execute(q).scalars())
     users = {u.id: u for u in db.execute(select(User)).scalars()}
     rows = selection_rows(db, selections)

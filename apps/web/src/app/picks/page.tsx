@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { PickStatus } from "@/components/bits";
-import { rc } from "@/lib/format";
+import { kickoff, longDate, odds as fmtOdds, rc } from "@/lib/format";
 import type { Pick } from "@/lib/types";
 
 export default function PicksPage() {
@@ -24,9 +24,9 @@ export default function PicksPage() {
           </p>
         </div>
       </div>
-      <div className="segmented" role="tablist" aria-label="Pick status">
-        <button role="tab" aria-selected={tab === "open"} onClick={() => setTab("open")}>Open</button>
-        <button role="tab" aria-selected={tab === "settled"} onClick={() => setTab("settled")}>Settled</button>
+      <div className="segmented" role="group" aria-label="Pick status">
+        <button aria-pressed={tab === "open"} onClick={() => setTab("open")}>Open</button>
+        <button aria-pressed={tab === "settled"} onClick={() => setTab("settled")}>Settled</button>
       </div>
       <section className="section">
         {!picks ? (
@@ -42,15 +42,40 @@ export default function PicksPage() {
             ) : null}
           </div>
         ) : (
-          picks.map((p) => <PickCard key={p.id} pick={p} />)
+          groupPicks(picks).map((g) => (
+            <div key={g.key} className="pick-group">
+              <h2 className="pick-group-head">
+                <span>{g.title}</span>
+                <span className="muted">{g.when}</span>
+              </h2>
+              {g.picks.map((p) => <PickCard key={p.id} pick={p} />)}
+            </div>
+          ))
         )}
       </section>
     </>
   );
 }
 
+/** Picks under their match (newest match first); Swiss Board and other futures together at the end. */
+function groupPicks(picks: Pick[]) {
+  const groups: { key: string; title: string; when: string; at: string; picks: Pick[] }[] = [];
+  for (const p of picks) {
+    const ev = p.event;
+    const key = ev?.id ?? "futures";
+    let g = groups.find((x) => x.key === key);
+    if (!g) {
+      g = ev
+        ? { key, title: `${ev.team_a?.code ?? "TBD"} vs ${ev.team_b?.code ?? "TBD"}`, when: `${longDate(ev.local_date)} · ${kickoff(ev.scheduled_at)}`, at: ev.scheduled_at, picks: [] }
+        : { key, title: "Swiss Board & futures", when: "", at: "9999", picks: [] };
+      groups.push(g);
+    }
+    g.picks.push(p);
+  }
+  return groups.sort((a, b) => (a.key === "futures" ? 1 : b.key === "futures" ? -1 : b.at.localeCompare(a.at)));
+}
+
 function PickCard({ pick: p }: { pick: Pick }) {
-  const ev = p.event;
   return (
     <article className="pick">
       <div className="pick-top">
@@ -58,7 +83,6 @@ function PickCard({ pick: p }: { pick: Pick }) {
           <div className="pick-sel">{p.outcome_label}</div>
           <div className="pick-mkt">
             {p.market_title}
-            {ev ? ` · ${ev.team_a?.code ?? "TBD"} vs ${ev.team_b?.code ?? "TBD"}` : ""}
           </div>
         </div>
         <PickStatus pick={p} />
@@ -68,17 +92,26 @@ function PickCard({ pick: p }: { pick: Pick }) {
           Stake<b>{rc(p.stake_rc)}</b>
         </div>
         <div>
-          Odds<b>{Number(p.odds).toFixed(2)}×</b>
+          Odds<b>{fmtOdds(p.odds)}</b>
         </div>
         <div>
           {p.status === "OPEN" ? "To return" : "Returned"}
-          <b className={p.status === "WON" || p.status === "PARTIAL" ? "win" : p.status === "LOST" ? "loss" : undefined}>
+          <b className={p.status === "WON" || (p.status === "PARTIAL" && p.return_rc > p.stake_rc) ? "win" : p.status === "LOST" ? "loss" : undefined}>
             {rc(p.status === "OPEN" ? p.potential_return_rc : p.return_rc)}
           </b>
         </div>
       </div>
       {p.status === "OPEN" && p.partial_return_rc !== null ? (
         <p className="muted num" style={{ fontSize: 13, marginTop: 8 }}>Right side, wrong record returns {rc(p.partial_return_rc)} RC.</p>
+      ) : null}
+      {p.status === "PARTIAL" ? (
+        <p className="muted num" style={{ fontSize: 13, marginTop: 8 }}>
+          Right side, wrong record: {rc(p.return_rc)} RC back
+          {p.return_rc < p.stake_rc ? ` (${rc(p.stake_rc - p.return_rc)} RC less than you staked)` : ` (+${rc(p.return_rc - p.stake_rc)} RC)`}.
+        </p>
+      ) : null}
+      {p.status === "VOID" && p.void_reason ? (
+        <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Void — {p.void_reason}. Your stake was returned.</p>
       ) : null}
       {p.market_state === "HOLD" && p.market_state_reason ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>{p.market_state_reason}</p> : null}
       {p.settled_revision > 1 ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Corrected after a data update (revision {p.settled_revision}).</p> : null}

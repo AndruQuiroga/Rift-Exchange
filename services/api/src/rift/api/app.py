@@ -163,7 +163,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     @app.get("/api/v1/events")
     def list_events(session: Db, user: CurrentUser, date: str | None = None, stage: str | None = None):
-        return {"events": views.events(session, season_of(session), date, stage)}
+        return {"events": views.events(session, season_of(session), date, stage, db_now(session))}
 
     @app.get("/api/v1/events/{event_id}")
     def get_event(event_id: uuid.UUID, session: Db, user: CurrentUser):
@@ -353,6 +353,12 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     @app.get("/api/v1/league/activity")
     def league_activity(user: CurrentUser, session: Db):
         return {"activity": views.activity(session, season_of(session))}
+
+    @app.get("/api/v1/events/{event_id}/league")
+    def event_league(event_id: uuid.UUID, user: CurrentUser, session: Db):
+        """Friends' picks on this match, each shown once its market has locked."""
+        return {"picks": views.activity(session, season_of(session), limit=200, fixture_id=event_id,
+                                        exclude_user_id=user.id)}
 
     # ------------------------------------------------------------ stream
 

@@ -4,12 +4,14 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { TeamMark } from "@/components/bits";
+import { SwissProgress } from "@/components/SwissProgress";
 import { IconBack } from "@/components/icons";
-import { countdown, odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
+import { countdown, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import type { MarketT, Pick } from "@/lib/types";
+import { Odds } from "@/components/Odds";
 
 const RECORDS = [
   { code: "3-0", label: "3–0", note: "undefeated", slots: 2 },
@@ -40,7 +42,7 @@ export default function SwissBoardPage() {
     const line = slip.lines.find((l) => l.marketId === m.id);
     return line ? m.outcomes.find((o) => o.id === line.outcomeId) : undefined;
   };
-  const held = (m: MarketT) => (picks?.picks ?? []).filter((p) => p.market_title === m.title);
+  const held = (m: MarketT) => (picks?.picks ?? []).filter((p) => p.market_id === m.id);
   const placedCount = board.filter((m) => inSlip(m) || held(m).length).length;
   const sel = board.find((m) => m.id === selected) ?? null;
   const lock = open[0] ? countdown(open[0].close_at, now) : null;
@@ -65,7 +67,7 @@ export default function SwissBoardPage() {
           <div className="eyebrow">Futures · Swiss stage · 16 teams</div>
           <h1 style={{ marginTop: 6 }}>Swiss Board</h1>
           <p>
-            Tap a team, then the record you think it finishes on.{" "}
+            {open.length ? "Tap a team, then the record you think it finishes on. " : "Your calls against each team's record so far. "}
             {open.length ? (lock ? `Locks in ${lock}, at the first Swiss match.` : "Locks at the first Swiss match.") : "The board is locked."}
           </p>
         </div>
@@ -102,10 +104,11 @@ export default function SwissBoardPage() {
         </section>
       ) : null}
 
+      {open.length ? (
       <div className="section" style={{ marginTop: 14 }}>
         {RECORDS.map((r) => {
           const here = board.filter((m) => inSlip(m)?.code === r.code);
-          const heldHere = board.flatMap((m) => held(m).filter((p) => p.outcome_label === r.label).map((p) => ({ m, p })));
+          const heldHere = board.flatMap((m) => held(m).filter((p) => p.outcome_id === m.outcomes.find((o) => o.code === r.code)?.id).map((p) => ({ m, p })));
           const target = sel?.outcomes.find((o) => o.code === r.code);
           return (
             <div key={r.code}>
@@ -131,7 +134,7 @@ export default function SwissBoardPage() {
                       <button key={m.id} className="tchip placed" onClick={() => slip.remove(o.id)} aria-label={`Remove ${teamName(m.team)} from ${r.label}`}>
                         <TeamMark team={m.team ?? null} />
                         {m.team?.code}
-                        <span className="o num">{fmtOdds(o.odds)}×</span>
+                        <span className="o num"><Odds value={o.odds} /></span>
                       </button>
                     );
                   })}
@@ -143,7 +146,7 @@ export default function SwissBoardPage() {
                         setSelected(null);
                       }}
                     >
-                      + {sel.team?.code} here · {fmtOdds(target.odds)}×
+                      + {sel.team?.code} here · <Odds value={target.odds} />
                     </button>
                   ) : null}
                 </div>
@@ -157,9 +160,12 @@ export default function SwissBoardPage() {
           );
         })}
       </div>
+      ) : (
+        <SwissProgress board={board} />
+      )}
 
       <p className="fineprint" style={{ textAlign: "left", marginTop: 14 }}>
-        Slot counts are a guide, not a rule — leave a team unplaced if you have no read. Each placement is its own pick in your slip. Settles from official results when each team&apos;s Swiss run ends.
+        {open.length ? "Slot counts are a guide, not a rule — leave a team unplaced if you have no read. Each placement is its own pick in your slip. " : ""}Settles from official results when each team&apos;s Swiss run ends.
       </p>
     </>
   );
