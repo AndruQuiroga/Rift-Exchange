@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import useSWR from "swr";
 import { rc } from "@/lib/format";
 import { dash, swissChance } from "@/lib/swiss";
@@ -13,6 +14,20 @@ const ORDER = ["3-0", "3-1", "3-2", "2-3", "1-3", "0-3"];
 export function useSwissPicks() {
   const { data } = useSWR<{ picks: Pick[] }>("/me/picks");
   return (data?.picks ?? []).filter((p) => p.swiss_record != null);
+}
+
+/** team id -> the record you called for it, to tag teams on the Swiss board. */
+export function useSwissCalls(markets: MarketT[] | undefined): Map<string, string> {
+  const picks = useSwissPicks();
+  return useMemo(() => {
+    const out = new Map<string, string>();
+    for (const p of picks) {
+      const m = markets?.find((x) => x.id === p.market_id);
+      const code = m?.outcomes.find((o) => o.id === p.outcome_id)?.code;
+      if (m?.team && code) out.set(m.team.id, code);
+    }
+    return out;
+  }, [picks, markets]);
 }
 
 /** After the board locks: each call against the team's record so far, and whether it can still land. */
@@ -52,9 +67,10 @@ export function SwissProgress({ board }: { board: MarketT[] }) {
   );
 }
 
-/** One line for Today once the board is locked: the live board, and how many exact calls are still alive. */
+/** One line for Today once the record calls lock: how many exact calls are still alive. */
 export function SwissSummary() {
   const picks = useSwissPicks();
+  if (!picks.length) return null;
   const alive = picks.filter((p) => {
     const called = p.outcome_label.replace("–", "-");
     return swissChance(called, p.swiss_record ?? "0-0").text === "Exact still possible";
@@ -62,12 +78,10 @@ export function SwissSummary() {
   return (
     <Link className="banner quiet section" href="/swiss" style={{ marginTop: 14 }}>
       <span>
-        <span className="t" style={{ display: "block" }}>Swiss live board</span>
-        <span className="s num">
-          Every round by record{picks.length ? ` · ${alive} of ${picks.length} exact calls still possible` : " · pick winners on the board"}
-        </span>
+        <span className="t" style={{ display: "block" }}>Your record calls</span>
+        <span className="s num">{alive} of {picks.length} exact calls still possible</span>
       </span>
-      <span className="go">Open →</span>
+      <span className="go">View →</span>
     </Link>
   );
 }

@@ -221,8 +221,9 @@ def test_draft_api_shape(api, history):  # noqa: F811
     ahri = next(c for c in g["champions"] if c["champion"] == "Ahri")
     assert set(ahri["odds"]) == {"picked", "A", "B", "banned", "first"} and ahri["roles"]["A"] == {"mid": "2.86"}
     r = client.post(f"/api/v1/events/{event}/draft", headers=H,
-                    json={"game_index": 1, "champion": "Ahri", "scope": "A", "role": "mid"})
+                    json={"game_index": 1, "champion": "Ahri", "scope": "picked"})
     assert r.status_code == 200, r.text
-    r = client.post(f"/api/v1/events/{event}/draft", headers=H,
-                    json={"game_index": 1, "champion": "Ahri", "scope": "banned"})
-    assert r.json()["error"]["code"] == "NOT_OFFERED"
+    for scope in ("A", "banned"):  # only "picked by either team" is offered over the API
+        r = client.post(f"/api/v1/events/{event}/draft", headers=H,
+                        json={"game_index": 1, "champion": "Ahri", "scope": scope})
+        assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_OFFERED"

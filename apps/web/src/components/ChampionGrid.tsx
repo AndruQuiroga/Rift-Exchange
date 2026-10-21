@@ -10,7 +10,8 @@ import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
 import { Odds } from "./Odds";
 
-type Scope = "picked" | "A" | "B" | "banned" | "first";
+// "Picked by either team" is the one draft call offered; existing picks on other draft markets still settle.
+type Scope = "picked";
 type GridChampion = {
   champion: string;
   label: string;
@@ -22,7 +23,6 @@ type Grid = {
   open: boolean;
   close_at: string | null;
   games_observed: number;
-  scopes?: Scope[];
   burned: { champion: string; label: string }[];
   champions: GridChampion[];
 };
@@ -34,7 +34,6 @@ const ROLES = [
   { id: "bottom", label: "Bot" },
   { id: "support", label: "Support" },
 ];
-const KIND_SCOPE: Record<string, Scope> = { champion_banned: "banned", champion_first_pick: "first" };
 
 // Champion art from Riot's public Data Dragon CDN; falls back to initials if it can't load.
 let ddragon: Promise<string | null> | null = null;
@@ -81,10 +80,9 @@ function useDraft(event: EventT, game: number) {
   const known = useMemo(() => {
     const map: Record<string, string> = {};
     for (const m of event.markets ?? []) {
-      if (!m.kind.startsWith("champion_") || typeof m.params.game_index !== "number" || m.params.role) continue;
+      if (m.kind !== "champion_picked" || typeof m.params.game_index !== "number" || m.params.side || m.params.role) continue;
       const yes = m.outcomes.find((o) => o.code === "YES");
-      const scope: Scope = KIND_SCOPE[m.kind] ?? ((m.params.side as Scope | undefined) ?? "picked");
-      if (yes) map[keyOf(m.params.game_index, String(m.params.champion), scope)] = yes.id;
+      if (yes) map[keyOf(m.params.game_index, String(m.params.champion), "picked")] = yes.id;
     }
     return { ...map, ...created };
   }, [event.markets, created]);
@@ -164,22 +162,18 @@ export function FeaturedDraft({ event, game }: { event: EventT; game: number }) 
   );
 }
 
-/** Every champion for one game. "Picked by either team" is the call; the rarer ones sit behind one toggle. */
+/** Every champion for one game: tap the ones you think get picked, by either team. */
 export function ChampionGrid({ event, game }: { event: EventT; game: number }) {
   const now = useNow();
   const { grid, tap, state, notice } = useDraft(event, game);
-  const [scope, setScope] = useState<Scope>("picked");
-  const [more, setMore] = useState(false);
+  const scope: Scope = "picked";
   const [role, setRole] = useState("all");
   const [query, setQuery] = useState("");
   const [focusAt, setFocusAt] = useState(0);
 
-  const code = (s: "A" | "B") => (s === "A" ? event.team_a?.code : event.team_b?.code) ?? s;
-  const others = (grid?.scopes ?? []).filter((s) => s !== "picked");
   const q = query.trim().toLowerCase();
   const shown = (grid?.champions ?? []).filter((c) => (role === "all" || c.role === role) && (!q || c.label.toLowerCase().includes(q)) && c.odds[scope]);
   const lock = grid?.close_at ? countdown(grid.close_at, now) : null;
-  const scopeLabel = (s: Scope) => (s === "picked" ? "Picked" : s === "banned" ? "Banned" : s === "first" ? "First pick" : `By ${code(s)}`);
 
   // One tab stop for the whole grid; arrow keys, Home and End move between tiles.
   function gridKeys(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -202,26 +196,10 @@ export function ChampionGrid({ event, game }: { event: EventT; game: number }) {
         </div>
       ) : (
         <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-          {scope === "picked" ? `Tap a champion you think gets picked in Game ${game}, by either team.` : `${scopeLabel(scope)} in Game ${game}.`}
+          {`Tap a champion you think gets picked in Game ${game}, by either team.`}
           {lock ? ` Locks in ${lock}.` : ""}
         </p>
       )}
-
-      {others.length ? (
-        more ? (
-          <div className="chips" role="group" aria-label="What to call" style={{ marginTop: 10 }}>
-            {(["picked", ...others] as Scope[]).map((s) => (
-              <button key={s} className="chip" aria-pressed={scope === s} onClick={() => setScope(s)}>
-                {scopeLabel(s)}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <button type="button" className="link-btn" onClick={() => setMore(true)}>
-            More draft calls: by team, bans, first pick
-          </button>
-        )
-      ) : null}
 
       <label className="searchbox">
         <span className="sr-only">Search champions</span>
@@ -257,7 +235,7 @@ export function ChampionGrid({ event, game }: { event: EventT; game: number }) {
                 tabIndex={i === Math.min(focusAt, shown.length - 1) ? 0 : -1}
                 onFocus={() => setFocusAt(i)}
                 onClick={() => tap(c, scope)}
-                aria-label={`${c.label}, ${scopeLabel(scope)}, Game ${game}, ${oddsSpoken(px)}`}
+                aria-label={`${c.label} picked in Game ${game}, ${oddsSpoken(px)}`}
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>

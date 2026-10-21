@@ -668,42 +668,47 @@ img { display: block; }
   .picksheet { border-radius: 14px; border: 1px solid var(--divider-strong); max-height: 88dvh; }
 }
 
-/* ------------------------------------------------------------------ Swiss live board */
+/* ------------------------------------------------------------------ Swiss board (Today, during the Swiss stage) */
 
 .recrow.full { border-color: var(--divider-strong); }
-.swiss-live {
-  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: var(--s3); overflow-x: auto;
-  scroll-snap-type: x mandatory; padding-bottom: var(--s2); margin: 0 calc(-1 * var(--s4)); padding-inline: var(--s4);
+.swiss-board {
+  display: grid; grid-auto-flow: column; grid-auto-columns: 184px; gap: var(--s3); overflow-x: auto;
+  scroll-snap-type: x proximity; padding-bottom: var(--s2); margin: 0 calc(-1 * var(--s4)); padding-inline: var(--s4);
   scroll-padding-inline: var(--s4);
 }
-@media (min-width: 1024px) { .swiss-live { margin: 0; padding-inline: 0; scroll-padding-inline: 0; } }
-.sl-round { scroll-snap-align: start; min-width: 0; display: grid; align-content: start; gap: var(--s2); }
-.sl-round-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; }
-.sl-round-head .display { font-size: 18px; font-weight: 800; text-transform: uppercase; }
-.sl-round-head .now { color: var(--accent); font-weight: 700; }
-.sl-pool { display: grid; gap: 6px; padding: 8px; border-radius: var(--radius-card); background: var(--shell); border: 1px solid var(--divider); }
-.sl-pool-head { font-family: var(--font-display); font-weight: 800; font-size: 16px; color: var(--muted); }
-.sl-pool-head.adv { color: var(--accent); }
-.sl-pool-head.out { color: var(--loss); }
-.sl-pool-head.decider { color: var(--warn); }
-.sl-tile { border-radius: var(--radius-control); background: var(--surface); border: 1px solid var(--divider); overflow: hidden; }
-.sl-side {
-  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; padding: 4px 10px; text-align: left; font-size: 14px;
-}
-.sl-side + .sl-side { border-top: 1px solid var(--divider); }
-.sl-side .mark { width: 26px; height: 26px; }
-.sl-side .mark img { width: 20px; height: 20px; }
-.sl-side .code { font-weight: 800; }
-.sl-side .px { margin-left: auto; font-weight: 800; }
-.sl-side .call, .sl-done .call { font-size: 11px; font-weight: 700; color: var(--info); border: 1px solid #2c4a5e; border-radius: 4px; padding: 0 4px; }
-.sl-done .call.hit { color: var(--win); border-color: #2e5a44; }
-button.sl-side:hover { background: var(--surface-2); }
-button.sl-side[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.sl-side.won .code { color: var(--win); }
-.sl-side.lost { color: var(--subtle); }
-.sl-foot { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--divider); background: var(--shell); }
-.sl-foot span:last-child { color: var(--info); font-weight: 600; }
-.sl-tbd { padding: 10px; border-radius: var(--radius-control); border: 1px dashed var(--divider-strong); font-size: 12px; color: var(--subtle); text-align: center; }
-.sl-done { display: flex; align-items: center; gap: 8px; font-size: 14px; min-height: 36px; }
-.sl-done .mark { width: 24px; height: 24px; }
-.sl-done .mark img { width: 18px; height: 18px; }
+@media (min-width: 1024px) { .swiss-board { margin: 0; padding-inline: 0; scroll-padding-inline: 0; } }
+.sb-col { scroll-snap-align: start; display: grid; grid-template-rows: auto 1fr; gap: var(--s2); min-width: 0; }
+.sb-col-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; }
+.sb-col-head .display { font-size: 16px; font-weight: 800; text-transform: uppercase; }
+.sb-col-head .now { font-size: 12px; font-weight: 800; color: var(--accent); }
+/* Pools sit centred in their round like the broadcast board; finished boxes pin to the top and bottom. */
+.sb-cells { display: flex; flex-direction: column; justify-content: center; gap: var(--s2); }
+.sb-cells:has(.sb-finish) { justify-content: space-between; }
+.sb-pool, .sb-finish { display: grid; gap: 4px; padding: 6px; border-radius: var(--radius-card); background: var(--shell); border: 1px solid var(--divider); }
+.sb-finish.adv { border-color: #4a5a1c; background: #171c0c; }
+.sb-finish.out { border-color: #5a2a28; background: #1c1111; }
+.sb-pool-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px 2px; font-size: 11px; font-weight: 700; color: var(--subtle); text-transform: uppercase; letter-spacing: 0.06em; }
+.sb-pool-head .num { font-family: var(--font-display); font-size: 16px; color: var(--text); letter-spacing: 0; }
+.sb-finish.adv .sb-pool-head .num { color: var(--accent); }
+.sb-finish.out .sb-pool-head .num { color: var(--loss); }
+.sb-tile { border-radius: var(--radius-control); background: var(--surface); border: 1px solid var(--divider); overflow: hidden; }
+.sb-tile.today { border-color: var(--info); }
+.sb-tile.live { border-color: var(--accent); }
+.sb-tile.tbd { border-style: dashed; background: transparent; }
+.sb-side { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 2px 8px; text-align: left; font-size: 13px; }
+.sb-tile .sb-side + .sb-side { border-top: 1px solid var(--divider); }
+.sb-side .mark { width: 22px; height: 22px; border-radius: 5px; flex: none; font-size: 9px; }
+.sb-side .mark img { width: 17px; height: 17px; }
+.sb-side .code { font-weight: 800; }
+.sb-side .px { margin-left: auto; font-weight: 800; }
+.sb-side.tbd, .sb-tile.tbd .sb-side { color: var(--subtle); }
+.sb-side.tbd .code, .sb-tile.tbd .code { font-weight: 600; }
+.sb-side.won .code { color: var(--win); }
+.sb-side.lost { color: var(--subtle); }
+.sb-side .call { font-size: 10px; font-weight: 700; color: var(--info); border: 1px solid #2c4a5e; border-radius: 4px; padding: 0 3px; }
+.sb-side .call.hit { color: var(--win); border-color: #2e5a44; }
+button.sb-side { min-height: 40px; }
+button.sb-side:hover { background: var(--surface-2); }
+button.sb-side[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.sb-foot { display: flex; justify-content: space-between; padding: 4px 8px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--divider); background: var(--shell); }
+.sb-foot span:last-child { color: var(--info); font-weight: 700; }

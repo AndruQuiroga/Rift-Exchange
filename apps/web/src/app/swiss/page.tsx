@@ -4,8 +4,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { TeamMark } from "@/components/bits";
-import { SwissProgress, useSwissPicks } from "@/components/SwissProgress";
-import { SwissLive } from "@/components/SwissLive";
+import { SwissProgress } from "@/components/SwissProgress";
 import { IconBack } from "@/components/icons";
 import { countdown, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
@@ -30,9 +29,7 @@ export default function SwissBoardPage() {
   const slip = useSlip();
   const { data } = useSWR<{ markets: MarketT[] }>("/markets?category=FUTURES");
   const { data: picks } = useSWR<{ picks: Pick[] }>("/me/picks?state=open");
-  const swissPicks = useSwissPicks();
   const [selected, setSelected] = useState<string | null>(null);
-  const [view, setView] = useState<"live" | "calls" | null>(null);
 
   const board = useMemo(() => {
     const ms = (data?.markets ?? []).filter((m) => m.kind === "swiss_record");
@@ -40,16 +37,6 @@ export default function SwissBoardPage() {
     return ms.sort((x, y) => price(x) - price(y));
   }, [data]);
   const open = board.filter((m) => m.state === "OPEN");
-  // team id -> the record you called for it, shown on the live board.
-  const calls = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const p of swissPicks) {
-      const m = board.find((x) => x.id === p.market_id);
-      const code = m?.outcomes.find((o) => o.id === p.outcome_id)?.code;
-      if (m?.team && code) out.set(m.team.id, code);
-    }
-    return out;
-  }, [swissPicks, board]);
 
   // Where each team sits: the slip line for its market, else an already-placed pick.
   const inSlip = (m: MarketT) => {
@@ -60,14 +47,15 @@ export default function SwissBoardPage() {
   const placedCount = board.filter((m) => inSlip(m) || held(m).length).length;
   const sel = board.find((m) => m.id === selected) ?? null;
   const lock = open[0] ? countdown(open[0].close_at, now) : null;
-  const shown = view ?? (open.length ? "calls" : "live");
 
   if (data && !board.length) {
     return (
       <>
         <BackLink />
-        <Head open={false} lock={null} />
-        <SwissLive calls={calls} />
+        <div className="empty" style={{ marginTop: 16 }}>
+          <h3>Record calls aren&apos;t priced yet</h3>
+          <p>They open once all sixteen Swiss teams are drawn.</p>
+        </div>
       </>
     );
   }
@@ -77,16 +65,7 @@ export default function SwissBoardPage() {
       <BackLink />
       <Head open={open.length > 0} lock={lock} />
 
-      <div className="segmented" role="group" aria-label="View" style={{ marginTop: 4 }}>
-        <button aria-pressed={shown === "live"} onClick={() => setView("live")}>Live board</button>
-        <button aria-pressed={shown === "calls"} onClick={() => setView("calls")}>
-          Record calls{open.length ? ` · ${placedCount}/16` : ""}
-        </button>
-      </div>
-
-      {shown === "live" ? (
-        <SwissLive calls={calls} />
-      ) : open.length ? (
+      {open.length ? (
         <>
           <div className="notice info" style={{ marginTop: 14 }}>
             Fill the card: two 3–0s, three of each record in between, two 0–3s. <b>Exact record</b> pays the full price; <b>right side, wrong record</b> (it still advanced, or still went out) returns a quarter.
@@ -192,11 +171,11 @@ function Head({ open, lock }: { open: boolean; lock: string | null }) {
     <div className="page-head" style={{ paddingTop: 8 }}>
       <div>
         <div className="eyebrow">Swiss stage · 16 teams · 3 wins to advance</div>
-        <h1 style={{ marginTop: 6 }}>Swiss Board</h1>
+        <h1 style={{ marginTop: 6 }}>Record calls</h1>
         <p>
           {open
             ? `Call each team's final record before the stage starts. ${lock ? `Locks in ${lock}.` : "Locks at the first Swiss match."}`
-            : "Every round as it happens. Pick winners on the board, and watch your record calls play out."}
+            : "Your calls against each team's record so far. The live board is on Today."}
         </p>
       </div>
     </div>

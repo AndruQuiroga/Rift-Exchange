@@ -271,15 +271,17 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         game_index: int = Field(ge=1, le=5)
         champion: str = Field(min_length=1, max_length=40)
         scope: str = Field(pattern="^(picked|A|B|banned|first)$")
-        role: str | None = Field(default=None, pattern="^(top|jungle|mid|bottom|support)$")  # scope A/B only
 
     @app.post("/api/v1/events/{event_id}/draft")
     def draft_market(event_id: uuid.UUID, body: DraftMarketBody, session: Db, user: CurrentUser):
         """Create (once, for everyone) the market behind a tapped champion and return it priced."""
+        if body.scope != "picked":
+            # Draft calls are trimmed to "picked by either team"; markets made earlier still settle.
+            raise ApiError(409, "NOT_OFFERED", "Only 'picked by either team' draft calls are offered.")
         fixture = _fixture(session, event_id)
         try:
             market = draft.ensure_market(session, season_of(session), fixture, body.game_index, body.champion,
-                                         body.scope, settings, db_now(session), role=body.role)
+                                         body.scope, settings, db_now(session))
         except draft.DraftError as e:
             raise ApiError(409, e.code, e.message) from e
         outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
