@@ -121,9 +121,28 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                                              db_now(session), settings.session_days)
         except auth.AuthError as e:
             raise ApiError(400, e.code, e.message) from e
+        return signed_in(response, user, token)
+
+    def signed_in(response: Response, user: User, token: str) -> dict:
         response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=settings.cookie_secure,
                             max_age=settings.session_days * 86400, path="/")
         return {"user": {"id": str(user.id), "handle": user.handle, "display_name": user.display_name}}
+
+    @app.post("/api/v1/auth/sign-in-codes")
+    def new_sign_in_code(user: CurrentUser, session: Db):
+        code, expires_at = auth.create_sign_in_code(session, user, db_now(session))
+        return {"code": code, "expires_at": expires_at.isoformat()}
+
+    class SignInBody(BaseModel):
+        code: str
+
+    @app.post("/api/v1/auth/sign-in")
+    def sign_in(body: SignInBody, response: Response, session: Db):
+        try:
+            user, token = auth.redeem_sign_in_code(session, body.code, db_now(session), settings.session_days)
+        except auth.AuthError as e:
+            raise ApiError(400, e.code, e.message) from e
+        return signed_in(response, user, token)
 
     @app.post("/api/v1/auth/logout")
     def logout(request: Request, response: Response, session: Db):

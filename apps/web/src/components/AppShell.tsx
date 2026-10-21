@@ -44,7 +44,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const grantToday = season ? season.match_days.includes(venueToday(season.timezone)) : false;
   useLiveUpdates(Boolean(me));
 
-  if (pathname.startsWith("/join")) return <>{children}</>;
+  if (pathname.startsWith("/join") || pathname.startsWith("/signin")) return <>{children}</>;
   if (error instanceof ApiError && error.status === 401) return <SignedOut />;
 
   return (
@@ -183,6 +183,9 @@ function SignedOut() {
         <p className="muted" style={{ marginTop: 10 }}>
           Rift Exchange is a private prediction league for friends watching Worlds 2026. Open the invite link you were sent to join.
         </p>
+        <Link className="btn secondary" href="/signin" style={{ marginTop: 24 }}>
+          I already have an account
+        </Link>
       </div>
     </main>
   );

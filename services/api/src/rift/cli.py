@@ -1,4 +1,5 @@
-"""Operational entry points: `rift api`, `rift worker`, `rift cycle`, `rift invite`, `rift backtest`."""
+"""Operational entry points: `rift api`, `rift worker`, `rift cycle`, `rift invite`, `rift sign-in-code`,
+`rift backtest`."""
 
 import argparse
 import logging
@@ -15,6 +16,8 @@ def main() -> None:
     sub.add_parser("cycle", help="run one worker cycle and exit")
     invite = sub.add_parser("invite", help="create an invite code")
     invite.add_argument("--admin", action="store_true")
+    code = sub.add_parser("sign-in-code", help="create a 24-hour sign-in code for a member with no signed-in device")
+    code.add_argument("--user", required=True, help="the member's name or handle")
     sub.add_parser("backtest", help="print the team-strength model backtest")
     args = parser.parse_args()
 
@@ -45,6 +48,21 @@ def main() -> None:
         with transaction() as db:
             code = create_invite(db, "ADMIN" if args.admin else "PLAYER")
         print(code)
+    elif args.cmd == "sign-in-code":
+        from sqlalchemy import func, or_, select
+
+        from rift.auth import ADMIN_CODE_TTL, create_sign_in_code
+        from rift.db import db_now, transaction
+        from rift.models import User
+
+        with transaction() as db:
+            named = or_(User.handle == args.user, func.lower(User.display_name) == args.user.lower())
+            user = db.execute(select(User).where(named)).scalar_one_or_none()
+            if user is None:
+                raise SystemExit(f"No member named {args.user!r}")
+            code, expires_at = create_sign_in_code(db, user, db_now(db), ADMIN_CODE_TTL, actor="cli")
+            name = user.display_name
+        print(f"{code}  for {name}, valid until {expires_at:%Y-%m-%d %H:%M %Z}")
     elif args.cmd == "backtest":
         from rift import ratings
         from rift.db import session_factory

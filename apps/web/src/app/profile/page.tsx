@@ -1,6 +1,7 @@
 "use client";
 
 import useSWR from "swr";
+import { DeviceSignIn } from "@/components/DeviceSignIn";
 import { Disclaimer } from "@/components/Disclaimer";
 import { QuickToggle } from "@/components/SlipPanel";
 import { api } from "@/lib/api";
@@ -51,6 +52,13 @@ export default function ProfilePage() {
 
       <section className="section">
         <div className="section-head">
+          <h2>Your devices</h2>
+        </div>
+        <DeviceSignIn />
+      </section>
+
+      <section className="section">
+        <div className="section-head">
           <h2>Ledger</h2>
         </div>
         <div className="rows">
@@ -91,6 +99,7 @@ export default function ProfilePage() {
         className="btn secondary"
         style={{ marginTop: 24 }}
         onClick={async () => {
+          if (!confirm("To sign back in on this device you'll need a code from another signed-in device. Sign out?")) return;
           await api("/auth/logout", { method: "POST" });
           location.href = "/";
         }}
