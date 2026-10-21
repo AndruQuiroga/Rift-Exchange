@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { countdown, oddsSpoken } from "@/lib/format";
@@ -120,48 +120,86 @@ function useDraft(event: EventT, game: number) {
   return { grid, tap, state, notice };
 }
 
-/** "Who gets picked?": a swipeable row of champion cards, your calls first, then the likeliest picks. */
+/** "Who gets picked?": a carousel of champion cards. Filter by role, swipe or use the arrows; your calls
+ * come first, then the likeliest picks. Every priced champion is in it; search lives in "All champions". */
 export function ChampionRow({ event, game }: { event: EventT; game: number }) {
   const { grid, tap, state, notice } = useDraft(event, game);
   const [all, setAll] = useState(false);
+  const [role, setRole] = useState("all");
+  const [at, setAt] = useState(0);
+  const track = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setAll(false), []);
-  if (!grid) return <div className="skeleton" style={{ height: 176 }} />;
+  if (!grid) return <div className="skeleton" style={{ height: 196 }} />;
   if (!grid.open) return <p className="muted" style={{ fontSize: 13 }}>{game === 1 ? "Draft picks for this series are closed." : `Game ${game} draft picks open when Game ${game - 1} ends.`}</p>;
-  const priced = grid.champions.filter((c) => c.odds.picked);
+  const priced = grid.champions.filter((c) => c.odds.picked && (role === "all" || c.role === role));
   const mine = priced.filter((c) => state(c, "picked").selected || state(c, "picked").placed);
   const rest = priced.filter((c) => !mine.includes(c)).sort((x, y) => Number(x.odds.picked) - Number(y.odds.picked));
-  const row = [...mine, ...rest].slice(0, Math.max(10, mine.length));
+  const cards = [...mine, ...rest];
+
+  // Step one card at a time; the counter follows whichever card sits at the start after a swipe.
+  const step = (dir: 1 | -1) => {
+    const el = track.current;
+    const card = el?.querySelector<HTMLElement>(".champ-card");
+    if (!el || !card) return;
+    el.scrollBy({ left: dir * (card.offsetWidth + 10), behavior: "smooth" });
+  };
+  const onScroll = () => {
+    const el = track.current;
+    const card = el?.querySelector<HTMLElement>(".champ-card");
+    if (el && card) setAt(Math.round(el.scrollLeft / (card.offsetWidth + 10)));
+  };
+  const pickRole = (r: string) => {
+    setRole(r);
+    setAt(0);
+    track.current?.scrollTo({ left: 0 });
+  };
+
   return (
     <>
-      <div className="champ-row" role="group" aria-label={`Champions picked in Game ${game}`}>
-        {row.map((c) => {
-          const s = state(c, "picked");
-          return (
-            <button
-              key={c.champion}
-              type="button"
-              className="champ-card"
-              aria-pressed={s.selected}
-              data-held={s.placed || undefined}
-              aria-busy={s.busy || undefined}
-              disabled={s.busy}
-              onClick={() => tap(c, "picked")}
-              aria-label={`${c.label} picked in Game ${game}, ${oddsSpoken(c.odds.picked ?? null)}${s.selected ? ", in slip" : ""}${s.placed ? ", already placed" : ""}`}
-            >
-              <ChampIcon id={c.champion} label={c.label} />
-              <span className="nm">{c.label}</span>
-              <span className="px num">
-                {s.busy ? <span className="spinner" aria-hidden="true" /> : s.selected ? <><IconCheck width={13} height={13} aria-hidden="true" /> <Odds value={c.odds.picked ?? null} /></> : <Odds value={c.odds.picked ?? null} />}
-              </span>
-              {s.placed && !s.selected ? <span className="pk-tag">Placed</span> : null}
-            </button>
-          );
-        })}
+      <div className="chips champ-roles" role="group" aria-label="Role">
+        {[{ id: "all", label: "All" }, ...ROLES].map((r) => (
+          <button key={r.id} className="chip" aria-pressed={role === r.id} onClick={() => pickRole(r.id)}>
+            {r.label}
+          </button>
+        ))}
+      </div>
+      <div className="champ-carousel">
+        <button type="button" className="champ-arrow" aria-label="Previous champions" disabled={at <= 0} onClick={() => step(-1)}>‹</button>
+        <div className="champ-row" ref={track} onScroll={onScroll} role="group" aria-label={`Champions picked in Game ${game}`}>
+          {cards.map((c) => {
+            const s = state(c, "picked");
+            return (
+              <button
+                key={c.champion}
+                type="button"
+                className="champ-card"
+                aria-pressed={s.selected}
+                data-held={s.placed || undefined}
+                aria-busy={s.busy || undefined}
+                disabled={s.busy}
+                onClick={() => tap(c, "picked")}
+                aria-label={`${c.label} picked in Game ${game}, ${oddsSpoken(c.odds.picked ?? null)}${s.selected ? ", in slip" : ""}${s.placed ? ", already placed" : ""}`}
+              >
+                <ChampIcon id={c.champion} label={c.label} />
+                <span className="nm">{c.label}</span>
+                <span className="px num">
+                  {s.busy ? <span className="spinner" aria-hidden="true" /> : s.selected ? <><IconCheck width={13} height={13} aria-hidden="true" /> <Odds value={c.odds.picked ?? null} /></> : <Odds value={c.odds.picked ?? null} />}
+                </span>
+                {s.placed && !s.selected ? <span className="pk-tag">Placed</span> : null}
+              </button>
+            );
+          })}
+          {cards.length === 0 ? <p className="muted" style={{ fontSize: 13, padding: "12px 0" }}>No priced champions for this role yet.</p> : null}
+        </div>
+        <button type="button" className="champ-arrow" aria-label="Next champions" disabled={at >= cards.length - 2} onClick={() => step(1)}>›</button>
+      </div>
+      <div className="champ-foot">
+        <span className="muted num">{cards.length ? `${Math.min(at + 1, cards.length)} of ${cards.length}` : ""}{mine.length ? ` · ${mine.length} called` : ""}</span>
+        <button type="button" className="all-champs" onClick={() => setAll(true)}>
+          Search all {grid.champions.length}
+        </button>
       </div>
       {notice}
-      <button type="button" className="all-champs" onClick={() => setAll(true)}>
-        All {grid.champions.length} champions
-      </button>
       {all ? (
         <Sheet title={`Game ${game} draft`} tabs={[{ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={game} /> }]} tab="draft" setTab={() => {}} onClose={close} />
       ) : null}

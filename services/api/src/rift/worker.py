@@ -61,6 +61,8 @@ class Worker:
         self._run("live", lambda s, now: ingest.mark_live(s, self.client.live(), now))
         self._run("details", self._sync_details)
         self._run("timeline", self._track_games)
+        if not self.busy(timedelta(minutes=20)) and self._due("backfill", timedelta(minutes=2)):
+            self._run("backfill", self._backfill_timelines)
         if self.secondary.available and self._due("drafts", timedelta(minutes=10)):
             self._run("drafts", self._sync_drafts)
         self._run("markets", self._price_markets)
@@ -135,6 +137,16 @@ class Worker:
             for g in ingest.games_to_track(f, games, now):
                 n += timeline.track(g, self.client, now)
         return n
+
+    def _backfill_timelines(self, s: Session, now: datetime) -> int:
+        """Finished games the live tracker never saw (e.g. played before this deployment): two per pass, in
+        random order so one game the feed can't serve never starves the rest. Their timelines price the
+        objective and early-window markets."""
+        season = self._season(s)
+        rows = s.execute(select(Game).join(Fixture, Fixture.id == Game.fixture_id).where(
+            Fixture.season_id == season.id, Fixture.status == "COMPLETED", Game.state == "completed",
+            Game.timeline_complete.is_(False)).order_by(func.random()).limit(2)).scalars().all()
+        return sum(int(timeline.track(g, self.client, now)) for g in rows)
 
     def _model(self, s: Session) -> tuple[ratings.EloModel, str]:
         model = ratings.fit(s)

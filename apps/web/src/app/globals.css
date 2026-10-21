@@ -33,6 +33,7 @@
   --s6: 32px;
 
   --nav-h: 64px;
+  --topbar-h: 60px; /* the sticky top bar; anything else sticky sits just below it */
   --font-ui: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-display: var(--font-display-face), var(--font-ui);
 }
@@ -74,7 +75,8 @@ img { display: block; }
 .topbar {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
-  padding: calc(env(safe-area-inset-top) + 10px) var(--s4) 10px;
+  box-sizing: border-box; height: calc(var(--topbar-h) + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) var(--s4) 0;
   margin: 0 calc(-1 * var(--s4));
   background: var(--canvas);
   border-bottom: 1px solid var(--divider);
@@ -111,7 +113,7 @@ img { display: block; }
   .shell { grid-template-columns: 232px minmax(0, 1fr); }
   .bottomnav { display: none; }
   .main { padding: 0 var(--s6) var(--s6); }
-  .topbar { margin: 0 calc(-1 * var(--s6)); padding: 14px var(--s6); }
+  .topbar { margin: 0 calc(-1 * var(--s6)); padding: 0 var(--s6); }
   .topbar .brand { display: none; }
   .siderail {
     display: flex; flex-direction: column; gap: var(--s5);
@@ -754,7 +756,8 @@ button.sb-side[aria-pressed="true"] { background: var(--accent); color: var(--ac
 
 /* Rows: the first team on the left, the second on the right, the question in the middle; codes pinned above. */
 .h2h-head {
-  position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); align-items: center;
+  position: sticky; top: calc(var(--topbar-h) + env(safe-area-inset-top)); z-index: 5;
+  display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); align-items: center;
   margin: var(--s4) calc(-1 * var(--s4)) 0; padding: 8px var(--s4); background: var(--canvas); border-bottom: 1px solid var(--divider);
   font-weight: 800; font-size: 14px;
 }
@@ -814,3 +817,58 @@ a.sb-tile:hover { border-color: var(--divider-strong); }
 .mp-sub { margin-top: var(--s3); font-size: 13px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--subtle); }
 .h2h.locked .pk .pk-px { font-size: 14px; font-weight: 700; }
 .h2h.locked .h2h-label { color: var(--subtle); }
+
+/* ------------------------------------------------------------------ winner face-off (option 1) */
+
+.win-cards { position: relative; }
+.pk.win-card {
+  position: relative; min-height: 220px; padding: 16px 14px 14px; gap: 8px; border-radius: 16px;
+  background: var(--team, var(--surface-2)); border: 3px solid transparent; color: #fff;
+}
+.pk.win-card:hover:not(:disabled) { background: var(--team, var(--surface-2)); border-color: rgba(255, 255, 255, 0.35); }
+.pk.win-card .mark.lg { background: rgba(0, 0, 0, 0.28); }
+.win-card .win-code { font-size: 44px; line-height: 0.9; margin-top: 2px; }
+.win-card .win-name, .win-card[aria-pressed="true"] .win-name { color: rgba(255, 255, 255, 0.82); white-space: normal; }
+.win-card .pk-px { margin-top: auto; font-family: var(--font-display); font-size: 40px; line-height: 1; }
+.pk.win-card[aria-pressed="true"] {
+  background: var(--team, var(--surface-2)); color: #fff; border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(212, 242, 90, 0.18);
+}
+.pk.win-card:disabled { background: var(--team, var(--surface-2)); color: rgba(255, 255, 255, 0.7); border-style: solid; opacity: 0.6; }
+.pk.win-card.held:not([aria-pressed="true"]) { border-color: var(--win); }
+.win-ribbon {
+  display: none; position: absolute; top: -11px; left: 12px; padding: 3px 8px; border-radius: 5px;
+  background: var(--accent); color: var(--accent-ink); font-size: 10px; font-weight: 800; letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.win-card.right .win-ribbon { left: auto; right: 12px; }
+.win-card[aria-pressed="true"] .win-ribbon { display: block; }
+.win-card .pk-tag { top: -10px; left: 12px; right: auto; }
+.win-card.right .pk-tag { left: auto; right: 12px; }
+.win-vs {
+  position: absolute; left: 50%; top: 86px; transform: translateX(-50%); z-index: 1; width: 48px; height: 48px;
+  border-radius: 50%; display: grid; place-items: center; background: var(--canvas); border: 3px solid var(--divider-strong);
+  font-family: var(--font-display); font-size: 18px; font-weight: 800; pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ champion carousel */
+
+.champ-roles { margin-top: 2px; }
+.champ-carousel { display: grid; grid-template-columns: 36px minmax(0, 1fr) 36px; gap: 6px; align-items: center; }
+.champ-carousel .champ-row { margin: 0; padding: 8px 0 4px; scroll-snap-type: x mandatory; scroll-padding-inline: 0; }
+.champ-carousel .champ-card { width: 112px; }
+.champ-carousel .champ-card .cicon { height: 96px; }
+.champ-arrow {
+  width: 36px; height: 44px; border-radius: 10px; background: var(--surface); border: 1px solid var(--divider);
+  color: var(--text); font-size: 22px; font-weight: 800;
+}
+.champ-arrow:disabled { opacity: 0.3; }
+.champ-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); font-size: 12px; }
+
+/* Swiss tiles: each team's price on its row, favourite highlighted, a thin chance bar between. */
+.sb-odds { margin-left: auto; padding: 2px 7px; border-radius: 6px; background: var(--surface-2); font-size: 13px; font-weight: 800; }
+.sb-odds.fav { color: var(--accent); background: var(--accent-soft); }
+.sb-chance { display: flex; gap: 2px; height: 3px; margin: 0 8px; }
+.sb-chance span { background: var(--divider-strong); border-radius: 2px; }
+.sb-chance span.fav { background: var(--muted); }
+.sb-tile .sb-side + .sb-chance + .sb-side { border-top: 0; }

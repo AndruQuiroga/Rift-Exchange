@@ -131,6 +131,13 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
           )}
           <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
         </Section>
+      ) : game.window !== "DONE" ? (
+        // Not priced yet (they need enough Worlds games with live data): greyed out so the page shows them.
+        <Section title="Objectives" sub="Not open yet">
+          <LockedRow label="First blood" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
+          <LockedRow label="First tower" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
+          <LockedRow label="Baron before 25:00" left="Yes" right="No" />
+        </Section>
       ) : null}
 
       <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00" : undefined}>
