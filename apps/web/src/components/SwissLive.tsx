@@ -3,11 +3,11 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import { kickoff } from "@/lib/format";
+import { kickoff, odds } from "@/lib/format";
 import { dash, swissBoard, SWISS_COLUMNS, type SwissCell } from "@/lib/swiss";
 import type { EventT, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
-import { ChanceBar, useMyWinnerPick } from "./EventCard";
+import { useMyWinnerPick } from "./EventCard";
 import { IconCheck } from "./icons";
 
 /**
@@ -159,6 +159,11 @@ function Tile({ event, calls, today }: { event: EventT; calls: Map<string, strin
   const mine = useMyWinnerPick(event.featured);
   const done = event.status === "COMPLETED";
   const scored = done || event.status === "LIVE";
+  // Each team's price on its own row; the shorter price is the favourite.
+  const price = (code: "A" | "B") => event.featured?.outcomes.find((o) => o.code === code)?.odds ?? null;
+  const [pa, pb] = [Number(price("A") ?? 0), Number(price("B") ?? 0)];
+  const fav = pa && pb ? (pa <= pb ? "A" : "B") : null;
+  const share = pa && pb ? Math.round((100 / pa / (1 / pa + 1 / pb))) : null;
   const side = (code: "A" | "B", team: Team | null) => {
     const call = team ? calls.get(team.id) : undefined;
     const picked = mine?.code === code;
@@ -168,7 +173,11 @@ function Tile({ event, calls, today }: { event: EventT; calls: Map<string, strin
         <span className="code">{team?.code ?? "TBD"}</span>
         {picked ? <IconCheck className="picked" width={13} height={13} aria-label={mine?.placed ? "your placed pick" : "in your slip"} /> : null}
         {call ? <span className="call num" title="Your record call">{dash(call)}</span> : null}
-        {scored ? <span className="px num">{event.score[code === "A" ? 0 : 1]}</span> : null}
+        {scored ? (
+          <span className="px num">{event.score[code === "A" ? 0 : 1]}</span>
+        ) : price(code) ? (
+          <span className={`sb-odds num${fav === code ? " fav" : ""}`}>{odds(price(code))}</span>
+        ) : null}
       </span>
     );
   };
@@ -179,8 +188,13 @@ function Tile({ event, calls, today }: { event: EventT; calls: Map<string, strin
       aria-label={`${event.team_a?.code ?? "TBD"} versus ${event.team_b?.code ?? "TBD"}${mine ? `, your pick ${mine.code === "A" ? event.team_a?.code : event.team_b?.code}` : ""}. Open match`}
     >
       {side("A", event.team_a)}
+      {!scored && share !== null ? (
+        <span className="sb-chance" aria-label={`${event.team_a?.code} ${share}%, ${event.team_b?.code} ${100 - share}%`}>
+          <span style={{ width: `${share}%` }} className={fav === "A" ? "fav" : ""} />
+          <span style={{ width: `${100 - share}%` }} className={fav === "B" ? "fav" : ""} />
+        </span>
+      ) : null}
       {side("B", event.team_b)}
-      {!scored && event.featured ? <ChanceBar event={event} market={event.featured} compact /> : null}
       <span className="sb-foot">
         <span className="num">{event.status === "LIVE" ? "Live" : done ? "Final" : kickoff(event.scheduled_at)}</span>
         <span>Open →</span>

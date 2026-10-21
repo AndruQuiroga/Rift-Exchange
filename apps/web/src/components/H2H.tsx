@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { oddsSpoken, potentialReturn, rc } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
-import { teamName } from "@/lib/teams";
+import { teamColor, teamName } from "@/lib/teams";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
 import { eventLabel } from "./EventCard";
@@ -16,8 +16,9 @@ import { Odds } from "./Odds";
  * (filled, with a check); already placed (outlined, "Placed"); closed (muted, with a lock).
  * Tap toggles; tapping the other side of a market moves your pick there.
  */
-export function PickButton({ event, market, outcome, className = "", label, children }: {
+export function PickButton({ event, market, outcome, className = "", label, children, style }: {
   event: EventT; market: MarketT; outcome: OutcomeT | undefined; className?: string; label: string; children?: ReactNode;
+  style?: React.CSSProperties;
 }) {
   const slip = useSlip();
   const placed = usePlaced();
@@ -31,6 +32,7 @@ export function PickButton({ event, market, outcome, className = "", label, chil
       type="button"
       className={`pk ${className}${won ? " won" : ""}${held ? " held" : ""}`}
       aria-pressed={selected}
+      style={style}
       disabled={!open && !selected}
       onClick={() => slip.toggle(market, outcome, eventLabel(event))}
       aria-label={`${label}, ${won ? "won" : oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${held ? ", already placed" : ""}`}
@@ -67,19 +69,31 @@ export function PickNote({ market }: { market: MarketT }) {
   );
 }
 
-/** The big winner cards at the top of a match or game: each team is one tap target with its price. */
+/** The winner face-off: each team a tall card in its colour, its chance and price, VS between them. */
 export function WinnerCards({ event, market, caption }: { event: EventT; market: MarketT; caption: string }) {
+  const odds = (code: string) => Number(market.outcomes.find((o) => o.code === code)?.odds ?? 0);
+  const [pa, pb] = [odds("A"), odds("B")].map((o) => (o > 0 ? 1 / o : 0));
+  const chance = (code: "A" | "B") => (pa + pb > 0 ? Math.round((100 * (code === "A" ? pa : pb)) / (pa + pb)) : null);
   const side = (code: "A" | "B", team: Team | null) => (
-    <PickButton event={event} market={market} outcome={market.outcomes.find((o) => o.code === code)} className={`win-card${code === "B" ? " right" : ""}`} label={`${teamName(team)} to win`}>
+    <PickButton
+      event={event}
+      market={market}
+      outcome={market.outcomes.find((o) => o.code === code)}
+      className={`win-card${code === "B" ? " right" : ""}`}
+      style={{ "--team": teamColor(team) } as React.CSSProperties}
+      label={`${teamName(team)} to win`}
+    >
+      <span className="win-ribbon" aria-hidden="true">Your pick</span>
       <TeamMark team={team} large />
       <span className="win-code">{team?.code ?? "TBD"}</span>
-      <span className="win-name">{teamName(team)}</span>
+      <span className="win-name">{teamName(team)}{chance(code) !== null ? ` · ${chance(code)}% to win` : ""}</span>
     </PickButton>
   );
   return (
     <section aria-label={caption}>
       <div className="win-cards">
         {side("A", event.team_a)}
+        <span className="win-vs" aria-hidden="true">VS</span>
         {side("B", event.team_b)}
       </div>
       <PickNote market={market} />
