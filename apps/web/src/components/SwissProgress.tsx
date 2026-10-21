@@ -52,10 +52,9 @@ export function SwissProgress({ board }: { board: MarketT[] }) {
   );
 }
 
-/** One line for Today once the board is locked: how many exact calls are still alive. */
+/** One line for Today once the board is locked: the live board, and how many exact calls are still alive. */
 export function SwissSummary() {
   const picks = useSwissPicks();
-  if (!picks.length) return null;
   const alive = picks.filter((p) => {
     const called = p.outcome_label.replace("–", "-");
     return swissChance(called, p.swiss_record ?? "0-0").text === "Exact still possible";
@@ -63,10 +62,12 @@ export function SwissSummary() {
   return (
     <Link className="banner quiet section" href="/swiss" style={{ marginTop: 14 }}>
       <span>
-        <span className="t" style={{ display: "block" }}>Your Swiss Board</span>
-        <span className="s num">{alive} of {picks.length} exact calls still possible</span>
+        <span className="t" style={{ display: "block" }}>Swiss live board</span>
+        <span className="s num">
+          Every round by record{picks.length ? ` · ${alive} of ${picks.length} exact calls still possible` : " · pick winners on the board"}
+        </span>
       </span>
-      <span className="go">View →</span>
+      <span className="go">Open →</span>
     </Link>
   );
 }

@@ -39,7 +39,11 @@ function useOnDemand(event: EventT) {
   const label = `${event.team_a?.code ?? "TBD"} vs ${event.team_b?.code ?? "TBD"}`;
   async function tap(key: string, path: string, body: unknown, code: string) {
     const known = created[key];
-    if (known && slip.isSelected(known)) return slip.remove(known);
+    if (known && slip.isSelected(known)) {
+      slip.undo(known); // still in its undo window
+      slip.remove(known);
+      return;
+    }
     setError(null);
     setBusy(key);
     try {

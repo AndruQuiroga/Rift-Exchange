@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
+import { QuickToggle } from "@/components/SlipPanel";
 import { api } from "@/lib/api";
 import { rc } from "@/lib/format";
 import { useMe, useSeason } from "@/lib/hooks";
@@ -39,6 +40,13 @@ export default function ProfilePage() {
         />
         {wallet?.recovery_due_rc ? <Row label="Pending correction adjustment" value={`${rc(wallet.recovery_due_rc)} RC`} /> : null}
       </div>
+
+      <section className="section">
+        <div className="section-head">
+          <h2>Picking</h2>
+        </div>
+        <QuickToggle />
+      </section>
 
       <section className="section">
         <div className="section-head">

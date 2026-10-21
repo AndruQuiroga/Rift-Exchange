@@ -6,7 +6,7 @@ import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
-import { useSlip } from "@/lib/slip";
+import { STAKES, useSlip } from "@/lib/slip";
 import type { Quote, QuoteItem, Receipt } from "@/lib/types";
 import { IconClose } from "./icons";
 
@@ -16,70 +16,17 @@ type Phase =
   | { kind: "busy"; label: string }
   | { kind: "receipt"; receipt: Receipt };
 
-/** Multi-pick stakes in one move: the same amount on every pick, or one total split evenly. */
-function StakeMode({ count, available, apply, onActive }: { count: number; available: number; apply: (fn: (line: unknown, i: number) => number | null) => void; onActive: (on: boolean) => void }) {
-  const [mode, setMode] = useState<"each" | "spread">("each");
-  const [amount, setAmount] = useState<number | null>(null);
-
-  function set(next: number | null, m = mode) {
-    setAmount(next);
-    onActive(!!next);
-    if (!next) return apply(() => null);
-    if (m === "each") return apply(() => next);
-    const base = Math.floor(next / count);
-    const extra = next % count;
-    apply((_, i) => base + (i < extra ? 1 : 0) || null);
-  }
-
-  const quick =
-    mode === "each"
-      ? [25, 50, 100].map((v) => ({ label: String(v), value: v }))
-      : [
-          { label: "25%", value: Math.floor(available / 4) },
-          { label: "50%", value: Math.floor(available / 2) },
-          { label: "All", value: available },
-        ];
-
+/** Opt in to placing a pick the moment its price is tapped, at your usual stake, with a few seconds to undo. */
+export function QuickToggle() {
+  const slip = useSlip();
   return (
-    <div className="stake-mode">
-      <div className="segmented" role="group" aria-label="Stake mode">
-        {(["each", "spread"] as const).map((m) => (
-          <button
-            key={m}
-            aria-pressed={mode === m}
-            onClick={() => {
-              setMode(m);
-              set(amount, m);
-            }}
-          >
-            {m === "each" ? "Same stake each" : "Spread a total"}
-          </button>
-        ))}
-      </div>
-      <label className="stake-input">
-        <span className="sr-only">{mode === "each" ? "Stake per pick" : "Total to spread"}</span>
-        <input
-          className="num"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          placeholder={mode === "each" ? "Per pick" : `Total across ${count} picks`}
-          value={amount ?? ""}
-          onChange={(e) => {
-            const digits = e.target.value.replace(/\D/g, "").slice(0, 12);
-            set(digits ? Number(digits) : null);
-          }}
-        />
-        <span>RC</span>
-      </label>
-      <div className="presets" role="group" aria-label="Quick amounts" style={{ gridTemplateColumns: "repeat(3, 1fr)", marginTop: 8 }}>
-        {quick.map((q) => (
-          <button key={q.label} onClick={() => set(q.value || null)}>
-            {q.label}
-          </button>
-        ))}
-      </div>
-      <div className="hint">Tap a pick&apos;s stake to change just that one.</div>
-    </div>
+    <label className="quick-toggle">
+      <span>
+        <span className="t">One-tap picks</span>
+        <span className="s">Tap a price to place {rc(slip.defaultStake)} RC straight away · 5 s to undo</span>
+      </span>
+      <input type="checkbox" role="switch" checked={slip.quick} onChange={(e) => slip.setQuick(e.target.checked)} />
+    </label>
   );
 }
 
@@ -89,9 +36,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const { mutate } = useSWRConfig();
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
   const [error, setError] = useState<string | null>(null);
-  const [active, setActive] = useState<string | null>(null);
-  // While "Same stake each" / "Spread a total" sets every stake, lines show the amount instead of an input.
-  const [bulk, setBulk] = useState(false);
+  // Picks whose stake is being typed by hand; the rest show their amount as a chip.
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const keyRef = useRef<{ quoteId: string; key: string } | null>(null);
 
@@ -101,17 +46,18 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const possible = lines.reduce((s, l) => s + (l.stake ? potentialReturn(l.stake, l.odds) : 0), 0);
   const missing = lines.some((l) => !l.stake || l.stake <= 0);
   const over = staked > available;
-  const activeId = active && lines.some((l) => l.outcomeId === active) ? active : lines[lines.length - 1]?.outcomeId;
-
-  function preset(kind: "+100" | "25" | "50" | "all") {
-    if (!activeId) return;
-    const others = lines.filter((l) => l.outcomeId !== activeId).reduce((s, l) => s + (l.stake ?? 0), 0);
-    const room = Math.max(available - others, 0);
-    const current = lines.find((l) => l.outcomeId === activeId)?.stake ?? 0;
-    const next =
-      kind === "+100" ? Math.min(current + 100, room) : kind === "all" ? room : Math.floor((available * (kind === "25" ? 25 : 50)) / 100);
-    slip.setStake(activeId, next > 0 ? next : null);
+  // One row of amounts sets every pick at once (and becomes the stake new picks start with); "All" splits the balance.
+  function preset(amount: number | "all") {
+    setEditing(new Set());
+    if (amount === "all") {
+      const base = Math.floor(available / lines.length);
+      const extra = available % lines.length;
+      return slip.setAllStakes((_, i) => base + (i < extra ? 1 : 0) || null);
+    }
+    slip.setDefaultStake(amount);
+    slip.setAllStakes(() => amount);
   }
+  const uniform = lines.length > 0 && lines.every((l) => l.stake === lines[0].stake) ? lines[0].stake : null;
 
   async function requestQuote(): Promise<Quote> {
     return api<Quote>("/quotes", { method: "POST", json: { items: lines.map((l) => ({ outcome_id: l.outcomeId, stake_rc: l.stake })) } });
@@ -259,7 +205,6 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
     else out.push({ label: l.eventLabel, lines: [l] });
     return out;
   }, []);
-  const collapsed = bulk && lines.length > 1 && phase.kind === "edit";
 
   return (
     <div>
@@ -310,14 +255,15 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                 </div>
                 <div className="stake-row">
-                  {collapsed && !editing.has(l.outcomeId) ? (
+                  {!editing.has(l.outcomeId) ? (
                     <button
                       type="button"
                       className="stake-chip num"
+                      disabled={phase.kind !== "edit"}
                       onClick={() => setEditing((e) => new Set(e).add(l.outcomeId))}
-                      aria-label={`Stake ${l.stake ?? 0} RC on ${l.outcomeLabel}. Change`}
+                      aria-label={`Stake ${l.stake ?? 0} RC on ${l.outcomeLabel}. Enter a custom amount`}
                     >
-                      {l.stake ? `${rc(l.stake)} RC` : "No stake"} <span className="muted">· Change</span>
+                      {l.stake ? `${rc(l.stake)} RC` : "No stake"} <span className="muted">· Custom</span>
                     </button>
                   ) : (
                   <label className="stake-input">
@@ -327,9 +273,9 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                       inputMode="numeric"
                       pattern="[0-9]*"
                       placeholder="Stake"
+                      autoFocus
                       value={l.stake ?? ""}
                       disabled={phase.kind !== "edit"}
-                      onFocus={() => setActive(l.outcomeId)}
                       onChange={(e) => {
                         const digits = e.target.value.replace(/\D/g, "").slice(0, 12);
                         slip.setStake(l.outcomeId, digits ? Number(digits) : null);
@@ -353,23 +299,18 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
             </div>
           ))}
 
-          {phase.kind === "edit" && lines.length > 1 ? (
-            <StakeMode
-              count={lines.length}
-              available={available}
-              apply={slip.setAllStakes}
-              onActive={(on) => {
-                setBulk(on);
-                setEditing(new Set());
-              }}
-            />
-          ) : phase.kind === "edit" ? (
-            <div className="presets" role="group" aria-label="Stake shortcuts for the selected pick">
-              <button onClick={() => preset("+100")}>+100</button>
-              <button onClick={() => preset("25")}>25%</button>
-              <button onClick={() => preset("50")}>50%</button>
-              <button onClick={() => preset("all")}>All</button>
-            </div>
+          {phase.kind === "edit" ? (
+            <>
+              <div className="presets" role="group" aria-label={lines.length > 1 ? "Stake on every pick" : "Stake"} style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+                {STAKES.map((v) => (
+                  <button key={v} className="num" aria-pressed={uniform === v} onClick={() => preset(v)}>
+                    {rc(v)}
+                  </button>
+                ))}
+                <button onClick={() => preset("all")}>All</button>
+              </div>
+              {lines.length > 1 ? <div className="hint">Sets every pick · All splits your balance across them.</div> : null}
+            </>
           ) : null}
 
           <div className="totals num" aria-live="polite">
@@ -428,6 +369,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
           </div>
         </>
       )}
+      {phase.kind === "edit" ? <QuickToggle /> : null}
       <p className="fineprint">Play credits only · no cash value · odds lock when placed</p>
     </div>
   );
