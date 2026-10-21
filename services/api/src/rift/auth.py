@@ -12,8 +12,6 @@ from sqlalchemy.orm import Session as DbSession
 from rift import grants
 from rift.models import AuditEvent, Invite, Season, Session, User
 
-HANDLE_RE = re.compile(r"^[a-z0-9_]{2,20}$")
-
 
 class AuthError(Exception):
     def __init__(self, code: str, message: str):
@@ -33,18 +31,30 @@ def create_invite(db: DbSession, role: str = "PLAYER") -> str:
     return code
 
 
-def redeem_invite(db: DbSession, season: Season, code: str, handle: str, display_name: str,
-                  now: datetime, session_days: int) -> tuple[User, str]:
+def _free_handle(db: DbSession, name: str) -> str:
+    """An internal, unique handle made from the chosen name ("Andru Q" -> "andru_q", then "andru_q2", ...)."""
+    base = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:18] or "player"
+    base = base if len(base) >= 2 else f"{base}_p"
+    taken = set(db.execute(select(User.handle).where(User.handle.like(f"{base}%"))).scalars())
+    handle, n = base, 2
+    while handle in taken:
+        handle, n = f"{base}{n}", n + 1
+    return handle
+
+
+def redeem_invite(db: DbSession, season: Season, code: str, name: str, now: datetime,
+                  session_days: int) -> tuple[User, str]:
     invite = db.execute(select(Invite).where(Invite.code_hash == digest(code.strip())).with_for_update()
                         ).scalar_one_or_none()
     if invite is None or invite.used_by is not None:
         raise AuthError("INVITE_INVALID", "That invite link is invalid or has already been used.")
-    handle = handle.strip().lower()
-    if not HANDLE_RE.match(handle):
-        raise AuthError("HANDLE_INVALID", "Handles are 2–20 lowercase letters, numbers or underscores.")
-    if db.execute(select(User).where(User.handle == handle)).scalar_one_or_none():
-        raise AuthError("HANDLE_TAKEN", "That handle is taken.")
-    user = User(handle=handle, display_name=(display_name.strip() or handle)[:64], role=invite.role)
+    name = " ".join(name.split())
+    if not 2 <= len(name) <= 32:
+        raise AuthError("NAME_INVALID", "Names are 2–32 characters.")
+    if db.execute(select(User).where(User.display_name.ilike(name))).scalar_one_or_none():
+        raise AuthError("NAME_TAKEN", "Someone in the league already uses that name.")
+    handle = _free_handle(db, name)
+    user = User(handle=handle, display_name=name, role=invite.role)
     db.add(user)
     db.flush()
     invite.used_by, invite.used_at = user.id, now

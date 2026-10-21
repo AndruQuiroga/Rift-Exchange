@@ -38,6 +38,9 @@ def _wallet(session: Session, season_id: uuid.UUID, user_id: uuid.UUID) -> Walle
 
 
 def _check_open(session: Session, market: Market, outcome: Outcome, now: datetime) -> None:
+    if market.kind == "swiss_record":
+        raise PlacementError("USE_RECORD_CARD", "Swiss record calls are free: make them on the record card.",
+                             {"market_id": str(market.id)})
     if market.params.get("early"):
         from rift.props import early_window
 

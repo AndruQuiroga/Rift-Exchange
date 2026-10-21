@@ -8,9 +8,11 @@ from conftest import T0, make_market, outcome_id
 from sqlalchemy import select
 from test_money import balance, join, place
 
+from rift import swiss_card
 from rift.domain.money import partial_return, settlement_return
 from rift.markets import SWISS_CONSOLATION, swiss_record_outcomes
-from rift.models import Fixture, Market, Season, Selection, Team
+from rift.models import Fixture, Market, Outcome, Season, Selection, SwissCall, Team
+from rift.placement import PlacementError
 from rift.settlement import apply_grade, grade_market
 
 
@@ -56,15 +58,33 @@ def _finish_swiss(factory, world, results, start=0):
                           winner_team_id=world["team_a"] if won else opp.id))
 
 
-def test_exact_partial_and_lost_settle_once(factory, world):
+def _place_staked(factory, world, user, market_id, code, key):
+    """A staked record pick as placed before the free card existed (placement now refuses them)."""
+    with factory() as s, s.begin():
+        s.get(Market, market_id).kind = "swiss_record_legacy"
+    place(factory, world, user, [(outcome_id(factory, market_id, code), 100)], key)
+    with factory() as s, s.begin():
+        s.get(Market, market_id).kind = "swiss_record"
+
+
+def test_staked_record_picks_are_refused(factory, world):
     market_id = _swiss_world(factory, world)
     join(factory, world, "alice")
-    picks = [(outcome_id(factory, market_id, "3-1"), 100)]
-    place(factory, world, "alice", picks, "exact")
+    with pytest.raises(PlacementError) as e:
+        place(factory, world, "alice", [(outcome_id(factory, market_id, "3-1"), 100)], "k")
+    assert e.value.code == "USE_RECORD_CARD"
+
+
+def test_legacy_staked_picks_settle_once_after_lock(factory, world):
+    market_id = _swiss_world(factory, world)
+    join(factory, world, "alice")
+    _place_staked(factory, world, "alice", market_id, "3-1", "exact")
     join(factory, world, "bob")
-    place(factory, world, "bob", [(outcome_id(factory, market_id, "3-0"), 100)], "side")
+    _place_staked(factory, world, "bob", market_id, "3-0", "side")
     with factory() as s, s.begin():
         s.get(Market, market_id).state = "LOCKED"
+        # Once calls lock, conversion leaves staked picks to settle as bets.
+        assert swiss_card.convert_staked(s, s.get(Season, world["season"]), T0) == 0
 
     _finish_swiss(factory, world, [True, False])  # 1-1: still running
     with factory() as s, s.begin():
@@ -85,3 +105,77 @@ def test_exact_partial_and_lost_settle_once(factory, world):
     assert rows[world["bob"]].status == "PARTIAL" and rows[world["bob"]].return_rc == 63  # 100 x 2.50 x 0.25
     assert balance(factory, world, "alice") == (2000 - 100 + 300, 0)
     assert balance(factory, world, "bob") == (2000 - 100 + 63, 0)
+
+
+# ---------------------------------------------------------------- the free record card (D-020)
+
+
+def _season(s, world):
+    return s.get(Season, world["season"])
+
+
+def test_rewards_are_capped_and_right_side_is_a_quarter():
+    assert swiss_card.reward(Decimal("3.00"), "WON") == 300
+    assert swiss_card.reward(Decimal("2.50"), "PARTIAL") == 63  # 250 x 0.25 = 62.5 -> 63
+    assert swiss_card.reward(Decimal("14.00"), "WON") == 1000  # capped
+    assert swiss_card.reward(Decimal("14.00"), "PARTIAL") == 250  # a quarter of the capped reward
+    assert swiss_card.reward(Decimal("3.00"), "LOST") == swiss_card.reward(Decimal("3.00"), "VOID") == 0
+
+
+def test_calls_lock_the_price_respect_row_limits_and_lock_with_the_market(factory, world, monkeypatch):
+    market_id = _swiss_world(factory, world)
+    join(factory, world, "alice")
+    monkeypatch.setitem(swiss_card.SLOTS, "3-1", 1)
+    with factory() as s, s.begin():
+        season = _season(s, world)
+        call = swiss_card.set_call(s, season, world["alice"], market_id, outcome_id(factory, market_id, "3-1"), T0)
+        assert call.odds == Decimal("3.00")
+        # Changing the call replaces it rather than adding a second one.
+        swiss_card.set_call(s, season, world["alice"], market_id, outcome_id(factory, market_id, "3-0"), T0)
+        card = swiss_card.card(s, season, world["alice"], T0)
+        assert [c["record"] for c in card["calls"]] == ["3-0"] and card["calls"][0]["exact_rc"] == 250
+    with factory() as s, s.begin():
+        other = make_market(s, _season(s, world), None, "swiss_record", [("3-1", "3–1", "4.00")],
+                            params={"team": "t-b"}, scope="STAGE")
+        swiss_card.set_call(s, _season(s, world), world["alice"], market_id, outcome_id(factory, market_id, "3-1"),
+                            T0)
+        with pytest.raises(swiss_card.CardError) as e:  # the 3-1 row (one slot here) is full
+            swiss_card.set_call(s, _season(s, world), world["alice"], other.id,
+                                s.execute(select(Outcome.id).where(Outcome.market_id == other.id)).scalar_one(), T0)
+        assert e.value.code == "ROW_FULL"
+    with factory() as s, s.begin():
+        s.get(Market, market_id).state = "LOCKED"
+    with factory() as s, s.begin(), pytest.raises(swiss_card.CardError):
+        swiss_card.clear_call(s, _season(s, world), world["alice"], market_id, T0)
+
+
+def test_staked_picks_move_to_the_card_and_calls_pay_rewards(factory, world):
+    market_id = _swiss_world(factory, world)
+    join(factory, world, "alice")
+    _place_staked(factory, world, "alice", market_id, "3-1", "staked")
+    join(factory, world, "bob")
+    with factory() as s, s.begin():
+        swiss_card.set_call(s, _season(s, world), world["bob"], market_id, outcome_id(factory, market_id, "3-0"), T0)
+    assert balance(factory, world, "alice") == (1900, 0)
+
+    with factory() as s, s.begin():
+        assert swiss_card.convert_staked(s, _season(s, world), T0) == 1
+    with factory() as s, s.begin():
+        assert swiss_card.convert_staked(s, _season(s, world), T0) == 0  # idempotent
+    assert balance(factory, world, "alice") == (2000, 0)  # stake refunded
+    with factory() as s:
+        sel = s.execute(select(Selection)).scalar_one()
+        assert sel.status == "VOID" and swiss_card.moved_to_card(sel)
+        call = s.execute(select(SwissCall).where(SwissCall.user_id == world["alice"])).scalar_one()
+        assert call.odds == Decimal("3.00")  # carried over at the price it was placed at
+
+    with factory() as s, s.begin():
+        s.get(Market, market_id).state = "LOCKED"
+    _finish_swiss(factory, world, [True, False, True, True])  # 3-1
+    with factory() as s, s.begin():
+        assert apply_grade(s, market_id, grade_market(s, s.get(Market, market_id)), T0 + timedelta(days=5))
+    assert balance(factory, world, "alice") == (2000 + 300, 0)  # exact: 100 x 3.00
+    assert balance(factory, world, "bob") == (2000 + 63, 0)  # right side: a quarter of 250
+    with factory() as s:
+        assert s.execute(select(Selection)).scalar_one().return_rc == 100  # the refunded pick is left alone
+        assert {c.status for c in s.execute(select(SwissCall)).scalars()} == {"WON", "PARTIAL"}

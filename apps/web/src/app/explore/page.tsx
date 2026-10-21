@@ -79,8 +79,8 @@ function Explore() {
           {board.length ? (
             <Link className="banner" href="/swiss" style={{ marginTop: 14 }}>
               <span>
-                <span className="t" style={{ display: "block" }}>Swiss Board</span>
-                <span className="s">{board.some((m) => m.state === "OPEN") ? "Call each team's Swiss record" : "Locked · see your picks in My Picks"}</span>
+                <span className="t" style={{ display: "block" }}>Record calls</span>
+                <span className="s">{board.some((m) => m.state === "OPEN") ? "Free to play · call each team's Swiss record" : "Locked · see how your calls are doing"}</span>
               </span>
               <span className="go">Open →</span>
             </Link>

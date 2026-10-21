@@ -23,6 +23,8 @@
 | D-017 | Game winners come only from forced evidence: a series sweep, or the series-score change between two polls (the worker polls every minute during live series); otherwise Leaguepedia, otherwise HOLD | Build decision 2026-10-20 | The live-stats feed has no explicit per-game winner. |
 | D-018 | Futures: "advance from Swiss" closes at the first Swiss match (the opening betting phase); "Worlds champion" stays open, re-priced after every result, until quarterfinals start | Build decision 2026-10-20 | Matches D-010; accepted odds stay frozen. |
 | D-019 | Draft (champion picked) and game-1 total-kills markets open once ≥15 Worlds games have verified stats; priced from this tournament's pick rates / kill totals and labelled experimental | Build decision 2026-10-20 | Play-Ins supply the first 22 games. |
+| D-020 | Swiss record calls are a free card, not stakes: one call per team, rows capped 2/3/3/3/3/2, price locked when called; exact pays 100 RC x price (cap 1,000), right side a quarter, paid as REWARD ledger entries. Open staked record picks were refunded and carried onto the card | Owner decision 2026-10-21 | No stake decision; underdog calls still pay more. |
+| D-021 | Draft calls are only "picked by either team"; by-team, ban, first-pick and role markets are no longer created (earlier ones still settle) | Owner decision 2026-10-21 | One question per champion. |
 
 ## Chosen defaults, configurable (not yet separately confirmed)
 

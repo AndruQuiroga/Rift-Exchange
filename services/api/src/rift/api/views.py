@@ -20,6 +20,7 @@ from rift.models import (
     Outcome,
     Season,
     Selection,
+    SwissCall,
     Team,
     Ticket,
     User,
@@ -310,9 +311,11 @@ def wallet_summary(db: Session, wallet: Wallet) -> dict:
         Selection.user_id == wallet.user_id, Selection.status != "OPEN")).scalar()
     settled_return = db.execute(select(func.coalesce(func.sum(Selection.return_rc), 0)).where(
         Selection.user_id == wallet.user_id, Selection.status != "OPEN")).scalar()
+    rewards = db.execute(select(func.coalesce(func.sum(SwissCall.reward_rc), 0)).where(
+        SwissCall.user_id == wallet.user_id)).scalar()
     return {"available_rc": wallet.available_rc, "open_stake_rc": int(open_stake),
             "recovery_due_rc": wallet.recovery_due_rc, "granted_rc": granted,
-            "realized_net_rc": int(settled_return) - int(settled_stake)}
+            "realized_net_rc": int(settled_return) - int(settled_stake) + int(rewards)}
 
 
 def ledger_view(db: Session, wallet: Wallet, limit: int = 100) -> list[dict]:
@@ -326,6 +329,8 @@ def void_reason(s: Selection, m: Market, result: MarketResult | None) -> str | N
     """Why a pick was void, in a few plain words for My Picks."""
     if s.status != "VOID":
         return None
+    if m.kind == "swiss_record" and s.settled_revision == 0:
+        return "Moved to the free record card · stake refunded"
     if result is None or not result.void:  # the market settled, but this pick came in after the real cutoff
         return "Placed after first blood or 3:00" if (m.params or {}).get("early") else "Placed after the start"
     reason = result.reason or ""

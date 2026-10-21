@@ -10,7 +10,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from rift import ledger, props
+from rift import ledger, props, swiss_card
 from rift.champions import champion_key
 from rift.domain.money import settlement_return
 from rift.markets import SWISS_RECORDS, swiss_side
@@ -23,6 +23,7 @@ from rift.models import (
     Outcome,
     Selection,
     Settlement,
+    SwissCall,
     Team,
     Ticket,
     Wallet,
@@ -271,16 +272,17 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
     session.add(MarketResult(market_id=market.id, revision=revision, void=void, winning_codes=winning,
                              reason=grade.reason, evidence=grade.evidence))
     outcome_codes = {o.id: o.code for o in _market_outcomes(session, market)}
-    selections = list(session.execute(
+    selections = [s for s in session.execute(
         select(Selection).where(Selection.market_id == market.id).order_by(Selection.id).with_for_update()
-    ).scalars())
+    ).scalars() if not swiss_card.moved_to_card(s)]
+    callers = set(session.execute(select(SwissCall.user_id).where(SwissCall.market_id == market.id)).scalars())
     wallet_by_user = {
         w.user_id: w for w in session.execute(
             select(Wallet).where(Wallet.season_id == market.season_id,
-                                 Wallet.user_id.in_({s.user_id for s in selections}))
+                                 Wallet.user_id.in_({s.user_id for s in selections} | callers))
         ).scalars()
     }
-    locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if selections else {}
+    locked = ledger.lock_wallets(session, {w.id for w in wallet_by_user.values()}) if wallet_by_user else {}
     # A market's cutoff can be pulled back after the fact (a series or game that started before the poll
     # saw it, first blood inside the early-game window). A pick accepted after the real cutoff is void.
     accepted = dict(session.execute(select(Ticket.id, Ticket.accepted_at).where(
@@ -310,6 +312,10 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         sel.status, sel.return_rc, sel.settled_revision, sel.settled_at = result, new_return, revision, now
         session.add(OutboxEvent(type="selection.settled", entity_id=str(sel.id), user_id=sel.user_id,
                                 payload={"result": result, "revision": revision}))
+
+    if callers:
+        swiss_card.settle_calls(session, market, revision, winning, partial, void,
+                                {u: locked[w.id] for u, w in wallet_by_user.items()}, now)
 
     market.result_revision = revision
     market.state = "VOID" if void else "SETTLED"

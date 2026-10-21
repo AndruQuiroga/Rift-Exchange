@@ -64,7 +64,7 @@ export default function TodayPage() {
         <Link className="banner section" href="/swiss" style={{ marginTop: 14 }}>
           <span>
             <span className="t" style={{ display: "block" }}>Record calls are open</span>
-            <span className="s">Call each team&apos;s record{boardLock ? ` · locks in ${boardLock}` : ""}</span>
+            <span className="s">Free to play · call each team&apos;s Swiss record{boardLock ? ` · locks in ${boardLock}` : ""}</span>
           </span>
           <span className="go">Open →</span>
         </Link>

@@ -16,7 +16,6 @@ export default function JoinPage() {
 function Join() {
   const params = useSearchParams();
   const [code, setCode] = useState(params.get("code") ?? "");
-  const [handle, setHandle] = useState("");
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +25,7 @@ function Join() {
     setBusy(true);
     setError(null);
     try {
-      await api("/auth/redeem", { method: "POST", json: { code, handle, display_name: name } });
+      await api("/auth/redeem", { method: "POST", json: { code, name } });
       location.href = "/";
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Something went wrong.");
@@ -43,7 +42,8 @@ function Join() {
         </h1>
         <ul className="muted" style={{ marginTop: 14, paddingLeft: 18, display: "grid", gap: 6, fontSize: 15 }}>
           <li>Start with 1,000 RC, plus 1,000 RC every Worlds match day.</li>
-          <li>Back match winners, scores, drafts and futures. Odds include your stake.</li>
+          <li>Back match winners, scores and drafts. Odds include your stake.</li>
+          <li>Call every team&apos;s Swiss record for free, for RC rewards.</li>
           <li>Play credits only: nothing to buy, nothing to cash out. Bragging rights only.</li>
         </ul>
         <form onSubmit={submit}>
@@ -54,21 +54,17 @@ function Join() {
             </div>
           ) : null}
           <div className="field">
-            <label htmlFor="handle">Handle</label>
+            <label htmlFor="name">Your name</label>
             <input
-              id="handle"
-              value={handle}
-              onChange={(e) => setHandle(e.target.value.toLowerCase())}
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
               required
-              pattern="[a-z0-9_]{2,20}"
-              autoComplete="username"
-              autoCapitalize="none"
+              minLength={2}
+              maxLength={32}
+              autoComplete="nickname"
+              placeholder="What friends see"
             />
-            <span className="hint">2–20 lowercase letters, numbers or underscores.</span>
-          </div>
-          <div className="field">
-            <label htmlFor="name">Display name</label>
-            <input id="name" value={name} onChange={(e) => setName(e.target.value)} maxLength={64} placeholder="What friends see" />
           </div>
           {error ? (
             <div className="notice error" role="alert" style={{ marginTop: 16 }}>
