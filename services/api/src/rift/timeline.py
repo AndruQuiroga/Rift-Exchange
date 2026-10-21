@@ -28,6 +28,7 @@ REQUEST_BUDGET = 25  # feed requests per game per worker cycle, so a scan never 
 AT_15 = timedelta(minutes=15)
 FIRSTS = {"blood": "kills", "tower": "towers", "dragon": "dragons", "baron": "barons", "inhibitor": "inhibitors"}
 EVERY = ("dragons", "barons")  # every occurrence is kept; other counters only matter the first time
+RACE_KILLS = 5  # kills are kept up to the fifth, for "first to 5 kills"
 
 
 def _iso(t: datetime) -> str:
@@ -61,7 +62,7 @@ def observe(frames: list[Frame], state: dict, refine: list | None = None) -> Non
                 value, seen = team.count(metric), prev[side][metric]
                 for n in range(seen + 1, value + 1):
                     key = _key(metric, side, n)
-                    if (metric in EVERY or n == 1) and key not in events:
+                    if (metric in EVERY or n == 1 or (metric == "kills" and n <= RACE_KILLS)) and key not in events:
                         events[key] = {"at": _iso(f.at),
                                        "type": team.dragons[n - 1] if metric == "dragons" else None}
                         if gap and refine is not None:
@@ -97,6 +98,14 @@ def summarise(events: dict, team_ids: dict, t0: datetime, complete: bool) -> dic
         firsts[name] = entry(None if tied else side, ev)
         if metric == "dragons":
             firsts[name]["type"] = None if tied else ev["type"]
+    # First to five kills: the side whose fifth kill shows first (null if both in the same frame, or nobody).
+    race = sorted(((parse_time(ev["at"]), side, ev) for side in SIDES
+                   if (ev := events.get(_key("kills", side, RACE_KILLS)))), key=lambda row: row[:2])
+    if race:
+        tied = len(race) > 1 and race[1][0] == race[0][0]
+        firsts["five_kills"] = entry(None if tied else race[0][1], race[0][2])
+    elif complete:
+        firsts["five_kills"] = None
     dragons, barons = [], []
     for key, ev in events.items():
         metric, side, _n = key.split(":")

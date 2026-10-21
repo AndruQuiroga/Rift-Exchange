@@ -68,6 +68,8 @@ class Worker:
             self._run("futures", self._price_futures)
         if self._due("lineups", timedelta(minutes=10)):
             self._run("lineups", lambda s, now: ingest.sync_lineups(s, self._season(s), self.client, now))
+        self._run("early_teams", lambda s, now: props.open_early_team_markets(
+            s, self._season(s), self.settings, self._model(s)[0], now))
         self._run("early", lambda s, now: props.tighten_early(s, now))
         self._run("lock", lambda s, now: markets.lock_due(s, now))
         self._run("card", lambda s, now: swiss_card.convert_staked(s, self._season(s), now))
@@ -99,7 +101,7 @@ class Worker:
             )).scalar())
 
     def poll_interval(self) -> float:
-        """5 s during a game's first minutes (first blood closes early-game picks), 15 s around live series,
+        """5 s during a game's first minutes (early-game picks close at 3:00), 15 s around live series,
         60 s otherwise."""
         if self.early_window_open():
             return self.settings.early_poll_seconds
@@ -142,6 +144,8 @@ class Worker:
 
     def _price_markets(self, s: Session, now: datetime) -> int:
         season = self._season(s)
+        for kind in (*props.RETIRED_OBJECTIVES, "total_games"):  # D-023/D-024: placed picks still settle
+            markets.retire_kind(s, kind, "No longer offered")
         model, confidence = self._model(s)
         stats = markets.tournament_stats(s, season)
         count = 0

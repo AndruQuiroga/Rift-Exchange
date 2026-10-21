@@ -34,11 +34,28 @@ STATS = {
     "kills": ("More kills", True),
     "cs15": ("More CS at 15:00", True),
     "damage": ("Higher damage share", False),
+    "gold15": ("More gold at 15:00", True),
 }
+# Duels offered for new games (D-025): gold at 15:00 only. Kills, CS and damage duels already placed still
+# settle as before.
+OFFERED_STATS = ("gold15",)
+# A lead smaller than this is a tie, and ties void.
+TIE_MARGIN = {"gold15": 700}
+TEAM_GOLD_TIE = 700  # the team gold lead at 15:00 uses the same tie band
 SHRINK_GAMES = 3  # pseudo-games of the role average added to each player's own record
 OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul")
-KINDS = (*OBJECTIVE_KINDS, "lane_duel")
+# Team races in the early window (D-025): open from game load to 3:00, settled from the timeline.
+EARLY_TEAM_KINDS = ("five_kills", "gold_lead_15", "first_dragon")
+# Offered for new games (D-023). First dragon element and dragon soul are no longer offered; existing ones
+# still lock and settle from the timeline like the rest.
+OFFERED_OBJECTIVES = ("first_blood", "first_tower", "baron_before")
+RETIRED_OBJECTIVES = tuple(k for k in OBJECTIVE_KINDS if k not in OFFERED_OBJECTIVES)
+KINDS = (*OBJECTIVE_KINDS, *EARLY_TEAM_KINDS, "lane_duel")
 LINES = [x + 0.5 for x in range(14, 45)]
+# Kill lines stay clear of what the first three minutes have already settled: at least 5 kills above the
+# game's kill count so far (D-024).
+KILL_LINE_FLOOR = LINES[0]
+KILL_LINE_MARGIN = 5
 
 
 class PropsError(Exception):
@@ -82,8 +99,25 @@ def player_lines(game: Game) -> dict[str, dict]:
         out[str(p.get("player_id") or p.get("name"))] = {
             "role": p.get("role"), "name": p.get("name"), "team_id": str(team_of.get(p.get("side")) or ""),
             "kills": final.get("kills"), "cs15": (at15.get(pid) or {}).get("cs"), "damage": final.get("damage_share"),
+            "gold15": (at15.get(pid) or {}).get("gold"),
         }
     return out
+
+
+def gold15_lead(game: Game) -> tuple[str | None, int] | None:
+    """(team_id ahead at 15:00, gold gap), team_id None on a dead heat; None without a 15:00 frame."""
+    tl = game.timeline or {}
+    at15 = ((tl.get("at_15") or {}).get("players")) or {}
+    team_of = {"blue": game.blue_team_id, "red": game.red_team_id}
+    gold = Counter()
+    for pid, p in (tl.get("participants") or {}).items():
+        if (at15.get(pid) or {}).get("gold") is None:
+            return None
+        gold[str(team_of.get(p.get("side")) or "")] += at15[pid]["gold"]
+    if len(gold) != 2:
+        return None
+    (lead, g1), (_, g2) = gold.most_common(2)
+    return (None if g1 == g2 else lead), g1 - g2
 
 
 def timeline_data(session: Session, season: Season) -> TimelineData:
@@ -93,11 +127,15 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
         tl = g.timeline or {}
         firsts = tl.get("firsts") or {}
         data.games += 1
-        for what in ("blood", "tower"):
+        for what in ("blood", "tower", "dragon", "five_kills"):
             first = firsts.get(what)
-            if first and g.winner_team_id is not None:
+            if first and first.get("team_id") and g.winner_team_id is not None:
                 took[(what, "n")] += 1
                 took[(what, "w")] += int(first.get("team_id") == str(g.winner_team_id))
+        lead = gold15_lead(g)
+        if lead and lead[0] and lead[1] >= TEAM_GOLD_TIE and g.winner_team_id is not None:
+            took[("gold15", "n")] += 1
+            took[("gold15", "w")] += int(lead[0] == str(g.winner_team_id))
         if firsts.get("dragon"):
             data.first_dragon[firsts["dragon"].get("type")] += 1
         data.soul[tl.get("soul") or "none"] += 1
@@ -113,7 +151,7 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
                 data.role.setdefault(line["role"], defaultdict(list))[stat].append(float(line[stat]))
                 if champions.get(pid):
                     data.champion_samples.append((line["role"], champions[pid], stat, float(line[stat]), 1.0))
-    for what in ("blood", "tower"):
+    for what in ("blood", "tower", "dragon", "five_kills", "gold15"):
         n = took[(what, "n")]
         # Shrink toward a coin flip; first objectives only lean slightly toward the eventual winner.
         data.winner_took_first[what] = (took[(what, "w")] + 5) / (n + 10)
@@ -134,11 +172,6 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
 # ------------------------------------------------------------------ objectives (open with each game)
 
 
-def _smoothed(counts: Counter, keys) -> dict[str, float]:
-    total = sum(counts[k] for k in keys) + len(keys)
-    return {k: (counts[k] + 1) / total for k in keys}
-
-
 def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data: TimelineData,
                     close_at: datetime, when: str) -> list[MarketSpec]:
     if data.games < MIN_DRAFT_GAMES:
@@ -153,12 +186,6 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
             f"Team that gets {title.lower()} in Game {idx}. {when} {void}",
             close_at, "timeline_rates_v1", "EXPERIMENTAL",
             [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)], {"game_index": idx}))
-    dragon = _smoothed(data.first_dragon, DRAGONS)
-    specs.append(MarketSpec(
-        f"first_dragon_type:{key}:{idx}", "first_dragon_type", "GAME", "OBJECTIVES", f"Game {idx} first dragon",
-        f"Element of the first dragon taken in Game {idx}, by either team. Void if no dragon is taken. {when} {void}",
-        close_at, "timeline_rates_v1", "EXPERIMENTAL",
-        [OutcomeSpec(t, t.capitalize(), dragon[t]) for t in DRAGONS], {"game_index": idx}))
     early = (data.early_baron + 1) / (data.games + 2)
     specs.append(MarketSpec(
         f"baron_before:{key}:{idx}", "baron_before", "GAME", "OBJECTIVES", f"Game {idx} Baron before 25:00",
@@ -166,13 +193,35 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
         f"later or never. {when} {void}",
         close_at, "timeline_rates_v1", "EXPERIMENTAL",
         [OutcomeSpec("YES", "Yes", early), OutcomeSpec("NO", "No", 1 - early)], {"game_index": idx}))
-    soul = _smoothed(data.soul, (*DRAGONS, "none"))
-    specs.append(MarketSpec(
-        f"dragon_soul:{key}:{idx}", "dragon_soul", "GAME", "OBJECTIVES", f"Game {idx} dragon soul",
-        f"Element of the dragon soul claimed in Game {idx}, or No soul if nobody claims one. {when} {void}",
-        close_at, "timeline_rates_v1", "EXPERIMENTAL",
-        [OutcomeSpec(t.upper() if t == "none" else t, "No soul" if t == "none" else t.capitalize(), soul[t])
-         for t in (*DRAGONS, "none")], {"game_index": idx}))
+    return specs
+
+
+def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data: TimelineData,
+                     close_at: datetime) -> list[MarketSpec]:
+    """First to 5 kills, gold lead at 15:00 and first dragon for a loaded game: one row each, A or B."""
+    if data.games < MIN_DRAFT_GAMES:
+        return []
+    key = fixture.provider_id
+    open_note = "Open from game load until 3:00 of game time; a pick accepted after that is void."
+    rows = (
+        ("five_kills", "five_kills", "First to 5 kills",
+         "Team that reaches 5 kills first. Void if neither does, or both in the same moment."),
+        ("gold_lead_15", "gold15", "Gold lead at 15:00",
+         ("Team with more total gold at 15:00 of game time. A gap under 700 gold is a tie and void, as is a game "
+         "that ends before 15:00.")),
+        ("first_dragon", "dragon", "First dragon",
+         "Team that takes the first dragon, any element. Void if no dragon is taken."),
+    )
+    specs = []
+    for kind, what, title, rules in rows:
+        w = data.winner_took_first.get(what, 0.5)
+        p = q * w + (1 - q) * (1 - w)
+        specs.append(MarketSpec(
+            f"{kind}:{key}:{idx}", kind, "GAME", "OBJECTIVES", f"Game {idx} {title.lower()}",
+            f"{rules} {open_note} Settles from the game's live data; void if Game {idx} is not played.",
+            close_at, "timeline_rates_v1", "EXPERIMENTAL",
+            [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)],
+            {"game_index": idx, "early": True}))
     return specs
 
 
@@ -249,22 +298,21 @@ def duel_probability(data: TimelineData, a: dict, b: dict, role: str, stat: str)
     def cdf(x: float) -> float:
         return 0.5 * (1 + math.erf((x - mu) / (sd * math.sqrt(2))))
 
-    if STATS[stat][1]:  # whole numbers: a difference within half a unit is a tie, and ties void
-        win, lose = 1 - cdf(0.5), cdf(-0.5)
-    else:
-        win, lose = 1 - cdf(0.0), cdf(0.0)
+    # A difference inside the tie band voids: whole numbers within half a unit, gold within 700.
+    band = TIE_MARGIN.get(stat, 0.5 if STATS[stat][1] else 0.0)
+    win, lose = 1 - cdf(band), cdf(-band)
     return win / (win + lose) if win + lose > 1e-9 else 0.5
 
 
 # ------------------------------------------------------------------ early-game window
 #
 # Duels and kill lines need the champions, which only exist once the game loads (the feed has no live
-# champion select). They open on the game's first livestats frame and close at 3:00 of game time, or at
-# the first kill if that comes sooner. Times are the feed's own frame timestamps, so a pick accepted after
-# the real cutoff is voided at settlement even though the worker only notices the kill on its next poll.
+# champion select). They open on the game's first livestats frame and close at 3:00 of game time; an early
+# kill no longer closes them (D-024). Times are the feed's own frame timestamps, so a pick accepted after
+# the real cutoff is voided at settlement.
 
 EARLY_WINDOW = timedelta(minutes=3)
-EARLY_KINDS = ("lane_duel", "total_kills_game")
+EARLY_KINDS = ("lane_duel", "total_kills_game", *EARLY_TEAM_KINDS)
 
 
 @dataclass
@@ -277,14 +325,10 @@ class EarlyWindow:
 
 
 def early_cutoff(game: Game) -> datetime | None:
-    """3:00 of game time, or the first kill if earlier, as wall time from the feed's frames."""
+    """3:00 of game time, as wall time from the feed's frames."""
     if game.started_at is None:
         return None
-    cutoff = game.started_at + EARLY_WINDOW
-    blood = ((game.timeline or {}).get("firsts") or {}).get("blood")
-    if blood:
-        cutoff = min(cutoff, game.started_at + timedelta(seconds=blood["at_s"]))
-    return cutoff
+    return game.started_at + EARLY_WINDOW
 
 
 def early_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
@@ -339,12 +383,12 @@ def duels(session: Session, season: Season, fixture: Fixture, game_index: int, s
             if not a or not b:
                 continue
             odds = {}
-            for stat in STATS:
+            for stat in OFFERED_STATS:
                 p = duel_probability(data, a, b, role, stat) if data is not None else None
                 odds[stat] = {"A": _px(p, settings), "B": _px(1 - p, settings) if p is not None else None}
             rows.append({"role": role, "a": a, "b": b, "odds": odds})
     return {"game_index": game_index, **_window_view(w),
-            "stats": [{"id": k, "label": v[0]} for k, v in STATS.items()], "duels": rows}
+            "stats": [{"id": k, "label": STATS[k][0]} for k in OFFERED_STATS], "duels": rows}
 
 
 def _px(p: float | None, settings: Settings) -> str | None:
@@ -358,13 +402,13 @@ def _open_early(session: Session, fixture: Fixture, game_index: int, now: dateti
     w = early_window(session, fixture, game_index, now)
     if not w.open:
         raise PropsError("NOT_OPEN", f"Game {game_index} early-game picks open when the game loads and close at "
-                         "3:00 or first blood.")
+                         "3:00.")
     return w
 
 
 def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: int, role: str, stat: str,
                 settings: Settings, now: datetime) -> Market:
-    if role not in ROLES or stat not in STATS:
+    if role not in ROLES or stat not in OFFERED_STATS:
         raise PropsError("BAD_DUEL", "Unknown role or stat.")
     w = _open_early(session, fixture, game_index, now)
     lineup = game_lineup(w.game, fixture)
@@ -376,12 +420,13 @@ def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: 
         raise PropsError("NOT_OFFERED", "Not enough data to price this duel yet.")
     label = STATS[stat][0]
     who_a, who_b = f"{a['name']} ({a['champion']})", f"{b['name']} ({b['champion']})"
-    cs_note = ", as is a game that ends before 15:00" if stat == "cs15" else ""
+    tie_note = (f"A gap under {TIE_MARGIN[stat]:,} gold is a tie" if stat in TIE_MARGIN else "An exact tie is")
+    at15_note = ", as is a game that ends before 15:00" if stat in ("cs15", "gold15") else ""
     spec = MarketSpec(
         f"lane_duel:{fixture.provider_id}:{game_index}:{role}:{stat}:{a['player_id']}:{b['player_id']}",
         "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role}: {a['name']} vs {b['name']}",
-        f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00 or first blood; a pick "
-        f"accepted after that is void. An exact tie is void{cs_note}. Settles from the game's live data.",
+        f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00; a pick "
+        f"accepted after that is void. {tie_note} void{at15_note}. Settles from the game's live data.",
         w.close_at, "player_champion_normal_v1", "EXPERIMENTAL",
         [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
         {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"],
@@ -403,11 +448,18 @@ def _kill_dist(stats: TournamentStats) -> tuple[float, float] | None:
     return mean, var
 
 
-def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings) -> list[dict]:
+def kill_line_floor(game: Game | None) -> float:
+    """The lowest kill line offered right now: at least 5 above the kills already scored."""
+    from rift.api.views import game_kills
+
+    return max(KILL_LINE_FLOOR, (game_kills(game) or 0) + KILL_LINE_MARGIN + 0.5)
+
+
+def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings, floor: float = KILL_LINE_FLOOR) -> list[dict]:
     rows = []
     if dist is None:
         return rows
-    for line in LINES:
+    for line in (x for x in LINES if x >= floor):
         under = _nb_cdf(int(line), *dist)
         over_px, under_px = _px(1 - under, settings), _px(under, settings)
         if over_px and under_px:
@@ -422,7 +474,7 @@ def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: Tourn
     return {"game_index": game_index, **_window_view(w),
             "champions": game_lineup(w.game, fixture) if w.game else {},
             "typical": str(math.floor(dist[0]) + 0.5) if dist else None,
-            "lines": _kill_line_rows(dist, settings) if w.open else []}
+            "lines": _kill_line_rows(dist, settings, kill_line_floor(w.game)) if w.open else []}
 
 
 def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_index: int, line: str,
@@ -430,6 +482,8 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
     if float(line) not in LINES:
         raise PropsError("BAD_LINE", "Lines run from 14.5 to 44.5 kills.")
     w = _open_early(session, fixture, game_index, now)
+    if float(line) < (floor := kill_line_floor(w.game)):
+        raise PropsError("BAD_LINE", f"Kill lines start at {floor} right now.")
     dist = _kill_dist(stats)
     if dist is None:
         raise PropsError("NOT_OFFERED", "Not enough games yet to price kill lines.")
@@ -441,7 +495,7 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
         f"total_kills_game:{fixture.provider_id}:{game_index}:{line}", "total_kills_game", "GAME", "PROPS",
         f"Game {game_index} total kills {line}",
         f"Combined kills by both teams in Game {game_index}. Over means {int(float(line)) + 1} or more. Open from "
-        "game start until 3:00 or first blood; a pick accepted after that is void. Requires verified final game "
+        "game start until 3:00; a pick accepted after that is void. Requires verified final game "
         f"stats; void if Game {game_index} is not played.",
         w.close_at, "negbin_early_v1", "EXPERIMENTAL",
         [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
@@ -453,7 +507,7 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
 
 
 def tighten_early(session: Session, now: datetime) -> int:
-    """Pull each open early-game market's cutoff to first blood once the timeline records it."""
+    """Pull each open early-game market's cutoff in line with 3:00 of the game's recorded start."""
     rows = session.execute(select(Market).where(Market.kind.in_(EARLY_KINDS), Market.state == "OPEN",
                                                 Market.fixture_id.is_not(None)).with_for_update()).scalars().all()
     changed = 0
@@ -491,8 +545,17 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
     side_code = {str(fixture.team_a_id): "A", str(fixture.team_b_id): "B"}
     kind = market.kind
 
-    if kind in ("first_blood", "first_tower"):
-        first = firsts.get("blood" if kind == "first_blood" else "tower")
+    if kind == "gold_lead_15":
+        lead = gold15_lead(game)
+        if lead is None:
+            return Grade("VOID", reason="No 15:00 gold (the game ended before 15:00)", evidence=ev)
+        code = side_code.get(lead[0] or "")
+        if code is None or lead[1] < TEAM_GOLD_TIE:
+            return Grade("VOID", reason=f"Within {TEAM_GOLD_TIE:,} gold at 15:00 (void rule)", evidence={**ev, "gap": lead[1]})
+        return Grade("RESULT", [code], "Gold lead at 15:00 confirmed", {**ev, "gap": lead[1]})
+    if kind in ("first_blood", "first_tower", "first_dragon", "five_kills"):
+        first = firsts.get({"first_blood": "blood", "first_tower": "tower", "first_dragon": "dragon",
+                            "five_kills": "five_kills"}[kind])
         code = side_code.get((first or {}).get("team_id") or "")
         if code is None:
             return Grade("VOID", reason="No verified first for this game", evidence=ev)
@@ -521,7 +584,26 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
         va, vb = a[stat], b[stat]
         if va is None or vb is None:
             return Grade("VOID", reason="Stat not available for this game (e.g. it ended before 15:00)", evidence=ev)
-        if va == vb:
-            return Grade("VOID", reason="Exact tie (void rule)", evidence={**ev, "values": [va, vb]})
+        if abs(va - vb) < TIE_MARGIN.get(stat, 1e-9):
+            reason = f"Within {TIE_MARGIN[stat]:,} gold (void rule)" if stat in TIE_MARGIN else "Exact tie (void rule)"
+            return Grade("VOID", reason=reason, evidence={**ev, "values": [va, vb]})
         return Grade("RESULT", ["A" if va > vb else "B"], "Player stats confirmed", {**ev, "values": [va, vb]})
     return Grade("HOLD", reason=f"No grader for {kind}")
+
+
+def open_early_team_markets(session: Session, season: Season, settings: Settings, model, now: datetime) -> int:
+    """Open (and keep open until 3:00) the team races for every live game whose early window is open."""
+    fixtures = session.execute(select(Fixture).where(
+        Fixture.season_id == season.id, Fixture.status == "LIVE",
+        Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
+    data, count = None, 0
+    for f in fixtures:
+        for g in session.execute(select(Game).where(Game.fixture_id == f.id)).scalars():
+            w = early_state(f, g, g.game_index, now)
+            if not w.open:
+                continue
+            data = data or timeline_data(session, season)
+            a, b = session.get(Team, f.team_a_id), session.get(Team, f.team_b_id)
+            for spec in early_team_specs(f, g.game_index, a, b, model.game_probability(a.id, b.id), data, w.close_at):
+                count += int(upsert_market(session, season, f, spec, settings, now) is not None)
+    return count

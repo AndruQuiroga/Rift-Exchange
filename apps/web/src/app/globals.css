@@ -144,7 +144,7 @@ img { display: block; }
 .page-head p { margin-top: 6px; color: var(--muted); font-size: 15px; }
 .section { margin-top: var(--s5); }
 .section-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); margin-bottom: var(--s3); }
-.section-head h2 { font-size: 19px; font-weight: 700; }
+.section-head h2 { font-size: 19px; font-weight: 700; white-space: nowrap; }
 .section-head a, .link { color: var(--info); font-weight: 600; font-size: 14px; }
 
 /* ------------------------------------------------------------------ wallet strip */
@@ -637,29 +637,8 @@ img { display: block; }
 }
 .toast .link { white-space: nowrap; font-weight: 700; }
 
-/* ------------------------------------------------------------------ match page: quick calls and the picks sheet */
+/* ------------------------------------------------------------------ the picks sheet (all champions) */
 
-.quickcalls { display: grid; gap: var(--s2); margin-top: var(--s2); }
-.fcard {
-  display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: 56px; padding: 8px 12px; text-align: left;
-  border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider);
-}
-.fcard:hover:not(:disabled):not(.static) { border-color: var(--divider-strong); background: var(--surface-2); }
-.fcard .q { flex: 1; min-width: 0; }
-.fcard .t { display: block; font-weight: 700; font-size: 15px; }
-.fcard .s { display: block; font-size: 12px; color: var(--muted); }
-.fcard .px { font-weight: 800; font-size: 15px; white-space: nowrap; }
-.fcard .opts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.fcard[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.fcard[aria-pressed="true"] .s { color: #3a4510; }
-.morebtn {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); width: 100%; min-height: 56px; margin-top: var(--s2);
-  padding: 10px 14px; text-align: left; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider);
-}
-.morebtn:hover { border-color: var(--divider-strong); }
-.morebtn .t { display: block; font-weight: 700; }
-.morebtn .s { display: block; font-size: 13px; color: var(--muted); margin-top: 2px; }
-.morebtn .chev { color: var(--accent); font-weight: 800; font-size: 20px; }
 .picksheet-layer { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: center; }
 .picksheet { max-width: 720px; min-height: 60dvh; }
 .picksheet .segmented { margin-bottom: var(--s2); }
@@ -671,13 +650,31 @@ img { display: block; }
 /* ------------------------------------------------------------------ Swiss board (Today, during the Swiss stage) */
 
 .recrow.full { border-color: var(--divider-strong); }
+/* Phones: one active round in the middle, its neighbours peeking in, swipe or tap to move. */
 .swiss-board {
-  display: grid; grid-auto-flow: column; grid-auto-columns: 184px; gap: var(--s3); overflow-x: auto;
-  scroll-snap-type: x proximity; padding-bottom: var(--s2); margin: 0 calc(-1 * var(--s4)); padding-inline: var(--s4);
-  scroll-padding-inline: var(--s4);
+  display: grid; grid-auto-flow: column; grid-auto-columns: 78%; gap: var(--s3); overflow-x: auto; overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory; scrollbar-width: none; padding: 0 11% var(--s2); margin: 0 calc(-1 * var(--s4));
 }
-@media (min-width: 1024px) { .swiss-board { margin: 0; padding-inline: 0; scroll-padding-inline: 0; } }
-.sb-col { scroll-snap-align: start; display: grid; grid-template-rows: auto 1fr; gap: var(--s2); min-width: 0; }
+.swiss-board::-webkit-scrollbar { display: none; }
+.sb-col { scroll-snap-align: center; display: grid; grid-template-rows: auto 1fr; gap: var(--s2); min-width: 0; transition: opacity 160ms ease; }
+.swiss-board:has(.sb-col.active) .sb-col:not(.active) { opacity: 0.45; }
+/* Wider screens: fixed columns; when they all fit, the whole board shows and the round bar hides. */
+@media (min-width: 640px) {
+  .swiss-board { grid-auto-columns: 196px; padding: 0 0 var(--s2); margin: 0; scroll-snap-type: x proximity; }
+  .sb-col { scroll-snap-align: start; }
+  .swiss-board:has(.sb-col.active) .sb-col:not(.active) { opacity: 1; }
+}
+@media (min-width: 1280px) {
+  .main-inner:has(.swiss-board) { max-width: 1120px; }
+  .swiss-board { grid-auto-columns: minmax(148px, 1fr); }
+}
+.sb-nav { display: flex; align-items: center; gap: var(--s2); margin-bottom: var(--s2); }
+.sb-nav .icon-btn { flex: none; font-size: 22px; font-weight: 800; color: var(--text); background: var(--surface); border: 1px solid var(--divider); }
+.sb-nav .icon-btn:disabled { opacity: 0.35; }
+.sb-tabs { flex: 1; display: flex; justify-content: space-between; gap: 2px; min-width: 0; }
+.sb-tabs button { position: relative; flex: 1; min-height: 44px; border-radius: var(--radius-control); font-size: 13px; font-weight: 700; color: var(--muted); }
+.sb-tabs button[aria-current="step"] { color: var(--text); background: var(--surface-3); box-shadow: inset 0 -2px 0 var(--accent); }
+.sb-tabs .dot { position: absolute; top: 8px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .sb-col-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 2px; }
 .sb-col-head .display { font-size: 16px; font-weight: 800; text-transform: uppercase; }
 .sb-col-head .now { font-size: 12px; font-weight: 800; color: var(--accent); }
@@ -712,3 +709,106 @@ button.sb-side:hover { background: var(--surface-2); }
 button.sb-side[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
 .sb-foot { display: flex; justify-content: space-between; padding: 4px 8px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--divider); background: var(--shell); }
 .sb-foot span:last-child { color: var(--info); font-weight: 700; }
+
+/* ------------------------------------------------------------------ match page, head to head */
+
+.mp-top { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; }
+.mp-section { margin-top: var(--s5); display: grid; gap: var(--s2); }
+.mp-section.first { margin-top: var(--s3); }
+.mp-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s3); }
+.mp-head h2 { font-size: 18px; font-weight: 800; }
+.mp-head .muted { font-size: 12px; }
+.mp-locked { display: grid; gap: 8px; justify-items: start; padding: 14px; border-radius: var(--radius-card); border: 1px dashed var(--divider-strong); color: var(--muted); font-size: 14px; line-height: 1.45; }
+.mp-locked .t { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-weight: 700; }
+
+/* One price button everywhere: idle, in the slip (filled + check), placed (outlined + tag), closed (lock). */
+.pk {
+  position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 6px 10px;
+  border-radius: 10px; background: var(--surface); border: 1px solid var(--divider); color: var(--text); font-weight: 800;
+}
+.pk:hover:not(:disabled) { border-color: var(--divider-strong); background: var(--surface-2); }
+.pk .pk-px { display: inline-flex; align-items: center; gap: 5px; font-size: 15px; }
+.pk[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pk.held:not([aria-pressed="true"]) { border: 1.5px solid var(--win); }
+.pk:disabled { background: var(--canvas); color: var(--subtle); border-style: dashed; }
+.pk.won { border-color: var(--win); color: var(--win); }
+.pk.empty { visibility: hidden; }
+.pk-tag {
+  position: absolute; top: -8px; right: 8px; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.04em; text-transform: uppercase; background: var(--win); color: var(--accent-ink);
+}
+.pk-note { font-size: 12px; color: var(--muted); padding: 0 2px; }
+.pk-note b { color: var(--text); }
+.pk-note.placed { color: var(--win); }
+
+/* Winner: two big cards, each team one tap target. */
+.win-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s2); }
+.pk.win-card { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 6px; min-height: 0; padding: 14px; border-radius: 12px; text-align: left; }
+.pk.win-card.right { align-items: flex-end; text-align: right; }
+.win-card .win-code { font-family: var(--font-display); font-size: 30px; font-weight: 800; line-height: 1; margin-top: 4px; }
+.win-card .win-name { font-size: 12px; font-weight: 600; color: var(--muted); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.win-card[aria-pressed="true"] .win-name { color: #3a4510; }
+.win-card .pk-px { font-size: 22px; }
+.win-card .pk-tag { top: 10px; right: auto; left: 64px; }
+.win-card.right .pk-tag { left: auto; right: 64px; }
+
+/* Rows: the first team on the left, the second on the right, the question in the middle; codes pinned above. */
+.h2h-head {
+  position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); align-items: center;
+  margin: var(--s4) calc(-1 * var(--s4)) 0; padding: 8px var(--s4); background: var(--canvas); border-bottom: 1px solid var(--divider);
+  font-weight: 800; font-size: 14px;
+}
+.h2h-head span { display: inline-flex; align-items: center; gap: 8px; }
+.h2h-head .right { justify-content: flex-end; }
+.h2h-head .vs { justify-content: center; font-size: 11px; color: var(--subtle); letter-spacing: 0.08em; }
+.h2h-head .mark { width: 24px; height: 24px; }
+.h2h-head .mark img { width: 18px; height: 18px; }
+@media (min-width: 1024px) { .h2h-head { margin-inline: 0; padding-inline: 0; } }
+.h2h { display: grid; gap: 4px; }
+.h2h-row { display: grid; grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1fr); gap: var(--s2); align-items: center; }
+.h2h-label { display: grid; text-align: center; font-size: 13px; font-weight: 600; color: var(--muted); line-height: 1.25; }
+.h2h-label small { font-size: 11px; color: var(--subtle); font-weight: 500; }
+.h2h-label.left { text-align: left; }
+.choice-row { display: grid; gap: 6px; }
+.choice-opts { display: grid; gap: 6px; }
+.pk.chip-pk { min-height: 44px; font-size: 13px; justify-content: space-between; padding: 6px 10px; }
+.pk.chip-pk .pk-lbl { font-weight: 600; }
+.pk.chip-pk .pk-px { font-size: 13px; }
+
+/* Who gets picked: a swipeable row of champion cards. */
+.champ-row { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x proximity; scroll-padding-inline: var(--s4); scrollbar-width: none; margin: 0 calc(-1 * var(--s4)); padding: 8px var(--s4) 4px; }
+.champ-row::-webkit-scrollbar { display: none; }
+@media (min-width: 1024px) { .champ-row { margin: 0; padding-inline: 0; scroll-padding-inline: 0; } }
+.champ-card {
+  position: relative; flex: none; width: 104px; scroll-snap-align: start; display: grid; gap: 6px; padding: 8px; text-align: left;
+  border-radius: 12px; background: var(--surface); border: 1px solid var(--divider);
+}
+.champ-card .cicon { width: 100%; height: 86px; border-radius: 8px; font-size: 20px; }
+.champ-card .cicon img { width: 100%; height: 100%; object-fit: cover; }
+.champ-card .nm { font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.champ-card .px { display: inline-flex; align-items: center; gap: 4px; font-weight: 800; font-size: 14px; }
+.champ-card[aria-pressed="true"] { background: var(--accent-soft); border: 2px solid var(--accent); padding: 7px; }
+.champ-card[aria-pressed="true"] .px { color: var(--accent); }
+.champ-card[data-held="true"]:not([aria-pressed="true"]) { border: 1.5px solid var(--win); }
+.all-champs { justify-self: start; min-height: 44px; padding: 0 14px; border-radius: var(--radius-control); border: 1px solid var(--divider); color: var(--info); font-weight: 700; font-size: 14px; }
+
+/* Match cards (Today, Swiss board): the whole card opens the match; a split bar shows the favourite. */
+.mrow.tap { display: grid; gap: 10px; color: inherit; text-decoration: none; }
+.mrow.tap:hover { border-color: var(--divider-strong); background: var(--surface-2); }
+.mypick { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-weight: 700; font-size: 12px; }
+.chance { display: grid; gap: 4px; }
+.chance .bar { display: flex; gap: 2px; height: 6px; border-radius: 3px; overflow: hidden; }
+.chance .bar span { background: var(--divider-strong); }
+.chance .bar span.fav { background: var(--muted); }
+.chance .nums { display: flex; justify-content: space-between; font-size: 12px; font-weight: 700; color: var(--muted); }
+.chance.compact { padding: 4px 8px 2px; }
+.chance.compact .bar { height: 4px; }
+.chance.compact .nums { font-size: 11px; }
+a.sb-tile { display: block; color: inherit; text-decoration: none; }
+a.sb-tile:hover { border-color: var(--divider-strong); }
+.sb-side .picked { color: var(--accent); flex: none; }
+
+.slipbar .ret { font-weight: 600; opacity: 0.75; }
+.choice-opts.many { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 560px) { .choice-opts.many { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.mp-sub { margin-top: var(--s3); font-size: 13px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--subtle); }

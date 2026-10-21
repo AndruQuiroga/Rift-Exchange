@@ -224,3 +224,17 @@ def test_series_graders(factory, world):
         f.team_a_wins = 1
         f.team_b_wins = 1
         assert grade_market(s, score).status == "HOLD"
+
+
+def test_raising_the_opening_grant_tops_up_existing_members_once(factory, world):
+    join(factory, world, "alice")
+    assert balance(factory, world, "alice") == (2000, 0)
+    with factory() as s, s.begin():
+        season = s.get(Season, world["season"])
+        season.opening_grant_rc = 5000
+        assert grants.run_match_day_grants(s, season, T0) == 1
+    with factory() as s, s.begin():
+        assert grants.run_match_day_grants(s, s.get(Season, world["season"]), T0) == 0  # once
+    assert balance(factory, world, "alice") == (6000, 0)
+    join(factory, world, "bob")  # a later joiner gets the new amount straight away, no top-up
+    assert balance(factory, world, "bob") == (6000, 0)

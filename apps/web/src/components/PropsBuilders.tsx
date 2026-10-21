@@ -17,7 +17,7 @@ function WindowNote({ data, now }: { data: WindowState; now: number }) {
   const seconds = data.close_at ? Math.max(0, Math.ceil((Date.parse(data.close_at) - now) / 1000)) : 0;
   const text = data.state === "UPCOMING" ? "Opens after draft, when champions are confirmed."
     : data.open && seconds > 0
-      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)} · earlier at first blood`
+      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)}`
     : "Early-game picks closed.";
   return <p className="muted num" role="status" style={{ fontSize: 13, marginTop: 12 }}>{text}</p>;
 }
@@ -77,22 +77,26 @@ function Price({ odds, busy, style }: { odds: string | null; busy: boolean; styl
 export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   const { data } = useSWR<DuelGrid>(`/events/${event.id}/duels?game=${game}`, { refreshInterval: 2000 });
   const now = useNow(1000);
-  const [stat, setStat] = useState("kills");
+  const [picked, setStat] = useState<string | null>(null);
   const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
   if (!data.duels.length) return <WindowNote data={data} now={now} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
+  const stat = picked ?? data.stats[0]?.id ?? "gold15";
   return (
     <div>
-      <WindowNote data={data} now={now} />
-      <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
-        {data.stats.map((s) => (
-          <button key={s.id} aria-pressed={stat === s.id} onClick={() => setStat(s.id)}>
-            {s.id === "kills" ? "Kills" : s.id === "cs15" ? "CS @15" : "Damage"}
-          </button>
-        ))}
-      </div>
-      <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>{data.stats.find((s) => s.id === stat)?.label} in Game {game}</p>
+      {data.stats.length > 1 ? (
+        <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
+          {data.stats.map((s) => (
+            <button key={s.id} aria-pressed={stat === s.id} onClick={() => setStat(s.id)}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <p className="muted" style={{ fontSize: 13 }}>
+        {stat === "gold15" ? "Which laner has more gold at 15:00. A gap under 700 gold is a tie and void." : `${data.stats.find((s) => s.id === stat)?.label} in Game ${game}`}
+      </p>
       <div className="duels">
         {data.duels.map((d) => {
           const side = (s: Side) => {
@@ -125,7 +129,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         })}
       </div>
       {notice}
-      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00 or first blood. Ties void.</p>
+      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00.</p>
     </div>
   );
 }

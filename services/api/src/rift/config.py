@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     season_name: str = "Worlds 2026"
     season_timezone: str = "America/Chicago"
     season_first_match_day: str = "2026-10-23"
-    opening_grant_rc: int = 1000
+    opening_grant_rc: int = 5000
     match_day_grant_rc: int = 1000
 
     # Provider settings (D-009)
@@ -57,7 +57,7 @@ class Settings(BaseSettings):
 
     # Worker cadence: fast while a series is live or within 30 minutes of one
     live_poll_seconds: int = 15
-    early_poll_seconds: int = 5  # while an early-game window (game start to 3:00 / first blood) may be open
+    early_poll_seconds: int = 5  # while an early-game window (game start to 3:00) may be open
     idle_poll_seconds: int = 60
 
     # Market behaviour

@@ -94,16 +94,20 @@ export function SlipProvider({ children }: { children: ReactNode }) {
   const [quick, setQuickState] = useState(false);
   const [pending, setPending] = useState<PendingPick[]>([]);
   const [notice, setNotice] = useState<QuickNotice | null>(null);
+  // Saving waits for the first load: otherwise the empty starting slip is written over the saved one
+  // (React runs mount effects twice in development, so a load can land after that save).
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     setLines(load<SlipLine[]>(KEY, []));
     const s = load<number>(STAKE_KEY, STAKES[0]);
     setDefault(Number.isInteger(s) && s > 0 ? s : STAKES[0]);
     setQuickState(load<boolean>(QUICK_KEY, false) === true);
+    setLoaded(true);
   }, []);
   useEffect(() => {
-    save(KEY, lines);
-  }, [lines]);
+    if (loaded) save(KEY, lines);
+  }, [lines, loaded]);
 
   const setDefaultStake = useCallback((stake: number) => {
     if (!Number.isInteger(stake) || stake <= 0) return;

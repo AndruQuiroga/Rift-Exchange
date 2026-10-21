@@ -17,22 +17,24 @@ ROLES = props.ROLES
 
 
 def timeline(a_id, b_id, *, a_kills=(3, 2, 4, 1, 0), b_kills=(1, 1, 2, 2, 0), a_cs=(130, 100, 140, 150, 20),
-             b_cs=(120, 105, 135, 150, 25), blood="A", dragon="infernal", soul="ocean", baron_at=1400,
+             b_cs=(120, 105, 135, 150, 25), a_gold=(5200, 4800, 6400, 6100, 3200),
+             b_gold=(5000, 4900, 5500, 6000, 3100), blood="A", dragon="infernal", soul="ocean", baron_at=1400,
              prefix=("a", "b")):
     side_team = {"A": str(a_id), "B": str(b_id)}
     participants, final, at15 = {}, {}, {}
-    for s, (side, kills, cs, tag) in enumerate((("blue", a_kills, a_cs, prefix[0]), ("red", b_kills, b_cs, prefix[1]))):
+    sides = (("blue", a_kills, a_cs, a_gold, prefix[0]), ("red", b_kills, b_cs, b_gold, prefix[1]))
+    for s, (side, kills, cs, gold, tag) in enumerate(sides):
         for i, role in enumerate(ROLES):
             pid = str(s * 5 + i + 1)
             participants[pid] = {"player_id": f"{tag}-{role}", "name": f"{tag.upper()} {role}", "role": role,
                                  "side": side, "champion": f"C{pid}"}
             final[pid] = {"kills": kills[i], "deaths": 1, "assists": 1, "cs": cs[i] * 2, "gold": 9000,
                           "damage_share": 0.1 + 0.02 * i + 0.01 * s, "kill_participation": 0.5}
-            at15[pid] = {"cs": cs[i], "gold": 5000}
+            at15[pid] = {"cs": cs[i], "gold": gold[i]}
     first = {"side": "blue", "team_id": side_team[blood], "at_s": 300}
     return {"participants": participants, "final": final, "at_15": {"at_s": 900, "players": at15},
             "firsts": {"blood": first, "tower": {**first, "at_s": 800},
-                       "dragon": {**first, "type": dragon, "at_s": 400},
+                       "dragon": {**first, "type": dragon, "at_s": 400}, "five_kills": {**first, "at_s": 500},
                        "baron": {**first, "at_s": baron_at} if baron_at else None},
             "dragons": [], "soul": soul}
 
@@ -60,14 +62,15 @@ def test_objective_markets_open_with_each_game(factory, season_games):
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
         specs = {sp.kind: sp for sp in game_specs(fx, 2, a, b, 0.6, tournament_stats(s, season), T0, "EXPERIMENTAL")}
-    assert set(props.OBJECTIVE_KINDS) <= set(specs)
+    assert set(props.OFFERED_OBJECTIVES) <= set(specs)
+    assert not set(props.RETIRED_OBJECTIVES) & set(specs)  # dragon element and soul are no longer offered
     blood = {o.code: o.probability for o in specs["first_blood"].outcomes}
     assert blood["A"] > 0.5  # A is the stronger side and winners have taken first blood every time
-    assert specs["dragon_soul"].outcomes[-1].code == "NONE"
     assert specs["baron_before"].params == {"game_index": 2}
 
 
-@pytest.mark.parametrize("kind,codes", [("first_blood", ["A"]), ("first_tower", ["A"]),
+@pytest.mark.parametrize("kind,codes", [("first_blood", ["A"]), ("first_tower", ["A"]), ("five_kills", ["A"]),
+                                        ("first_dragon", ["A"]), ("gold_lead_15", ["A"]),
                                         ("first_dragon_type", ["infernal"]), ("baron_before", ["YES"]),
                                         ("dragon_soul", ["ocean"])])
 def test_objectives_grade_from_the_timeline(factory, world, kind, codes):
@@ -125,24 +128,24 @@ def test_early_window_opens_at_game_load_and_closes_at_three_minutes(factory, se
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         before = props.duels(s, season, fx, 1, SETTINGS, T0)
         assert before["state"] == "UPCOMING" and "loads" in before["opens_when"]
-        assert all(row["odds"]["kills"]["A"] is None for row in before["duels"])  # preview: no prices yet
+        assert all(row["odds"]["gold15"]["A"] is None for row in before["duels"])  # preview: no prices yet
     _live_game1(factory, season_games)
     with factory() as s:
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         grid = props.duels(s, season, fx, 1, SETTINGS, T0 + timedelta(minutes=1))
         assert grid["open"] and grid["close_at"] == (T0 + timedelta(minutes=3)).isoformat()
         mid = next(d for d in grid["duels"] if d["role"] == "mid")
-        assert mid["a"]["champion"] == "C3" and mid["odds"]["kills"]["A"]
+        assert mid["a"]["champion"] == "C3" and mid["odds"]["gold15"]["A"]
         assert not props.duels(s, season, fx, 1, SETTINGS, T0 + timedelta(minutes=3))["open"]
 
 
-def test_first_blood_closes_the_window_early(factory, season_games):
+def test_first_blood_does_not_close_the_window(factory, season_games):
     _live_game1(factory, season_games, blood_at=95)
     with factory() as s:
         fx = s.get(Fixture, season_games["fixture"])
-        w = props.early_window(s, fx, 1, T0 + timedelta(seconds=60))
-        assert w.open and w.close_at == T0 + timedelta(seconds=95)
-        assert not props.early_window(s, fx, 1, T0 + timedelta(seconds=96)).open
+        w = props.early_window(s, fx, 1, T0 + timedelta(seconds=96))
+        assert w.open and w.close_at == T0 + timedelta(minutes=3)
+        assert not props.early_window(s, fx, 1, T0 + timedelta(minutes=3)).open
 
 
 def test_lane_duel_priced_created_once_and_graded(factory, season_games):
@@ -150,20 +153,20 @@ def test_lane_duel_priced_created_once_and_graded(factory, season_games):
     at = T0 + timedelta(minutes=1)
     with factory() as s, s.begin():
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
-        first = props.ensure_duel(s, season, fx, 1, "mid", "kills", SETTINGS, at)
-        assert props.ensure_duel(s, season, fx, 1, "mid", "kills", SETTINGS, at).id == first.id
+        first = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, at)
+        assert props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, at).id == first.id
         assert first.close_at == T0 + timedelta(minutes=3) and first.params["a_champion"] == "C3"
-        tie = props.ensure_duel(s, season, fx, 1, "bottom", "kills", SETTINGS, at)  # both bottoms finish on 2
+        tie = props.ensure_duel(s, season, fx, 1, "bottom", "gold15", SETTINGS, at)  # bottoms 100 gold apart at 15:00
         first_id, tie_id = first.id, tie.id
         with pytest.raises(props.PropsError):
-            props.ensure_duel(s, season, fx, 1, "top", "kills", SETTINGS, T0 + timedelta(minutes=4))
+            props.ensure_duel(s, season, fx, 1, "top", "gold15", SETTINGS, T0 + timedelta(minutes=4))
     _finish_game1(factory, season_games)
     with factory() as s:
         assert grade_market(s, s.get(Market, first_id)).winning_codes == ["A"]
         assert grade_market(s, s.get(Market, tie_id)).status == "VOID"
 
 
-def test_pick_accepted_after_first_blood_is_void(factory, season_games):
+def test_picks_after_first_blood_stand_and_after_three_minutes_are_void(factory, season_games):
     from test_money import balance, join, place
 
     from rift.markets import lock_due
@@ -173,40 +176,38 @@ def test_pick_accepted_after_first_blood_is_void(factory, season_games):
     at = T0 + timedelta(seconds=60)
     with factory() as s, s.begin():
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
-        duel = props.ensure_duel(s, season, fx, 1, "mid", "kills", SETTINGS, at)
+        duel = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, at)
         outcome = next(o for o in s.execute(select(Outcome).where(Outcome.market_id == duel.id)).scalars()
                        if o.code == "A")
         duel_id, outcome_id = duel.id, outcome.id
     join(factory, season_games, "alice")
     join(factory, season_games, "bob")
     place(factory, season_games, "alice", [(outcome_id, 100)], "early", now=at)
-    place(factory, season_games, "bob", [(outcome_id, 100)], "late", now=T0 + timedelta(seconds=100))
-    # First blood happened at 1:30 by the feed's clock; the worker only sees it on a later poll.
+    # First blood at 1:30 by the feed's clock no longer closes anything: Bob's pick at 2:40 stands.
     with factory() as s, s.begin():
         g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
         g.timeline = {**g.timeline, "firsts": {"blood": {"side": "blue", "team_id": str(g.blue_team_id), "at_s": 90}}}
+    place(factory, season_games, "bob", [(outcome_id, 100)], "after-blood", now=T0 + timedelta(seconds=160))
     with factory() as s, s.begin():
-        assert props.tighten_early(s, T0 + timedelta(seconds=105)) == 1
-        lock_due(s, T0 + timedelta(seconds=105))
+        assert props.tighten_early(s, T0 + timedelta(seconds=170)) == 0
+        lock_due(s, T0 + timedelta(minutes=3))
         assert s.get(Market, duel_id).state == "LOCKED"
     _finish_game1(factory, season_games)
     with factory() as s, s.begin():
         apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=1))
-    rows = {}
     with factory() as s:
-        for sel in s.execute(select(Selection)).scalars():
-            rows[sel.user_id] = sel
-    assert rows[season_games["alice"]].status == "WON"
-    assert rows[season_games["bob"]].status == "VOID" and rows[season_games["bob"]].return_rc == 100
-    assert balance(factory, season_games, "bob") == (2000, 0)
+        rows = {sel.user_id: sel for sel in s.execute(select(Selection)).scalars()}
+    assert rows[season_games["alice"]].status == rows[season_games["bob"]].status == "WON"
 
-    # A corrected final scan moves first blood before Alice's pick, without changing the winner.
+    # A corrected final scan puts the game's start 30 s earlier: Bob's pick (now 3:10 in) is void.
     with factory() as s, s.begin():
         g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
-        g.timeline = {**g.timeline, "firsts": {"blood": {"at_s": 50}}}
+        g.started_at = T0 - timedelta(seconds=30)
         assert apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
-        assert not apply_grade(s, duel_id, grade_market(s, s.get(Market, duel_id)), T0 + timedelta(hours=2))
-    assert balance(factory, season_games, "alice") == (2000, 0)
+    with factory() as s:
+        bob = s.execute(select(Selection).where(Selection.user_id == season_games["bob"])).scalar_one()
+    assert bob.status == "VOID" and bob.return_rc == 100
+    assert balance(factory, season_games, "bob") == (2000, 0)
 
 
 def test_any_kill_line_is_one_shared_market(factory, season_games):
@@ -218,15 +219,23 @@ def test_any_kill_line_is_one_shared_market(factory, season_games):
         assert props.kill_lines(s, fx, 1, stats, SETTINGS, T0 - timedelta(minutes=5))["lines"] == []  # not loaded
         grid = props.kill_lines(s, fx, 1, stats, SETTINGS, at)
         offered = [row["line"] for row in grid["lines"]]
-        assert grid["open"] and offered and "14.5" not in offered  # every game had 40 kills: 14.5 is a lock
+        assert grid["open"] and offered and min(float(x) for x in offered) >= props.KILL_LINE_FLOOR
         line = offered[len(offered) // 2]
         m = props.ensure_kill_line(s, season, fx, 1, line, stats, SETTINGS, at)
         again = props.ensure_kill_line(s, season, fx, 1, line, stats, SETTINGS, at)
         assert m.id == again.id and m.params == {"game_index": 1, "line": line, "early": True}
         assert m.close_at == T0 + timedelta(minutes=3)
-        for bad in ("31.0", "14.5"):  # not a half line; a line nobody should be offered
+        for bad in ("31.0", "14.5"):  # not a half line; a line nobody should be offered (every game had 40)
             with pytest.raises(props.PropsError):
                 props.ensure_kill_line(s, season, fx, 1, bad, stats, SETTINGS, at)
+        # Twelve kills in the first minutes lift the lowest line to 17.5 (5 clear of the count so far).
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        g.timeline = {**g.timeline, "live": {"kills": {"A": 7, "B": 5}}}
+        s.flush()
+        assert props.kill_line_floor(g) == 17.5
+        assert all(float(r["line"]) >= 17.5 for r in props.kill_lines(s, fx, 1, stats, SETTINGS, at)["lines"])
+        with pytest.raises(props.PropsError, match="start at 17.5"):
+            props.ensure_kill_line(s, season, fx, 1, "16.5", stats, SETTINGS, at)
 
 
 class _RegionalFeed:
@@ -262,7 +271,7 @@ def test_regional_lineup_until_a_team_plays_at_worlds(factory, world):
         assert atlas.lineup["players"]["mid"] == {"player_id": "red-mid", "name": "RED mid"}
         assert props.lineups(s, s.get(Fixture, world["fixture"]))["A"]["mid"]["name"] == "RED mid"
 
-def test_quote_rejects_recorded_first_blood_before_worker_locks(factory, season_games):
+def test_quote_after_first_blood_is_fine_but_not_after_three_minutes(factory, season_games):
     from test_money import join
 
     from rift.placement import PlacementError, QuoteItem, create_quote
@@ -271,11 +280,61 @@ def test_quote_rejects_recorded_first_blood_before_worker_locks(factory, season_
     at = T0 + timedelta(seconds=60)
     with factory() as s, s.begin():
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
-        duel = props.ensure_duel(s, season, fx, 1, "mid", "kills", SETTINGS, at)
+        duel = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, at)
         oid = s.execute(select(Outcome.id).where(Outcome.market_id == duel.id, Outcome.code == "A")).scalar_one()
         game = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
         game.timeline = {**game.timeline, "firsts": {"blood": {"at_s": 90}}}
     join(factory, season_games, "alice")
-    with factory() as s, s.begin(), pytest.raises(PlacementError, match="window has closed"):
+    with factory() as s, s.begin():  # first blood at 1:30 no longer closes the window
         create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
                      items=[QuoteItem(oid, 100)], now=T0 + timedelta(seconds=100), ttl_seconds=20)
+    with factory() as s, s.begin(), pytest.raises(PlacementError, match="window has closed"):  # before the worker locks
+        create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
+                     items=[QuoteItem(oid, 100)], now=T0 + timedelta(seconds=181), ttl_seconds=20)
+
+
+def test_first_to_five_kills_is_recorded_from_the_fifth_kill():
+    from rift.timeline import summarise
+
+    t0 = T0
+    at = lambda s_: (t0 + timedelta(seconds=s_)).isoformat()
+    events = {f"kills:blue:{n}": {"at": at(60 * n), "type": None} for n in range(1, 6)}
+    events |= {f"kills:red:{n}": {"at": at(50 * n), "type": None} for n in range(1, 5)}
+    summary = summarise(events, {"blue": "team-blue", "red": "team-red"}, t0, complete=True)
+    assert summary["firsts"]["five_kills"] == {"side": "blue", "team_id": "team-blue", "at_s": 300}
+    assert summary["firsts"]["blood"]["side"] == "red"  # red drew first blood at 0:50 but stalled on four
+    assert summarise({}, {}, t0, complete=True)["firsts"]["five_kills"] is None
+
+
+class _Model:
+    def game_probability(self, a, b):
+        return 0.6
+
+
+def test_team_races_open_with_the_game_and_close_at_three_minutes(factory, season_games):
+    _live_game1(factory, season_games)
+    with factory() as s, s.begin():
+        season = s.get(Season, season_games["season"])
+        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1)) == 3
+        races = {m.kind: m for m in s.execute(select(Market).where(Market.kind.in_(props.EARLY_TEAM_KINDS))).scalars()}
+        assert set(races) == set(props.EARLY_TEAM_KINDS)
+        assert all(m.close_at == T0 + timedelta(minutes=3) and m.params["early"] for m in races.values())
+    with factory() as s, s.begin():  # after 3:00 nothing new opens
+        season = s.get(Season, season_games["season"])
+        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=4)) == 0
+
+
+def test_team_gold_lead_under_700_is_a_tie(factory, world):
+    close = (5100, 4900, 6200, 6100, 3200)  # 25,500 against the default 24,500: a 1,000 lead
+    with factory() as s, s.begin():
+        m = Market(season_id=world["season"], fixture_id=world["fixture"], template_key="gold_lead_15:x",
+                   kind="gold_lead_15", scope="GAME", category="OBJECTIVES", title="g", rules_text="",
+                   params={"game_index": 1}, model_key="t", confidence="EXPERIMENTAL", close_at=T0)
+        g = Game(fixture_id=world["fixture"], provider_id="g1", game_index=1, state="completed",
+                 blue_team_id=world["team_a"], red_team_id=world["team_b"], timeline_complete=True,
+                 timeline=timeline(world["team_a"], world["team_b"], a_gold=close))
+        s.add_all([m, g])
+        s.flush()
+        assert grade_market(s, m).winning_codes == ["A"]
+        g.timeline = timeline(world["team_a"], world["team_b"], a_gold=(5000, 4800, 5900, 6000, 3200))  # +400
+        assert grade_market(s, m).status == "VOID"

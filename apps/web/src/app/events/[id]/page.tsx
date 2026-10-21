@@ -2,22 +2,20 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
-import { Choice } from "@/components/Choice";
-import { ChampionGrid, FeaturedDraft } from "@/components/ChampionGrid";
-import { MorePicks, type PickTab } from "@/components/MorePicks";
-import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
-import { IconBack } from "@/components/icons";
+import { ChampionRow } from "@/components/ChampionGrid";
+import { eventLabel, Matchup } from "@/components/EventCard";
 import { FriendsPicks } from "@/components/FriendsPicks";
 import { NotifyButton } from "@/components/GameAlerts";
+import { ChoiceRow, H2HHead, H2HRow, WinnerCards } from "@/components/H2H";
+import { IconBack, IconLock } from "@/components/icons";
 import { LiveCard } from "@/components/LiveCard";
-import { KillLine, LaneDuels, Objectives } from "@/components/PropsBuilders";
+import { KillLine, LaneDuels } from "@/components/PropsBuilders";
 import { countdown, kickoff, longDate } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import type { EventT, GameT, MarketT } from "@/lib/types";
-import { Odds } from "@/components/Odds";
 
 /** One plain sentence on how these settle; each market's full rules one tap away. */
 function Rules({ markets, summary }: { markets: (MarketT | undefined)[]; summary: string }) {
@@ -46,22 +44,38 @@ function windowText(g: GameT, event: EventT): string {
   return g.state === "inProgress" ? "Live" : "Locked";
 }
 
-/** Everything about one game: its winner, its kill line, its draft. Opens when the previous game ends. */
+function Section({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+  return (
+    <section className="mp-section">
+      <div className="mp-head">
+        <h2>{title}</h2>
+        {sub ? <span className="muted">{sub}</span> : null}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
+// Team races in the early window, opened when the game loads (D-025).
+const RACES = ["five_kills", "gold_lead_15", "first_dragon"];
+
+/** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
 function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: number }) {
-  const label = eventLabel(event);
+  const markets = event.markets ?? [];
   const ofGame = (m: MarketT) => m.params.game_index === game.index;
-  const winner = (event.markets ?? []).find((m) => m.kind === "game_winner" && ofGame(m));
-  const a = winner?.outcomes.find((o) => o.code === "A");
-  const b = winner?.outcomes.find((o) => o.code === "B");
+  // A best-of-one has no separate game winner: the series winner is the game winner.
+  const winner = markets.find((m) => m.kind === "game_winner" && ofGame(m)) ??
+    (event.best_of === 1 ? markets.find((m) => m.kind === "series_winner") : undefined);
 
   if (game.window === "UPCOMING" && game.index > 1) {
     return (
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00 or first blood.
+          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00.
         </p>
-        <NotifyButton event={event.id} game={game.index} label={label} />
+        <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
       </div>
     );
   }
@@ -73,89 +87,112 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       </div>
     );
   }
-  const lock = game.closes_at ? countdown(game.closes_at, now) : null;
+  const lock = game.closes_at ? countdown(game.closes_at, now) : winner?.state === "OPEN" ? countdown(winner.close_at, now) : null;
   const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
-  const objectives = (event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES");
+  const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const early = game.early ?? "UPCOMING";
-  const later =
-    early === "UPCOMING" && game.window !== "DONE"
-      ? "Lane duels and the kill line open when the game loads, until 3:00 or first blood."
-      : !pregame && early !== "OPEN"
-        ? game.window === "DONE" ? `Game ${game.index} is over.` : `Game ${game.index} picks are closed.`
-        : null;
+  const races = RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
+  const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
+
   return (
     <>
-      {winner && a && b ? (
-        <section className="card" style={{ marginTop: 12 }}>
-          <div className="card-head">
-            <h2>Game {game.index}</h2>
-            <span className="sub">{game.window === "OPEN" && lock ? `Locks in ${lock}` : windowText(game, event)}</span>
+      {winner ? (
+        <section className="mp-section first">
+          <div className="mp-head">
+            <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
+            <span className="muted">{winner.state === "OPEN" && lock ? `Locks in ${lock}` : windowText(game, event)}</span>
           </div>
-          <div className="mrow-sides">
-            <SideButton market={winner} outcome={a} team={event.team_a} label={label} />
-            <SideButton market={winner} outcome={b} team={event.team_b} label={label} right />
-          </div>
+          <WinnerCards event={event} market={winner} caption="Winner" />
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
         </section>
       ) : null}
-      {/* A few one-tap calls, then everything else in one sheet: only what takes picks right now. */}
-      <QuickCalls event={event} game={game.index} pregame={pregame} objectives={objectives} />
-      <MorePicks
-        title={`Game ${game.index} picks`}
-        tabs={gameTabs(event, game.index, { pregame, objectives, early: early === "OPEN" })}
-      />
-      {later ? <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{later}</p> : null}
+
+      <H2HHead event={event} />
+
+      {pregame ? (
+        <Section title="Who gets picked?" sub={`Game ${game.index} · either team`}>
+          <ChampionRow event={event} game={game.index} />
+        </Section>
+      ) : null}
+
+      {objectives.length ? (
+        <Section title="Objectives" sub={`Game ${game.index}`}>
+          {objectives.map((m) =>
+            m.outcomes.every((o) => o.code === "A" || o.code === "B") ? (
+              <H2HRow key={m.id} event={event} market={m} label={name(m)} />
+            ) : (
+              <ChoiceRow key={m.id} event={event} market={m} label={name(m)} />
+            ),
+          )}
+          <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
+        </Section>
+      ) : null}
+
+      <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00" : undefined}>
+        {early === "OPEN" ? (
+          <>
+            {races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m)} />)}
+            <div className="mp-sub">Kill line</div>
+            <KillLine event={event} game={game.index} />
+            <div className="mp-sub">Lane duels · gold at 15:00</div>
+            <LaneDuels event={event} game={game.index} />
+            <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." />
+          </>
+        ) : early === "UPCOMING" && game.window !== "DONE" ? (
+          <div className="mp-locked">
+            <span className="t"><IconLock width={14} height={14} aria-hidden="true" /> Opens when the game loads</span>
+            <span>Lane duels and the kill line are open from the loading screen until 3:00.</span>
+            <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
+          </div>
+        ) : (
+          <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
+        )}
+      </Section>
     </>
   );
 }
 
-/** The featured yes/no calls under a game's winner: draft picks before play, first blood once objectives open. */
-function QuickCalls({ event, game, pregame, objectives }: { event: EventT; game: number; pregame: boolean; objectives: MarketT[] }) {
-  const firstBlood = objectives.find((m) => m.kind === "first_blood" && m.state === "OPEN");
-  if (!pregame && !firstBlood) return null;
+/** The series as a whole (best-of-three and up): winner, exact score, games played. */
+function SeriesPanel({ event }: { event: EventT }) {
+  const markets = event.markets ?? [];
   const label = eventLabel(event);
+  const winner = markets.find((m) => m.kind === "series_winner");
+  const score = markets.find((m) => m.kind === "series_score");
+  const props = markets.filter((m) => m.category === "PROPS" && m.params.game_index === undefined);
+  // Scores are coded from the first team's side ("2-1"); a row pairs it with the mirror win ("1-2").
+  const scoreRows = (score?.outcomes ?? [])
+    .filter((o) => Number(o.code.split("-")[0]) > Number(o.code.split("-")[1]))
+    .map((o) => ({ left: o, right: score!.outcomes.find((x) => x.code === o.code.split("-").reverse().join("-")), label: o.code.replace("-", "–") }));
   return (
-    <section className="quickcalls" aria-label="Quick calls">
-      {pregame ? <FeaturedDraft event={event} game={game} /> : null}
-      {firstBlood ? (
-        <div className="fcard static">
-          <span className="q">
-            <span className="t">First blood</span>
-            <span className="s">Game {game}</span>
-          </span>
-          <span className="opts">
-            {firstBlood.outcomes.map((o) => (
-              <Choice key={o.id} market={firstBlood} outcome={o} label={label} className="mini">
-                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num"><Odds value={o.odds} /></b>
-              </Choice>
-            ))}
-          </span>
-        </div>
+    <>
+      {winner ? (
+        <section className="mp-section first">
+          <div className="mp-head">
+            <h2>Series winner</h2>
+            <span className="muted">Bo{event.best_of}</span>
+          </div>
+          <WinnerCards event={event} market={winner} caption="Series winner" />
+          <Rules markets={[winner, score]} summary="Settles on the official series result; void if it isn't completed." />
+        </section>
       ) : null}
-    </section>
+      <H2HHead event={event} />
+      {score ? (
+        <Section title="Exact score">
+          {scoreRows.map((r) => (
+            <H2HRow key={r.label} event={event} market={score} label={r.label} left={r.left} right={r.right} />
+          ))}
+        </Section>
+      ) : null}
+      {props.length ? (
+        <Section title="Series props">
+          {props.map((m) => <MarketBlock key={m.id} market={m} eventLabel={label} />)}
+        </Section>
+      ) : null}
+      <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+        Pick a game above for its winner, draft, objectives and lanes.
+      </p>
+    </>
   );
-}
-
-function gameTabs(event: EventT, game: number, at: { pregame: boolean; objectives: MarketT[]; early: boolean }): PickTab[] {
-  const tabs: PickTab[] = [];
-  if (at.pregame) tabs.push({ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={game} /> });
-  if (at.objectives.some((m) => m.state === "OPEN")) {
-    tabs.push({
-      id: "objectives",
-      label: "Objectives",
-      body: (
-        <>
-          <Objectives event={event} game={game} />
-          <Rules markets={at.objectives} summary="Settles from the game's live data; void if the game isn't played." />
-        </>
-      ),
-    });
-  }
-  if (at.early) {
-    tabs.push({ id: "duels", label: "Lane duels", live: true, body: <LaneDuels event={event} game={game} /> });
-    tabs.push({ id: "kills", label: "Kill line", body: <KillLine event={event} game={game} /> });
-  }
-  return tabs;
 }
 
 export default function EventPage() {
@@ -163,6 +200,7 @@ export default function EventPage() {
   const { data: event, error } = useSWR<EventT>(`/events/${id}`);
   const now = useNow();
   const [tab, setTab] = useState<number | null>(null);
+  const touch = useRef<{ x: number; y: number } | null>(null);
 
   if (error) {
     return (
@@ -177,46 +215,54 @@ export default function EventPage() {
   if (!event) return <div className="skeleton" style={{ marginTop: 24, height: 320 }} />;
 
   const markets = event.markets ?? [];
-  const label = eventLabel(event);
-  const byKind = (k: string) => markets.find((m) => m.kind === k);
-  const winner = byKind("series_winner");
-  const score = byKind("series_score");
-  const games = byKind("total_games");
-  const props = markets.filter((m) => m.category === "PROPS" && m.params.game_index === undefined);
-  const lockAt = winner?.close_at;
-  const cd = lockAt ? countdown(lockAt, now) : null;
-  const a = winner?.outcomes.find((o) => o.code === "A");
-  const b = winner?.outcomes.find((o) => o.code === "B");
+  const winner = markets.find((m) => m.kind === "series_winner");
+  const cd = winner?.close_at ? countdown(winner.close_at, now) : null;
   const gameList = event.best_of > 1 ? event.games ?? [] : [];
   // Default to the game that is open right now once the series itself has locked.
   const openGame = gameList.find((g) => g.window === "OPEN" && g.index > 1);
   const current = tab ?? (event.status === "LIVE" && openGame ? openGame.index : 0);
-  const shownGame = gameList.find((g) => g.index === current);
+  const shownGame = event.best_of === 1 ? (event.games ?? [])[0] : gameList.find((g) => g.index === current);
+  const priced = markets.length > 0 && event.team_a && event.team_b;
+  // Phones: swipe left or right to move between Series and each game. Swipes that start on something
+  // that scrolls sideways itself (the champion row, the kill-line slider) stay with it.
+  const tabs = [0, ...gameList.map((g) => g.index)];
+  function onTouchStart(e: React.TouchEvent) {
+    const target = e.target as HTMLElement;
+    touch.current = target.closest(".champ-row, input, .swiss-board") ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const start = touch.current;
+    touch.current = null;
+    if (!start || tabs.length < 2) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < 1.5 * Math.abs(dy)) return;
+    const at = tabs.indexOf(current);
+    const next = tabs[Math.max(0, Math.min(tabs.length - 1, at + (dx < 0 ? 1 : -1)))];
+    if (next !== current) {
+      setTab(next);
+      window.scrollTo({ top: 0 });
+    }
+  }
 
   return (
     <>
-      <div style={{ paddingTop: 14 }}>
+      <div className="mp-top">
         <Link href="/" className="link" style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44 }}>
           <IconBack width={16} height={16} /> Today
         </Link>
+        <span className="muted num" style={{ fontSize: 12 }}>
+          {event.status === "LIVE" ? (openGame ? `Live · Game ${openGame.index} open` : "Live") : event.status === "COMPLETED" ? "Final" : cd ? null : "Locked"}
+        </span>
       </div>
-      <section className="scoreboard" aria-label="Match">
-        <div className="eyebrow" style={{ marginBottom: 14 }}>
-          {event.stage} · Bo{event.best_of} · {longDate(event.local_date)} · <span className="num">{kickoff(event.scheduled_at)}</span>
-        </div>
-        <Matchup event={event} large />
-        <div style={{ marginTop: 14, fontSize: 14 }} className="muted">
-          {event.status === "LIVE"
-            ? openGame
-              ? `Live — Game ${openGame.index} picks are open now.`
-              : "Live — series picks are closed."
-            : event.status === "COMPLETED"
-              ? "Final."
-              : cd
-                ? `Locks in ${cd}, or as soon as the match goes live.`
-                : "Predictions are locked."}
-        </div>
-      </section>
+      <div className="eyebrow" style={{ marginTop: 4 }}>
+        {event.stage} · Bo{event.best_of} · {longDate(event.local_date)} · <span className="num">{kickoff(event.scheduled_at)}</span>
+      </div>
+      {!priced || event.status !== "SCHEDULED" ? (
+        <section className="scoreboard" aria-label="Match" style={{ marginTop: 10 }}>
+          <Matchup event={event} large />
+        </section>
+      ) : null}
 
       <LiveCard event={event} />
 
@@ -235,7 +281,8 @@ export default function EventPage() {
         </div>
       ) : null}
 
-      {markets.length === 0 ? (
+      <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      {!priced ? (
         <div className="empty" style={{ marginTop: 12 }}>
           <h3>No prices yet</h3>
           <p>Prices open automatically once both teams are known and the model has a price.</p>
@@ -243,68 +290,9 @@ export default function EventPage() {
       ) : shownGame ? (
         <GamePanel event={event} game={shownGame} now={now} />
       ) : (
-        <>
-          {winner && a && b ? (
-            <section className="card" aria-labelledby="result-h" style={{ marginTop: 12 }}>
-              <div className="card-head">
-                <h2 id="result-h">Result</h2>
-                <span className="sub">{score ? "Winner, or call the exact score" : "Who wins"}</span>
-              </div>
-              <div className="mrow-sides">
-                <SideButton market={winner} outcome={a} team={event.team_a} label={label} />
-                <SideButton market={winner} outcome={b} team={event.team_b} label={label} right />
-              </div>
-              {score ? (
-                <div className={`scorelines${score.outcomes.length > 4 ? " six" : ""}`}>
-                  {score.outcomes.map((o) => {
-                    const cut = o.label.lastIndexOf(" ");
-                    return (
-                      <Choice key={o.id} market={score} outcome={o} label={label} className="sl">
-                        <span className="t">{o.label.slice(0, cut)}</span>
-                        <span className="s num">{o.label.slice(cut + 1)}</span>
-                        <span className="p num"><Odds value={o.odds} /></span>
-                      </Choice>
-                    );
-                  })}
-                </div>
-              ) : null}
-              {games ? (
-                <div className="inline-q">
-                  <span>Games played</span>
-                  <span className="opts">
-                    {games.outcomes.map((o) => (
-                      <Choice key={o.id} market={games} outcome={o} label={label} className="mini">
-                        {o.label.replace(" games", "")} <b className="num"><Odds value={o.odds} /></b>
-                      </Choice>
-                    ))}
-                  </span>
-                </div>
-              ) : null}
-              <Rules markets={[winner, score, games]} summary="Settles on the official series result; void if it isn't completed." />
-            </section>
-          ) : null}
-
-          {event.best_of > 1 ? (
-            <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
-              Choose a game for its markets. Winner and draft picks close before play; duels and kill lines open once champions are confirmed.
-            </p>
-          ) : event.team_a && event.team_b ? (
-            <>
-              {(event.games ?? [])[0] ? <GamePanel event={event} game={(event.games ?? [])[0]} now={now} /> : (
-                <MorePicks title="Draft picks" tabs={[{ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={1} /> }]} />
-              )}
-            </>
-          ) : null}
-
-          {props.length ? (
-            <MorePicks
-              title="Series props"
-              hint={`Kills and other lines across the series · ${props.length} open`}
-              tabs={[{ id: "props", label: "Props", body: props.map((m) => <MarketBlock key={m.id} market={m} eventLabel={label} />) }]}
-            />
-          ) : null}
-        </>
+        <SeriesPanel event={event} />
       )}
+      </div>
       <FriendsPicks event={event} />
       <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
         Every pick is a single with its own price. Nothing is multiplied together.
