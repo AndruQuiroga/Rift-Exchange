@@ -104,25 +104,31 @@ def champion_label(champ: str) -> str:
 
 
 NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after Game N-1 ends (draft ~10 min)
+# Markets that stay open through the draft (D-026) carry a provisional cutoff this far past the usual one;
+# the worker pulls it to 3:00 of the game once the game loads, and settlement voids anything later.
+DRAFT_GRACE = timedelta(minutes=90)
+THROUGH_DRAFT_NOTE = "Open through the draft until 3:00 of game time."
 
 
 def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: TournamentStats, close_at: datetime,
                confidence: str) -> list[MarketSpec]:
     """Markets scoped to one game, open before it starts. Kill lines and duels open once it loads (rift.props)."""
     key = fixture.provider_id
-    when = ("Locks at the scheduled series start." if idx == 1 else
-            f"Opens when Game {idx - 1} ends; locks 7 minutes later or when Game {idx} starts, whichever is first.")
+    opens = "" if idx == 1 else f"Opens when Game {idx - 1} ends. "
+    when = f"{opens}{THROUGH_DRAFT_NOTE}"
+    late = close_at + DRAFT_GRACE  # provisional; pulled to 3:00 of the game once it loads
     specs = []
     if fixture.best_of > 1:
         specs.append(MarketSpec(
             f"game_winner:{key}:{idx}", "game_winner", "GAME", "WINNER", f"Game {idx} winner",
             f"Winner of Game {idx} of this series. {when} Void if Game {idx} is not played.",
-            close_at, "elo_v1", confidence,
-            [OutcomeSpec("A", team_name(a.code, a.name), q), OutcomeSpec("B", team_name(b.code, b.name), 1 - q)], {"game_index": idx}))
+            late, "elo_v1", confidence,
+            [OutcomeSpec("A", team_name(a.code, a.name), q), OutcomeSpec("B", team_name(b.code, b.name), 1 - q)],
+            {"game_index": idx, "through_draft": True}))
     if stats.timeline is not None:
         from rift.props import objective_specs
 
-        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, close_at, when))
+        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, late, when))
     return specs
 
 
@@ -161,13 +167,16 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
     bo = fixture.best_of
     key = fixture.provider_id
     fmt = f"Bo{bo}"
+    bo1 = bo == 1
     specs = [MarketSpec(
         f"series_winner:{key}", "series_winner", "SERIES", "WINNER", "Match winner",
-        f"Settles on the official {fmt} series winner. Locks at the scheduled start. Void if the series is "
+        f"Settles on the official {fmt} series winner. "
+        f"{THROUGH_DRAFT_NOTE if bo1 else 'Locks at the scheduled start.'} Void if the series is "
         "cancelled or not completed.",
-        fixture.scheduled_at, "elo_v1", confidence,
+        fixture.scheduled_at + (DRAFT_GRACE if bo1 else timedelta(0)), "elo_v1", confidence,
         [OutcomeSpec("A", team_name(a.code, a.name), series_win_probability(q, bo)),
-         OutcomeSpec("B", team_name(b.code, b.name), 1 - series_win_probability(q, bo))], {})]
+         OutcomeSpec("B", team_name(b.code, b.name), 1 - series_win_probability(q, bo))],
+        {"through_draft": True} if bo1 else {})]
     if bo > 1:
         dist = series_score_distribution(q, bo)
         order = sorted(dist, key=lambda s: (-(s[0] > s[1]), -(s[0] - s[1])))
@@ -252,6 +261,8 @@ def upsert_market(session: Session, season: Season, fixture: Fixture | None, spe
         return market
     else:
         market.close_at = spec.close_at  # follows reschedules; lock_due() closes anything now past due
+        market.params = {**market.params, **spec.params}  # rule changes (e.g. through_draft) reach open markets
+        market.rules_text = spec.rules_text
         market.confidence = spec.confidence
         market.title = spec.title  # display names can change; accepted picks keep their own snapshot
     reprice(session, market, spec, settings)
@@ -322,7 +333,7 @@ def lock_due(session: Session, now: datetime) -> int:
     for m in session.execute(
         select(Market).where(Market.state.in_(("OPEN", "SUSPENDED")), Market.close_at <= now).with_for_update()
     ).scalars():
-        locked[m.id] = (m, "Locked at 3:00" if m.params.get("early") else
+        locked[m.id] = (m, "Locked at 3:00" if m.params.get("early") or m.params.get("through_draft") else
                         f"Locked before Game {game_index(m)} draft" if (game_index(m) or 0) > 1 else
                         "Locked at series start" if m.fixture_id else "Locked")
     live = session.execute(
@@ -336,6 +347,11 @@ def lock_due(session: Session, now: datetime) -> int:
     for m, f in live:
         idx = game_index(m)
         g = games.get((f.id, idx or 1))  # series markets take Game 1's start
+        if m.params.get("through_draft"):
+            # Open through the draft; tighten_early() pulls the cutoff to 3:00 once the game loads.
+            if f.status != "LIVE" or (g is not None and (g.state in ("completed", "unneeded") or g.ended_at)):
+                locked.setdefault(m.id, (m, "Game over" if f.status == "LIVE" else "Series over"))
+            continue
         if m.params.get("early"):
             # Early-game markets are meant to be open while their game runs; they lock at their own cutoff.
             if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":

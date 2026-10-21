@@ -29,6 +29,7 @@
 | D-023 | Objectives offered: first blood, first tower, Baron before 25:00. First dragon element and dragon soul are no longer offered (earlier ones still settle) | Owner decision 2026-10-21 | Too many near-random options per game. |
 | D-024 | Lane duels and kill lines stay open from game load to 3:00 of game time; an early kill no longer closes them. Kill lines are offered from 5 above the kills scored so far. "Games played" is no longer offered (the exact score covers it); earlier ones still settle | Owner decision 2026-10-21 | First blood should not end the early window. |
 | D-025 | Early-window markets (game load to 3:00): team races first to 5 kills, gold lead at 15:00 (a gap under 700 gold is a tie and void) and first dragon (any element), plus lane duels on player gold at 15:00, where a gap under 700 gold is a tie and void. Kills, CS and damage duels are no longer offered (earlier ones still settle) | Owner decision 2026-10-21 | Per-role kill and damage duels were too predictable. |
+| D-026 | Game winners (and a Bo1 match winner), first tower and Baron before 25:00 stay open through the draft until 3:00 of game time; first blood likewise but closes at the first kill if sooner. Series winner and exact score (Bo3+) still close at the series start. Draft picks close before the draft | Owner decision 2026-10-21 | Bet after seeing the draft. |
 
 ## Chosen defaults, configurable (not yet separately confirmed)
 

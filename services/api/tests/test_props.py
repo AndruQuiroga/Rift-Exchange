@@ -66,7 +66,7 @@ def test_objective_markets_open_with_each_game(factory, season_games):
     assert not set(props.RETIRED_OBJECTIVES) & set(specs)  # dragon element and soul are no longer offered
     blood = {o.code: o.probability for o in specs["first_blood"].outcomes}
     assert blood["A"] > 0.5  # A is the stronger side and winners have taken first blood every time
-    assert specs["baron_before"].params == {"game_index": 2}
+    assert specs["baron_before"].params == {"game_index": 2, "through_draft": True}
 
 
 @pytest.mark.parametrize("kind,codes", [("first_blood", ["A"]), ("first_tower", ["A"]), ("five_kills", ["A"]),
@@ -338,3 +338,35 @@ def test_team_gold_lead_under_700_is_a_tie(factory, world):
         assert grade_market(s, m).winning_codes == ["A"]
         g.timeline = timeline(world["team_a"], world["team_b"], a_gold=(5000, 4800, 5900, 6000, 3200))  # +400
         assert grade_market(s, m).status == "VOID"
+
+
+def test_through_draft_markets_close_at_three_minutes_and_first_blood_at_the_kill(factory, season_games):
+    from conftest import make_market
+    from test_money import join
+
+    from rift.placement import PlacementError, QuoteItem, create_quote
+
+    _live_game1(factory, season_games, blood_at=90)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        made = {}
+        for kind in ("game_winner", "first_blood"):
+            m = make_market(s, season, fx, kind, [("A", "A", "1.80"), ("B", "B", "2.00")],
+                            params={"game_index": 1, "through_draft": True}, scope="GAME")
+            m.close_at = T0 + timedelta(hours=1)  # provisional, as created before the game loads
+            made[kind] = s.execute(select(Outcome.id).where(Outcome.market_id == m.id, Outcome.code == "A")).scalar_one()
+    join(factory, season_games, "alice")
+
+    def quote(kind, at):
+        with factory() as s, s.begin():
+            create_quote(s, season_id=season_games["season"], user_id=season_games["alice"],
+                         items=[QuoteItem(made[kind], 100)], now=at, ttl_seconds=20)
+
+    quote("game_winner", T0 + timedelta(seconds=100))  # after the draft and first blood, before 3:00
+    for kind, at in (("first_blood", T0 + timedelta(seconds=100)), ("game_winner", T0 + timedelta(seconds=181))):
+        with pytest.raises(PlacementError, match="First blood has happened|closed at 3:00"):
+            quote(kind, at)
+    with factory() as s, s.begin():
+        assert props.tighten_early(s, T0 + timedelta(seconds=100)) == 2
+        cutoffs = {m.kind: m.close_at for m in s.execute(select(Market).where(Market.kind.in_(made))).scalars()}
+    assert cutoffs == {"game_winner": T0 + timedelta(minutes=3), "first_blood": T0 + timedelta(seconds=90)}

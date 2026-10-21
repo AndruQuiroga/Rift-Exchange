@@ -181,18 +181,20 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
     for kind, what, title in (("first_blood", "blood", "First blood"), ("first_tower", "tower", "First tower")):
         w = data.winner_took_first[what]
         p = q * w + (1 - q) * (1 - w)
+        sooner = " Closes at the first kill if that comes sooner." if kind == "first_blood" else ""
         specs.append(MarketSpec(
             f"{kind}:{key}:{idx}", kind, "GAME", "OBJECTIVES", f"Game {idx} {title.lower()}",
-            f"Team that gets {title.lower()} in Game {idx}. {when} {void}",
+            f"Team that gets {title.lower()} in Game {idx}. {when}{sooner} {void}",
             close_at, "timeline_rates_v1", "EXPERIMENTAL",
-            [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)], {"game_index": idx}))
+            [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)],
+            {"game_index": idx, "through_draft": True}))
     early = (data.early_baron + 1) / (data.games + 2)
     specs.append(MarketSpec(
         f"baron_before:{key}:{idx}", "baron_before", "GAME", "OBJECTIVES", f"Game {idx} Baron before 25:00",
         f"Yes if either team takes Baron before 25:00 of game time in Game {idx}. No if the first Baron comes "
         f"later or never. {when} {void}",
         close_at, "timeline_rates_v1", "EXPERIMENTAL",
-        [OutcomeSpec("YES", "Yes", early), OutcomeSpec("NO", "No", 1 - early)], {"game_index": idx}))
+        [OutcomeSpec("YES", "Yes", early), OutcomeSpec("NO", "No", 1 - early)], {"game_index": idx, "through_draft": True}))
     return specs
 
 
@@ -329,6 +331,24 @@ def early_cutoff(game: Game) -> datetime | None:
     if game.started_at is None:
         return None
     return game.started_at + EARLY_WINDOW
+
+
+def market_cutoff(market: Market, game: Game | None) -> datetime | None:
+    """The real cutoff of an early-window or through-draft market once its game has loaded: 3:00 of game
+    time, and first blood also at the first kill. None while the game hasn't loaded."""
+    cutoff = early_cutoff(game) if game is not None else None
+    if cutoff is not None and market.kind == "first_blood":
+        blood = ((game.timeline or {}).get("firsts") or {}).get("blood")
+        if blood:
+            cutoff = min(cutoff, game.started_at + timedelta(seconds=blood["at_s"]))
+    return cutoff
+
+
+def market_game(session: Session, market: Market) -> Game | None:
+    """The game a timed market belongs to (a Bo1's match winner: Game 1)."""
+    return session.execute(select(Game).where(Game.fixture_id == market.fixture_id,
+                                              Game.game_index == market.params.get("game_index", 1))
+                           ).scalar_one_or_none()
 
 
 def early_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
@@ -507,16 +527,15 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
 
 
 def tighten_early(session: Session, now: datetime) -> int:
-    """Pull each open early-game market's cutoff in line with 3:00 of the game's recorded start."""
-    rows = session.execute(select(Market).where(Market.kind.in_(EARLY_KINDS), Market.state == "OPEN",
-                                                Market.fixture_id.is_not(None)).with_for_update()).scalars().all()
+    """Pull each open early-window or through-draft market's cutoff to 3:00 of its game (first blood: also
+    the first kill) once the game has loaded."""
+    rows = session.execute(select(Market).where(Market.state == "OPEN", Market.fixture_id.is_not(None))
+                           .with_for_update()).scalars().all()
     changed = 0
     for m in rows:
-        if not m.params.get("early"):
+        if not (m.params.get("early") or m.params.get("through_draft")):
             continue
-        game = session.execute(select(Game).where(Game.fixture_id == m.fixture_id,
-                                                  Game.game_index == m.params["game_index"])).scalar_one_or_none()
-        cutoff = early_cutoff(game) if game is not None else None
+        cutoff = market_cutoff(m, market_game(session, m))
         if cutoff is not None and cutoff < m.close_at:
             m.close_at = cutoff
             changed += 1
