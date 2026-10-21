@@ -250,11 +250,11 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
     # Final scans can refine a game's start after an early-game market locked. Settle against 3:00 of
     # that start, rather than the poll-time cutoff, and replay if it later changes.
     effective_cutoff = market.close_at
-    if market.params.get("early") and market.fixture_id is not None:
-        game = session.execute(select(Game).where(Game.fixture_id == market.fixture_id,
-                              Game.game_index == market.params["game_index"])).scalar_one_or_none()
-        if game is not None and props.early_cutoff(game) is not None:
-            effective_cutoff = min(effective_cutoff, props.early_cutoff(game))
+    timed = market.params.get("early") or market.params.get("through_draft")
+    if timed and market.fixture_id is not None:
+        cutoff = props.market_cutoff(market, props.market_game(session, market))
+        if cutoff is not None:
+            effective_cutoff = min(effective_cutoff, cutoff)
         grade.evidence = {**grade.evidence, "acceptance_cutoff": effective_cutoff.isoformat()}
     void = grade.status == "VOID"
     winning = sorted(grade.winning_codes) if not void else []
@@ -264,7 +264,7 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         .order_by(MarketResult.revision.desc()).limit(1)
     ).scalar_one_or_none()
     if (last is not None and last.void == void and sorted(last.winning_codes) == winning
-            and (not market.params.get("early") or
+            and (not timed or
                  last.evidence.get("acceptance_cutoff") == grade.evidence.get("acceptance_cutoff"))):
         return False
 

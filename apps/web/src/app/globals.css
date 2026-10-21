@@ -812,3 +812,5 @@ a.sb-tile:hover { border-color: var(--divider-strong); }
 .choice-opts.many { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (min-width: 560px) { .choice-opts.many { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 .mp-sub { margin-top: var(--s3); font-size: 13px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; color: var(--subtle); }
+.h2h.locked .pk .pk-px { font-size: 14px; font-weight: 700; }
+.h2h.locked .h2h-label { color: var(--subtle); }

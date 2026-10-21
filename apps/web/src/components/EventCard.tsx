@@ -78,7 +78,8 @@ export function ChanceBar({ event, market, compact }: { event: EventT; market: M
 
 /** A match on Today: one tap target. The bar shows who is favoured; the match page takes every pick. */
 export function EventCard({ event, now }: { event: EventT; now: number }) {
-  const cd = event.close_at ? countdown(event.close_at, now) : null;
+  // Cards count down to the scheduled start: a Bo1 winner stays open through the draft (D-026).
+  const cd = countdown(event.scheduled_at, now);
   const market = event.featured;
   const mine = useMyWinnerPick(market);
   const ready = event.team_a && event.team_b;
@@ -91,7 +92,7 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
         {mine ? (
           <span className="mypick"><IconCheck width={12} height={12} aria-hidden="true" /> {mine.placed ? "Placed" : "In slip"}: {mine.code === "A" ? event.team_a?.code : event.team_b?.code}</span>
         ) : (
-          <EventStatus status={event.status} closeAt={event.close_at} countdownText={cd} />
+          <EventStatus status={event.status} closeAt={event.scheduled_at} countdownText={cd} />
         )}
       </span>
       <Matchup event={event} />

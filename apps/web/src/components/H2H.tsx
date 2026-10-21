@@ -140,3 +140,20 @@ export function H2HHead({ event }: { event: EventT }) {
     </div>
   );
 }
+
+/** A market that isn't open yet, shown greyed out so the page says what is coming and when. */
+export function LockedRow({ label, left, right }: { label: string; left: string; right: string }) {
+  return (
+    <div className="h2h locked" aria-label={`${label}: opens when the game loads`}>
+      <div className="h2h-row">
+        <button type="button" className="pk" disabled tabIndex={-1}>
+          <span className="pk-px"><IconLock width={12} height={12} aria-hidden="true" /> {left}</span>
+        </button>
+        <span className="h2h-label">{label}</span>
+        <button type="button" className="pk" disabled tabIndex={-1}>
+          <span className="pk-px"><IconLock width={12} height={12} aria-hidden="true" /> {right}</span>
+        </button>
+      </div>
+    </div>
+  );
+}

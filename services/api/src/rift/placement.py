@@ -48,6 +48,15 @@ def _check_open(session: Session, market: Market, outcome: Outcome, now: datetim
         if fixture is None or not early_window(session, fixture, market.params["game_index"], now).open:
             raise PlacementError("MARKET_CLOSED", "This early-game window has closed.",
                                  {"market_id": str(market.id)})
+    if market.params.get("through_draft") and market.fixture_id is not None:
+        from rift.props import market_cutoff, market_game
+
+        cutoff = market_cutoff(market, market_game(session, market))
+        if cutoff is not None and now >= cutoff:  # the game passed 3:00 before the worker locked it
+            raise PlacementError("MARKET_CLOSED", "First blood has happened, so this prediction is closed."
+                                 if market.kind == "first_blood" and cutoff < market_game(session, market).started_at
+                                 + timedelta(minutes=3) else "This prediction closed at 3:00 of the game.",
+                                 {"market_id": str(market.id), "closed_at": cutoff.isoformat()})
     if market.state != "OPEN" or market.close_at <= now:
         raise PlacementError("MARKET_CLOSED", "This prediction is no longer open.",
                              {"market_id": str(market.id), "closed_at": market.close_at.isoformat()})

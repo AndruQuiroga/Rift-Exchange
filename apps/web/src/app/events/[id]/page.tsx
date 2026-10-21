@@ -9,7 +9,7 @@ import { ChampionRow } from "@/components/ChampionGrid";
 import { eventLabel, Matchup } from "@/components/EventCard";
 import { FriendsPicks } from "@/components/FriendsPicks";
 import { NotifyButton } from "@/components/GameAlerts";
-import { ChoiceRow, H2HHead, H2HRow, WinnerCards } from "@/components/H2H";
+import { ChoiceRow, H2HHead, H2HRow, LockedRow, WinnerCards } from "@/components/H2H";
 import { IconBack, IconLock } from "@/components/icons";
 import { LiveCard } from "@/components/LiveCard";
 import { KillLine, LaneDuels } from "@/components/PropsBuilders";
@@ -87,7 +87,6 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       </div>
     );
   }
-  const lock = game.closes_at ? countdown(game.closes_at, now) : winner?.state === "OPEN" ? countdown(winner.close_at, now) : null;
   const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
   const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const early = game.early ?? "UPCOMING";
@@ -100,7 +99,13 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         <section className="mp-section first">
           <div className="mp-head">
             <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
-            <span className="muted">{winner.state === "OPEN" && lock ? `Locks in ${lock}` : windowText(game, event)}</span>
+            <span className="muted">
+              {winner.state !== "OPEN"
+                ? windowText(game, event)
+                : winner.params.through_draft && early !== "OPEN"
+                  ? "Open until 3:00 of the game"
+                  : `Locks in ${countdown(winner.close_at, now)}`}
+            </span>
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
@@ -139,11 +144,20 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
             <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." />
           </>
         ) : early === "UPCOMING" && game.window !== "DONE" ? (
-          <div className="mp-locked">
-            <span className="t"><IconLock width={14} height={14} aria-hidden="true" /> Opens when the game loads</span>
-            <span>Lane duels and the kill line are open from the loading screen until 3:00.</span>
+          <>
+            {/* Greyed out until the game loads, so the page shows what is coming. */}
+            <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+              <IconLock width={13} height={13} aria-hidden="true" /> Opens when the game loads, until 3:00.
+            </p>
+            {["First to 5 kills", "Gold lead at 15:00", "First dragon"].map((l) => (
+              <LockedRow key={l} label={l} left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
+            ))}
+            <div className="mp-sub">Kill line</div>
+            <LockedRow label="Total kills" left="Under" right="Over" />
+            <div className="mp-sub">Lane duels · gold at 15:00</div>
+            <LaneDuels event={event} game={game.index} />
             <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
-          </div>
+          </>
         ) : (
           <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
         )}

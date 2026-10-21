@@ -133,12 +133,13 @@ def test_full_series_lifecycle(factory):
     start = Settings().opening_grant_rc + Settings().match_day_grant_rc  # opening grant + the Oct 23 match day
     assert _balance(factory, user_id) == start - 600
 
-    # Series goes live: markets lock immediately; no second grant for the same day.
+    # Series goes live: series markets lock immediately; game markets stay open through the draft (D-026).
+    # No second grant for the same day.
     now[0] = START + timedelta(minutes=5)
     feed.state = "inProgress"
     worker.cycle()
     with factory() as s:
-        assert {m.state for m in s.execute(select(Market)).scalars()} == {"LOCKED"}
+        assert _locked_unless_through_draft(s.execute(select(Market)).scalars())
     assert _balance(factory, user_id) == start - 600
 
     # Game 1 to Nova, observed by a poll; then games 2 and 3 to Atlas, observed one poll each.
@@ -194,7 +195,7 @@ def test_early_start_locks_before_the_schedule_catches_up(factory):
     worker.cycle()  # a second pass must not re-open the series from the stale schedule
     with factory() as s:
         assert s.execute(select(Fixture.status)).scalar_one() == "LIVE"
-        assert {m.state for m in s.execute(select(Market)).scalars()} == {"LOCKED"}
+        assert _locked_unless_through_draft(s.execute(select(Market)).scalars())
     assert worker.poll_interval() == 15
 
 
@@ -213,14 +214,19 @@ def _markets(factory):
         return {m.template_key: m for m in s.execute(select(Market)).scalars()}
 
 
+def _locked_unless_through_draft(ms) -> bool:
+    """Series markets lock at series start; through-draft game markets stay open until 3:00 of their game."""
+    return all((m.state == "OPEN") == bool(m.params.get("through_draft")) for m in ms)
+
+
 def _go_live(feed, worker, now):
-    """Series open, then live with Game 1 under way: everything open so far locks."""
+    """Series open, then live with Game 1 under way: series markets lock, game markets stay open."""
     worker.cycle()
     assert {m.state for m in _markets(worker.factory).values()} == {"OPEN"}
     now[0] = START + timedelta(minutes=2)
     feed.state, feed.games[0].state = "inProgress", "inProgress"
     worker.cycle()
-    assert {m.state for m in _markets(worker.factory).values()} == {"LOCKED"}
+    assert _locked_unless_through_draft(_markets(worker.factory).values())
 
 
 KILLS = [3, 2, 5, 1, 0, 1, 2, 4, 6, 1]
@@ -239,9 +245,9 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
     worker.cycle()
     ms = _markets(factory)
     g2 = ms["game_winner:m1:2"]
-    assert g2.state == "OPEN" and g2.params == {"game_index": 2} and g2.scope == "GAME"
-    assert g2.close_at == START + timedelta(minutes=42)
-    # Series markets and Game 1 stay locked while the series is live; Game 3 is not offered yet.
+    assert g2.state == "OPEN" and g2.params == {"game_index": 2, "through_draft": True} and g2.scope == "GAME"
+    assert g2.close_at == START + timedelta(minutes=42) + markets.DRAFT_GRACE  # provisional until it loads
+    # Series markets stay locked while the series is live; Game 1 is over; Game 3 is not offered yet.
     assert all(m.state == "LOCKED" for k, m in ms.items() if k != "game_winner:m1:2")
     assert "game_winner:m1:3" not in ms
     with factory() as s:
@@ -252,8 +258,8 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
     feed.scripted["g2"] = ScriptedGame("g2", START + timedelta(minutes=40), 1800)
     now[0] = START + timedelta(minutes=40, seconds=20)
     worker.cycle()
-    g2 = _markets(factory)["game_winner:m1:2"]
-    assert g2.state == "LOCKED" and g2.state_reason == "Locked at Game 2 start"
+    g2 = _markets(factory)["game_winner:m1:2"]  # open through the draft: its cutoff is now 3:00 of Game 2
+    assert g2.state == "OPEN" and g2.close_at == START + timedelta(minutes=43)
     with factory() as s:
         game2 = s.execute(select(Game).where(Game.game_index == 2)).scalar_one()
         assert game2.started_at == START + timedelta(minutes=40) and game2.state == "unstarted"
@@ -265,6 +271,8 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
     with factory() as s:
         live = s.execute(select(Game).where(Game.game_index == 2)).scalar_one().timeline["live"]
         assert live["state"] == "in_game" and 500 < live["clock_s"] < 600 and live["kills"]["blue"] == 1
+    g2 = _markets(factory)["game_winner:m1:2"]
+    assert g2.state == "LOCKED" and g2.state_reason == "Locked at 3:00"
 
 
 def test_two_nil_never_opens_game_three_and_voids_a_stray_one(factory):
@@ -278,11 +286,10 @@ def test_two_nil_never_opens_game_three_and_voids_a_stray_one(factory):
     now[0] = START + timedelta(minutes=36)
     worker.cycle()
     assert _markets(factory)["game_winner:m1:2"].state == "OPEN"
-    # Nobody saw Game 2 load in time: the market locks at its own cutoff.
+    # Through the draft (D-026): still open 7 minutes after Game 1, until 3:00 of Game 2 once it loads.
     now[0] = START + timedelta(minutes=43)
     worker.cycle()
-    g2 = _markets(factory)["game_winner:m1:2"]
-    assert g2.state == "LOCKED" and g2.state_reason == "Locked before Game 2 draft"
+    assert _markets(factory)["game_winner:m1:2"].state == "OPEN"
 
     # A Game 3 market left open by a lagging feed must not outlive the series.
     with factory() as s, s.begin():
@@ -339,5 +346,6 @@ def test_game_specs_hold_pre_game_markets_only():
     stats = markets.TournamentStats(games=15, pick_rate={}, kill_totals=[20] * 10 + [30] * 5)
     close = START + timedelta(minutes=42)
     fresh = {s.kind: s for s in markets.game_specs(fixture, 2, a, b, 0.6, stats, close, "MODEL")}
-    assert fresh["game_winner"].close_at == close and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
+    assert fresh["game_winner"].close_at == close + markets.DRAFT_GRACE and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
+    assert "until 3:00" in fresh["game_winner"].rules_text and fresh["game_winner"].params["through_draft"]
     assert "total_kills_game" not in fresh  # kill lines open once the game loads (early-game window)

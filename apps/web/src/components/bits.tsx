@@ -113,8 +113,8 @@ export function EventStatus({ status, closeAt, countdownText }: { status: string
   if (status === "LIVE") return <span className="status live"><span className="dot" />Live</span>;
   if (status === "COMPLETED") return <span className="status">Final</span>;
   if (status === "POSTPONED") return <span className="status hold">Postponed</span>;
-  if (closeAt && countdownText) return <span className="when">Locks in {countdownText}</span>;
-  if (closeAt) return <span className="state-note"><IconLock width={13} height={13} /> Locked</span>;
+  if (closeAt && countdownText) return <span className="when">Starts in {countdownText}</span>;
+  if (closeAt) return <span className="state-note">Starting soon</span>;
   return null;
 }
 
