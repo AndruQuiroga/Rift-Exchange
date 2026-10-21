@@ -6,11 +6,16 @@ import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
 from rift import grants
-from rift.models import AuditEvent, Invite, Season, Session, User
+from rift.models import AuditEvent, Invite, Season, Session, SignInCode, User
+
+# No 0/O or 1/I/L: codes are read off one screen and typed into another.
+CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+DEVICE_CODE_TTL = timedelta(minutes=10)
+ADMIN_CODE_TTL = timedelta(hours=24)
 
 
 class AuthError(Exception):
@@ -60,6 +65,33 @@ def redeem_invite(db: DbSession, season: Season, code: str, name: str, now: date
     invite.used_by, invite.used_at = user.id, now
     grants.join_season(db, season, user.id, now)
     db.add(AuditEvent(actor=handle, action="invite.redeemed", entity_type="user", entity_id=str(user.id)))
+    return user, start_session(db, user.id, now, session_days)
+
+
+def create_sign_in_code(db: DbSession, user: User, now: datetime, ttl: timedelta = DEVICE_CODE_TTL,
+                        actor: str | None = None) -> tuple[str, datetime]:
+    """A one-time code ("K7MQ-2PXR") that signs another device into `user`. Replaces their unused codes."""
+    db.execute(update(SignInCode).where(SignInCode.user_id == user.id, SignInCode.used_at.is_(None),
+                                        SignInCode.expires_at > now).values(expires_at=now))
+    code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(8))
+    expires_at = now + ttl
+    db.add(SignInCode(code_hash=digest(code), user_id=user.id, expires_at=expires_at))
+    db.add(AuditEvent(actor=actor or user.handle, action="sign_in_code.created", entity_type="user",
+                      entity_id=str(user.id), data={"minutes": int(ttl.total_seconds() // 60)}))
+    return f"{code[:4]}-{code[4:]}", expires_at
+
+
+def redeem_sign_in_code(db: DbSession, code: str, now: datetime, session_days: int) -> tuple[User, str]:
+    normalized = re.sub(r"[^A-Z0-9]", "", code.upper())
+    row = db.execute(select(SignInCode).where(SignInCode.code_hash == digest(normalized)).with_for_update()
+                     ).scalar_one_or_none()
+    if row is None or row.used_at is not None or row.expires_at <= now:
+        raise AuthError("CODE_INVALID",
+                        "That code is wrong, used or expired. Make a new one on a signed-in device.")
+    row.used_at = now
+    user = db.get(User, row.user_id)
+    db.add(AuditEvent(actor=user.handle, action="sign_in_code.redeemed", entity_type="user",
+                      entity_id=str(user.id)))
     return user, start_session(db, user.id, now, session_days)
 
 

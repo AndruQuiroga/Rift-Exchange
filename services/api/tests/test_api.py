@@ -9,7 +9,7 @@ from test_timeline import CHAMPS
 from rift.api.app import create_app
 from rift.auth import create_invite
 from rift.config import Settings
-from rift.models import Fixture, Game, Market, Outcome, Season
+from rift.models import Fixture, Game, Market, Outcome, Season, SignInCode
 
 H = {"x-rift-client": "web"}
 
@@ -169,3 +169,33 @@ def test_event_games_and_live_scoreboard(api, factory, world):
     assert picks["total_kills_game"]["live"] == {"current": 8, "line": "27.5", "needed": 20}
     assert mika.get(f"/api/v1/events/{world['fixture']}/live").json()["my_picks"] == []
     assert TestClient(app).get(f"/api/v1/events/{world['fixture']}/live").status_code == 401
+
+
+def test_sign_in_code_adds_a_device(api, factory):
+    app, codes = api
+    phone = signup(app, codes[0], "kai")
+    assert TestClient(app).post("/api/v1/auth/sign-in-codes", headers=H).status_code == 401
+    first = phone.post("/api/v1/auth/sign-in-codes", headers=H).json()["code"]
+    code = phone.post("/api/v1/auth/sign-in-codes", headers=H).json()["code"]
+    assert len(code) == 9 and code[4] == "-"
+    desktop = TestClient(app)
+    # A new code replaces the old one; codes forgive case, spaces and a missing dash.
+    r = desktop.post("/api/v1/auth/sign-in", json={"code": first}, headers=H)
+    assert r.json()["error"]["code"] == "CODE_INVALID"
+    assert desktop.post("/api/v1/auth/sign-in", json={"code": code.replace("-", " ").lower()}).status_code == 403
+    r = desktop.post("/api/v1/auth/sign-in", json={"code": f" {code.replace('-', '').lower()} "}, headers=H)
+    assert r.status_code == 200, r.text
+    assert desktop.get("/api/v1/me").json()["user"]["id"] == phone.get("/api/v1/me").json()["user"]["id"]
+    # One use only, and a used code can't be replayed on a third device.
+    r = TestClient(app).post("/api/v1/auth/sign-in", json={"code": code}, headers=H)
+    assert r.json()["error"]["code"] == "CODE_INVALID"
+
+
+def test_sign_in_code_expires(api, factory):
+    app, codes = api
+    phone = signup(app, codes[0], "kai")
+    code = phone.post("/api/v1/auth/sign-in-codes", headers=H).json()["code"]
+    with factory() as s, s.begin():
+        s.execute(update(SignInCode).values(expires_at=SignInCode.created_at))
+    r = TestClient(app).post("/api/v1/auth/sign-in", json={"code": code}, headers=H)
+    assert (r.status_code, r.json()["error"]["code"]) == (400, "CODE_INVALID")

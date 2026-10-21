@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { Brand } from "@/components/AppShell";
@@ -75,6 +76,13 @@ function Join() {
             {busy ? "Joining…" : "Join the league"}
           </button>
         </form>
+        <p className="muted" style={{ marginTop: 20, fontSize: 14 }}>
+          Already joined on another device? Don&apos;t use a new invite, which would make a second account.{" "}
+          <Link className="link" href="/signin">
+            Sign in with a code
+          </Link>
+          .
+        </p>
       </div>
     </main>
   );
