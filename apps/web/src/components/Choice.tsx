@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { odds as fmtOdds } from "@/lib/format";
+import { oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { MarketT, OutcomeT } from "@/lib/types";
 
@@ -18,7 +18,7 @@ export function Choice({ market, outcome, label, className, children }: { market
       aria-pressed={selected}
       disabled={!open && !selected}
       onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${market.title}: ${outcome.label}, ${fmtOdds(outcome.odds)} times${selected ? ", in slip" : ""}`}
+      aria-label={`${market.title}: ${outcome.label}, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}`}
     >
       {children}
     </button>

@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { useNow } from "@/lib/hooks";
-import { countdown, odds as fmtOdds } from "@/lib/format";
+import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
+import { RetryNotice } from "./bits";
 import { Choice } from "./Choice";
 
 type Side = "A" | "B";
@@ -31,12 +32,14 @@ const ROLE_SHORT: Record<string, string> = { top: "TOP", jungle: "JGL", mid: "MI
 function useOnDemand(event: EventT) {
   const slip = useSlip();
   const [created, setCreated] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; retry: () => void } | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
   const label = `${event.team_a?.code ?? "TBD"} vs ${event.team_b?.code ?? "TBD"}`;
   async function tap(key: string, path: string, body: unknown, code: string) {
     const known = created[key];
     if (known && slip.isSelected(known)) return slip.remove(known);
     setError(null);
+    setBusy(key);
     try {
       const market = await api<MarketT>(path, { method: "POST", json: body });
       const outcome = market.outcomes.find((o) => o.code === code);
@@ -44,27 +47,36 @@ function useOnDemand(event: EventT) {
       setCreated((p) => ({ ...p, [key]: outcome.id }));
       slip.toggle(market, outcome, label);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't get a price.");
+      const text = e instanceof ApiError ? e.message : "Couldn't get a price. Check your connection.";
+      setError({ text, retry: () => tap(key, path, body, code) });
+    } finally {
+      setBusy(null);
     }
   }
   const selected = (key: string) => (created[key] ? slip.isSelected(created[key]) : false);
-  return { tap, selected, error };
+  const notice = error ? <RetryNotice text={error.text} onRetry={error.retry} /> : null;
+  return { tap, selected, isBusy: (key: string) => busy === key, notice };
+}
+
+/** The price on an on-demand button, or a spinner while its market is fetched. */
+function Price({ odds, busy, style }: { odds: string | null; busy: boolean; style?: React.CSSProperties }) {
+  return <span className="px num" style={style}>{busy ? <span className="spinner" aria-hidden="true" /> : fmtOdds(odds)}</span>;
 }
 
 export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   const { data } = useSWR<DuelGrid>(`/events/${event.id}/duels?game=${game}`, { refreshInterval: 2000 });
   const now = useNow(1000);
   const [stat, setStat] = useState("kills");
-  const { tap, selected, error } = useOnDemand(event);
+  const { tap, selected, isBusy, notice } = useOnDemand(event);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
   if (!data.duels.length) return <WindowNote data={data} now={now} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   return (
     <div>
       <WindowNote data={data} now={now} />
-      <div className="segmented" role="tablist" aria-label="Duel stat" style={{ marginTop: 12 }}>
+      <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
         {data.stats.map((s) => (
-          <button key={s.id} role="tab" aria-selected={stat === s.id} onClick={() => setStat(s.id)}>
+          <button key={s.id} aria-pressed={stat === s.id} onClick={() => setStat(s.id)}>
             {s.id === "kills" ? "Kills" : s.id === "cs15" ? "CS @15" : "Damage"}
           </button>
         ))}
@@ -80,12 +92,13 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
                 className={`side${s === "B" ? " right" : ""}`}
                 style={{ minHeight: 48 }}
                 aria-pressed={selected(key)}
-                disabled={!open || !px}
+                disabled={!open || !px || isBusy(key)}
+                aria-busy={isBusy(key) || undefined}
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
-                aria-label={`${(s === "A" ? d.a : d.b).name}, ${fmtOdds(px ?? null)} times`}
+                aria-label={`${(s === "A" ? d.a : d.b).name}, ${oddsSpoken(px ?? null)}`}
               >
                 <span className="duel-name"><span className="code">{(s === "A" ? d.a : d.b).name}</span><small style={{ display: "block", color: "var(--muted)" }}>{(s === "A" ? d.a : d.b).champion ?? "Champion pending"}</small></span>
-                <span className="px num" style={{ fontSize: 15 }}>{fmtOdds(px ?? null)}</span>
+                <Price odds={px ?? null} busy={isBusy(key)} style={{ fontSize: 15 }} />
               </button>
             );
           };
@@ -98,7 +111,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
           );
         })}
       </div>
-      {error ? <div className="notice error" role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
+      {notice}
       <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00 or first blood. Ties void.</p>
     </div>
   );
@@ -108,7 +121,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
   const { data } = useSWR<LineGrid>(`/events/${event.id}/kill-lines?game=${game}`, { refreshInterval: 2000 });
   const now = useNow(1000);
   const [index, setIndex] = useState<number | null>(null);
-  const { tap, selected, error } = useOnDemand(event);
+  const { tap, selected, isBusy, notice } = useOnDemand(event);
   useEffect(() => {
     if (data && data.lines.length && index === null) {
       const typical = data.lines.findIndex((l) => l.line === data.typical);
@@ -155,16 +168,17 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
               className="side"
               style={{ justifyContent: "space-between" }}
               aria-pressed={selected(key)}
-              disabled={!open}
+              disabled={!open || isBusy(key)}
+              aria-busy={isBusy(key) || undefined}
               onClick={() => tap(key, `/events/${event.id}/kill-lines`, { game_index: game, line: row.line }, code)}
             >
               <span className="code">{code === "OVER" ? "Over" : "Under"} {row.line}</span>
-              <span className="px num">{fmtOdds(px)}</span>
+              <Price odds={px} busy={isBusy(key)} />
             </button>
           );
         })}
       </div>
-      {error ? <div className="notice error" role="alert" style={{ marginTop: 8 }}>{error}</div> : null}
+      {notice}
     </div>
   );
 }
@@ -183,7 +197,7 @@ export function Objectives({ event, game }: { event: EventT; game: number }) {
           <div className="opts">
             {m.outcomes.map((o) => (
               <Choice key={o.id} market={m} outcome={o} label={label} className="mini">
-                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num">{fmtOdds(o.odds)}×</b>
+                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num">{fmtOdds(o.odds)}</b>
               </Choice>
             ))}
           </div>

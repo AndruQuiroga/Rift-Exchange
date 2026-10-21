@@ -2,7 +2,10 @@ const rcFmt = new Intl.NumberFormat("en-US");
 
 export const rc = (n: number) => rcFmt.format(n);
 
-export const odds = (o: string | null) => (o ? Number(o).toFixed(2) : "—");
+/** Every price on every screen reads the same way: "2.00×". */
+export const odds = (o: string | null) => (o ? `${Number(o).toFixed(2)}×` : "—");
+/** The same price for screen readers: "2.00 times". */
+export const oddsSpoken = (o: string | null) => (o ? `${Number(o).toFixed(2)} times` : "no price");
 
 /** Mirrors the server's ROUND_HALF_UP whole-RC return. Display only; the server quote is authoritative. */
 export function potentialReturn(stake: number, o: string): number {

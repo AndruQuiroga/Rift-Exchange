@@ -166,11 +166,11 @@ img { display: block; }
 .chips { display: flex; gap: var(--s2); overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; margin: 0 calc(-1 * var(--s4)); padding-inline: var(--s4); }
 .chips::-webkit-scrollbar { display: none; }
 .chip {
-  flex: none; min-height: 40px; padding: 0 14px; border-radius: var(--radius-control);
+  flex: none; min-height: 44px; padding: 0 14px; border-radius: var(--radius-control);
   border: 1px solid var(--divider); background: var(--surface); color: var(--muted);
   font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
 }
-.chip[aria-pressed="true"], .chip[aria-selected="true"], .chip[aria-current="page"] { color: var(--text); background: var(--surface-3); border-color: var(--divider-strong); box-shadow: inset 0 -2px 0 var(--accent); }
+.chip[aria-pressed="true"], .chip[aria-current="page"] { color: var(--text); background: var(--surface-3); border-color: var(--divider-strong); box-shadow: inset 0 -2px 0 var(--accent); }
 .chip .count { color: var(--subtle); font-weight: 600; }
 @media (min-width: 1024px) { .chips { margin: 0; padding-inline: 0; } }
 
@@ -179,8 +179,8 @@ img { display: block; }
 .daytabs .chip span { font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
 
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--surface); border: 1px solid var(--divider); border-radius: var(--radius-control); padding: 3px; }
-.segmented button { min-height: 40px; border-radius: 5px; font-weight: 600; font-size: 14px; color: var(--muted); }
-.segmented button[aria-selected="true"] { background: var(--surface-3); color: var(--text); }
+.segmented button { min-height: 44px; border-radius: 5px; font-weight: 600; font-size: 14px; color: var(--muted); }
+.segmented button[aria-pressed="true"] { background: var(--surface-3); color: var(--text); }
 
 /* ------------------------------------------------------------------ event card */
 
@@ -243,7 +243,8 @@ img { display: block; }
 .odds .badge { font-size: 11px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; }
 
 .rules { margin-top: 10px; font-size: 13px; color: var(--subtle); }
-.rules summary { cursor: pointer; color: var(--muted); font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.rules > p.muted { color: var(--muted); line-height: 1.45; }
+.rules summary { cursor: pointer; color: var(--muted); font-weight: 600; min-height: 44px; display: flex; align-items: center; }
 .state-note { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
 
 /* ------------------------------------------------------------------ status */
@@ -329,7 +330,7 @@ img { display: block; }
 .if-correct { font-size: 13px; color: var(--muted); margin-top: 6px; }
 .if-correct b { color: var(--text); }
 .presets { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--s2); margin-top: var(--s3); }
-.presets button { min-height: 40px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); font-weight: 700; font-size: 14px; }
+.presets button { min-height: 44px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); font-weight: 700; font-size: 14px; }
 .presets button:hover { border-color: var(--divider-strong); }
 .totals { margin-top: var(--s3); border-top: 1px solid var(--divider); padding-top: var(--s3); display: grid; gap: 6px; font-size: 15px; }
 .totals div { display: flex; justify-content: space-between; gap: var(--s2); }
@@ -344,7 +345,7 @@ img { display: block; }
 .btn:hover:not(:disabled) { filter: brightness(1.05); }
 .btn:disabled { opacity: 0.55; }
 .btn.secondary { background: var(--surface-2); color: var(--text); border: 1px solid var(--divider-strong); }
-.btn.small { min-height: 40px; width: auto; font-size: 14px; }
+.btn.small { min-height: 44px; width: auto; font-size: 14px; }
 .fineprint { font-size: 12px; color: var(--subtle); text-align: center; margin-top: 10px; }
 
 .notice { border: 1px solid var(--divider); border-left: 3px solid var(--warn); background: var(--surface); border-radius: var(--radius-control); padding: 10px 12px; font-size: 14px; }
@@ -443,7 +444,7 @@ img { display: block; }
 .inline-q { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--s2); margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--divider); font-size: 14px; color: var(--muted); }
 .inline-q .opts { display: flex; gap: 6px; flex-wrap: wrap; }
 .mini {
-  display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 10px; border-radius: var(--radius-control);
+  display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 10px; border-radius: var(--radius-control);
   background: var(--surface-2); border: 1px solid var(--divider); font-size: 13px; font-weight: 600; color: var(--text);
 }
 .mini b { font-weight: 800; }
@@ -532,7 +533,7 @@ img { display: block; }
 .live-pick:first-of-type { border-top: 0; }
 .gametabs { display: flex; gap: 6px; margin-top: var(--s4); overflow-x: auto; }
 .gametab { flex: 1 1 0; min-width: 76px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border-radius: var(--radius-control); border: 1px solid var(--divider); background: var(--surface); text-align: left; }
-.gametab[aria-selected="true"] { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+.gametab[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
 .gametab .t { font-weight: 700; font-size: 14px; }
 .gametab .w { font-size: 11px; font-weight: 700; white-space: nowrap; }
 .w.OPEN { color: var(--win); } .w.UPCOMING { color: var(--warn); } .w.LOCKED, .w.DONE, .w.NOT_NEEDED { color: var(--subtle); }
@@ -565,3 +566,13 @@ img { display: block; }
 .stake-mode { margin-top: var(--s3); padding: 10px; border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider); }
 .stake-mode .segmented { margin-bottom: 8px; }
 .stake-mode .hint { font-size: 12px; color: var(--subtle); margin-top: 6px; }
+
+/* On-demand taps: a spinner in place of the price while the market is fetched, and a retry beside the error. */
+.spinner {
+  display: inline-block; width: 14px; height: 14px; border-radius: 50%; vertical-align: middle;
+  border: 2px solid var(--divider-strong); border-top-color: var(--accent); animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
+.notice.retry { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.notice.retry .btn { flex: none; margin: 0; }

@@ -41,12 +41,12 @@ function StakeMode({ count, available, apply }: { count: number; available: numb
 
   return (
     <div className="stake-mode">
-      <div className="segmented" role="tablist" aria-label="Stake mode">
+      <div className="segmented" role="group" aria-label="Stake mode">
         {(["each", "spread"] as const).map((m) => (
           <button
             key={m}
-            role="tab"
-            aria-selected={mode === m}
+           
+            aria-pressed={mode === m}
             onClick={() => {
               setMode(m);
               set(amount, m);
@@ -220,7 +220,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   <div className="sel">{s.outcome_label}</div>
                   <div className="ctx">{s.market_title}</div>
                 </div>
-                <div className="px num">{fmtOdds(s.odds)}×</div>
+                <div className="px num">{fmtOdds(s.odds)}</div>
               </div>
               <div className="if-correct num">
                 Staked <b>{rc(s.stake_rc)} RC</b> · returns <b>{rc(s.potential_return_rc)} RC</b> if correct
@@ -287,7 +287,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                   <div className="px num" aria-live="polite">
                     {was ? <span className="was">{fmtOdds(was)}</span> : null}
-                    {fmtOdds(l.odds)}×
+                    {fmtOdds(l.odds)}
                   </div>
                 </div>
                 <div className="stake-row">

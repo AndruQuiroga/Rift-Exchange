@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { PickStatus } from "@/components/bits";
-import { rc } from "@/lib/format";
+import { odds as fmtOdds, rc } from "@/lib/format";
 import type { Pick, Standing } from "@/lib/types";
 
 export default function LeaguePage() {
@@ -55,7 +55,7 @@ export default function LeaguePage() {
                   <div className="pick-sel">{p.outcome_label}</div>
                   <div className="pick-mkt">
                     {p.market_title}
-                    {p.event ? ` · ${p.event.team_a?.code} vs ${p.event.team_b?.code}` : ""} · {rc(p.stake_rc)} RC @ {Number(p.odds).toFixed(2)}×
+                    {p.event ? ` · ${p.event.team_a?.code} vs ${p.event.team_b?.code}` : ""} · {rc(p.stake_rc)} RC @ {fmtOdds(p.odds)}
                   </div>
                 </div>
                 <PickStatus pick={p} />

@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
-import { countdown, odds as fmtOdds } from "@/lib/format";
+import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
+import { RetryNotice } from "./bits";
 
 type Scope = "picked" | "A" | "B" | "banned" | "first";
 type Side = "A" | "B";
@@ -78,7 +79,8 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
   const [role, setRole] = useState("all");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; retry: GridChampion } | null>(null);
+  const [focusAt, setFocusAt] = useState(0);
   const [created, setCreated] = useState<Record<string, { outcomeId: string; label: string; odds: string | null }>>({});
   const { data: grid } = useSWR<Grid>(`/events/${event.id}/draft?game=${game}`);
 
@@ -146,10 +148,23 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
         if (next) setSlot(next);
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Couldn't get a price.");
+      setError({ text: e instanceof ApiError ? e.message : `Couldn't get a price for ${c.label}.`, retry: c });
     } finally {
       setBusy(null);
     }
+  }
+
+  // One tab stop for the whole grid; arrow keys, Home and End move between tiles.
+  function gridKeys(e: React.KeyboardEvent<HTMLDivElement>) {
+    const tiles = [...e.currentTarget.querySelectorAll<HTMLButtonElement>(".ctile")];
+    const i = tiles.indexOf(document.activeElement as HTMLButtonElement);
+    const cols = getComputedStyle(e.currentTarget).gridTemplateColumns.split(" ").length;
+    const step = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols, Home: -i, End: tiles.length - 1 - i }[e.key];
+    if (i < 0 || step === undefined) return;
+    e.preventDefault();
+    const next = Math.max(0, Math.min(tiles.length - 1, i + step));
+    setFocusAt(next);
+    tiles[next].focus();
   }
 
   const scopeLabel = (s: Scope) =>
@@ -158,9 +173,9 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
   return (
     <div>
       {event.best_of > 1 && fixedGame === undefined ? (
-        <div className="chips" role="tablist" aria-label="Game" style={{ marginTop: 12 }}>
+        <div className="chips" role="group" aria-label="Game" style={{ marginTop: 12 }}>
           {Array.from({ length: event.best_of }, (_, i) => i + 1).map((g) => (
-            <button key={g} role="tab" className="chip" aria-selected={g === game} onClick={() => setGame(g)}>
+            <button key={g} className="chip" aria-pressed={g === game} onClick={() => setGame(g)}>
               Game {g}
             </button>
           ))}
@@ -168,16 +183,16 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
       ) : null}
 
       {canSelect ? (
-        <div className="segmented" role="tablist" aria-label="Mode" style={{ marginTop: 12 }}>
-          <button role="tab" aria-selected={mode === "grid"} onClick={() => setMode("grid")}>Any champion</button>
-          <button role="tab" aria-selected={mode === "select"} onClick={() => setMode("select")}>Champ select</button>
+        <div className="segmented" role="group" aria-label="Mode" style={{ marginTop: 12 }}>
+          <button aria-pressed={mode === "grid"} onClick={() => setMode("grid")}>Any champion</button>
+          <button aria-pressed={mode === "select"} onClick={() => setMode("select")}>Champ select</button>
         </div>
       ) : null}
 
       {mode === "grid" ? (
-        <div className="chips" role="tablist" aria-label="What to call" style={{ marginTop: 10 }}>
+        <div className="chips" role="group" aria-label="What to call" style={{ marginTop: 10 }}>
           {scopes.map((s) => (
-            <button key={s} role="tab" className="chip" aria-selected={scope === s} onClick={() => setScope(s)}>
+            <button key={s} className="chip" aria-pressed={scope === s} onClick={() => setScope(s)}>
               {scopeLabel(s)}
             </button>
           ))}
@@ -231,34 +246,38 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
         </div>
       ) : null}
 
-      {error ? <div className="notice error" role="alert" style={{ marginTop: 10 }}>{error}</div> : null}
+      {error ? <RetryNotice text={error.text} onRetry={() => tap(error.retry)} /> : null}
 
       {!grid ? (
         <div className="skeleton" style={{ marginTop: 12, height: 200 }} />
       ) : shown.length === 0 ? (
         <p className="muted" style={{ marginTop: 12, fontSize: 14 }}>No champions match.</p>
       ) : (
-        <div className="cgrid">
-          {shown.map((c) => {
+        <div className="cgrid" role="group" aria-label="Champions · arrow keys move between them" onKeyDown={gridKeys}>
+          {shown.map((c, i) => {
             const s: Scope = mode === "select" ? slot.side : scope;
             const key = keyOf(game, c.champion, s, mode === "select" ? slot.role : undefined);
             const k = known[key];
             const px = priceOf(c);
             const taken = takenBy.get(c.champion);
+            const loading = busy === key;
             return (
               <button
                 key={c.champion}
-                className="ctile"
+                className={`ctile${loading ? " busy" : ""}`}
                 aria-pressed={k ? slip.isSelected(k.outcomeId) : false}
-                disabled={!grid.open || busy === key || !!taken}
+                aria-busy={loading || undefined}
+                disabled={!grid.open || loading || !!taken}
+                tabIndex={i === Math.min(focusAt, shown.length - 1) ? 0 : -1}
+                onFocus={() => setFocusAt(i)}
                 onClick={() => tap(c)}
                 aria-label={taken
                   ? `${c.label}, already in ${taken}`
-                  : `${c.label}, ${mode === "select" ? `${code(slot.side)} ${slot.role}` : scopeLabel(scope)}, Game ${game}, ${fmtOdds(px)} times`}
+                  : `${c.label}, ${mode === "select" ? `${code(slot.side)} ${slot.role}` : scopeLabel(scope)}, Game ${game}, ${oddsSpoken(px)}`}
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>
-                <span className="px num">{taken ? `In ${taken}` : `${fmtOdds(px)}×`}</span>
+                <span className="px num">{taken ? `In ${taken}` : loading ? <span className="spinner" aria-hidden="true" /> : fmtOdds(px)}</span>
               </button>
             );
           })}

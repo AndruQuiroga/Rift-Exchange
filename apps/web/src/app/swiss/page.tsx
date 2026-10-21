@@ -131,7 +131,7 @@ export default function SwissBoardPage() {
                       <button key={m.id} className="tchip placed" onClick={() => slip.remove(o.id)} aria-label={`Remove ${teamName(m.team)} from ${r.label}`}>
                         <TeamMark team={m.team ?? null} />
                         {m.team?.code}
-                        <span className="o num">{fmtOdds(o.odds)}×</span>
+                        <span className="o num">{fmtOdds(o.odds)}</span>
                       </button>
                     );
                   })}
@@ -143,7 +143,7 @@ export default function SwissBoardPage() {
                         setSelected(null);
                       }}
                     >
-                      + {sel.team?.code} here · {fmtOdds(target.odds)}×
+                      + {sel.team?.code} here · {fmtOdds(target.odds)}
                     </button>
                   ) : null}
                 </div>

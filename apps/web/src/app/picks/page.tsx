@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { PickStatus } from "@/components/bits";
-import { rc } from "@/lib/format";
+import { odds as fmtOdds, rc } from "@/lib/format";
 import type { Pick } from "@/lib/types";
 
 export default function PicksPage() {
@@ -24,9 +24,9 @@ export default function PicksPage() {
           </p>
         </div>
       </div>
-      <div className="segmented" role="tablist" aria-label="Pick status">
-        <button role="tab" aria-selected={tab === "open"} onClick={() => setTab("open")}>Open</button>
-        <button role="tab" aria-selected={tab === "settled"} onClick={() => setTab("settled")}>Settled</button>
+      <div className="segmented" role="group" aria-label="Pick status">
+        <button aria-pressed={tab === "open"} onClick={() => setTab("open")}>Open</button>
+        <button aria-pressed={tab === "settled"} onClick={() => setTab("settled")}>Settled</button>
       </div>
       <section className="section">
         {!picks ? (
@@ -68,7 +68,7 @@ function PickCard({ pick: p }: { pick: Pick }) {
           Stake<b>{rc(p.stake_rc)}</b>
         </div>
         <div>
-          Odds<b>{Number(p.odds).toFixed(2)}×</b>
+          Odds<b>{fmtOdds(p.odds)}</b>
         </div>
         <div>
           {p.status === "OPEN" ? "To return" : "Returned"}

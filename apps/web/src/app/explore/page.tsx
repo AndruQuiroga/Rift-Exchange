@@ -46,9 +46,9 @@ function Explore() {
           <p>Every open market, by match or by tournament.</p>
         </div>
       </div>
-      <div className="segmented" role="tablist" aria-label="Explore">
+      <div className="segmented" role="group" aria-label="Explore">
         {(["MATCHES", "FUTURES"] as const).map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => router.replace(t === "FUTURES" ? "/explore?tab=FUTURES" : "/explore")}>
+          <button key={t} aria-pressed={tab === t} onClick={() => router.replace(t === "FUTURES" ? "/explore?tab=FUTURES" : "/explore")}>
             {t === "MATCHES" ? "Upcoming matches" : "Futures"}
           </button>
         ))}

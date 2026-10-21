@@ -1,7 +1,7 @@
 "use client";
 
 import type { MarketT, OutcomeT, Pick, Team } from "@/lib/types";
-import { odds as fmtOdds } from "@/lib/format";
+import { odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import { IconCheck, IconLock } from "./icons";
 
@@ -27,7 +27,7 @@ export function OddsButton({ market, outcome, eventLabel }: { market: MarketT; o
       aria-pressed={selected}
       disabled={!available && !selected}
       onClick={() => slip.toggle(market, outcome, eventLabel)}
-      aria-label={`${outcome.label}, ${fmtOdds(outcome.odds)} times${selected ? ", in slip" : ""}${!available ? ", unavailable" : ""}`}
+      aria-label={`${outcome.label}, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${!available ? ", unavailable" : ""}`}
     >
       <span className="lbl">{outcome.label}</span>
       <span className="px num">
@@ -84,12 +84,15 @@ export function MarketBlock({ market, eventLabel, compact }: { market: MarketT; 
         ))}
       </div>
       {compact ? null : (
-      <details className="rules">
-        <summary>How this settles</summary>
-        <p>{market.rules}</p>
+      <div className="rules">
+        <p className="muted">{market.rules.split(/(?<=\.)\s/)[0]}</p>
         {market.state_reason && market.state !== "OPEN" ? <p style={{ marginTop: 6 }}>Status: {market.state_reason}</p> : null}
         {market.result ? <p style={{ marginTop: 6 }}>Result: {market.result.reason}{market.result.revision > 1 ? ` (correction #${market.result.revision - 1})` : ""}</p> : null}
-      </details>
+        <details>
+          <summary>Full rules</summary>
+          <p>{market.rules}</p>
+        </details>
+      </div>
       )}
     </section>
   );
@@ -112,4 +115,14 @@ export function EventStatus({ status, closeAt, countdownText }: { status: string
   if (closeAt && countdownText) return <span className="when">Locks in {countdownText}</span>;
   if (closeAt) return <span className="state-note"><IconLock width={13} height={13} /> Locked</span>;
   return null;
+}
+
+/** A failed on-demand price (champion, duel, kill line): what went wrong and one tap to try again. */
+export function RetryNotice({ text, onRetry }: { text: string; onRetry: () => void }) {
+  return (
+    <div className="notice error retry" role="alert" style={{ marginTop: 10 }}>
+      <span>{text}</span>
+      <button type="button" className="btn small secondary" onClick={onRetry}>Try again</button>
+    </div>
+  );
 }

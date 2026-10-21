@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
-import { countdown, dayLabel, longDate, rc, venueToday } from "@/lib/format";
+import { countdown, dayLabel, longDate, odds as fmtOdds, rc, venueToday } from "@/lib/format";
 import { useNow, useSeason } from "@/lib/hooks";
 import type { EventT, MarketT, Standing } from "@/lib/types";
 
@@ -42,11 +42,11 @@ export default function TodayPage() {
       </div>
 
       {days.length ? (
-        <div className="chips daytabs" role="tablist" aria-label="Match days">
+        <div className="chips daytabs" role="group" aria-label="Match days">
           {days.map((d) => {
             const l = dayLabel(d);
             return (
-              <button key={d} role="tab" className="chip" aria-selected={d === day} onClick={() => setDay(d)}>
+              <button key={d} className="chip" aria-pressed={d === day} onClick={() => setDay(d)}>
                 <span>{d === today ? "Today" : l.dow}</span>
                 <b className="num">{l.date}</b>
               </button>
@@ -98,7 +98,7 @@ export default function TodayPage() {
               {champion.outcomes.slice(0, 4).map((o) => (
                 <Link className="row" key={o.id} href="/explore?tab=FUTURES">
                   <div className="title">{o.label}</div>
-                  <div className="amount num">{o.odds ? `${Number(o.odds).toFixed(2)}×` : "—"}</div>
+                  <div className="amount num">{fmtOdds(o.odds)}</div>
                 </Link>
               ))}
             </div>

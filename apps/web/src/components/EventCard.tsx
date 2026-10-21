@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
-import { countdown, kickoff, odds as fmtOdds } from "@/lib/format";
+import { countdown, kickoff, odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
@@ -53,7 +53,7 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
       aria-pressed={selected}
       disabled={!open && !selected}
       onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${teamName(team)} to win, ${fmtOdds(outcome.odds)} times${selected ? ", in slip" : ""}`}
+      aria-label={`${teamName(team)} to win, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}`}
     >
       <span className="who">
         <TeamMark team={team} />
