@@ -68,6 +68,8 @@ class Worker:
             self._run("futures", self._price_futures)
         if self._due("lineups", timedelta(minutes=10)):
             self._run("lineups", lambda s, now: ingest.sync_lineups(s, self._season(s), self.client, now))
+        self._run("early_teams", lambda s, now: props.open_early_team_markets(
+            s, self._season(s), self.settings, self._model(s)[0], now))
         self._run("early", lambda s, now: props.tighten_early(s, now))
         self._run("lock", lambda s, now: markets.lock_due(s, now))
         self._run("card", lambda s, now: swiss_card.convert_staked(s, self._season(s), now))

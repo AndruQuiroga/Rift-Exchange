@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
 import { ChampionRow } from "@/components/ChampionGrid";
@@ -57,6 +57,8 @@ function Section({ title, sub, children }: { title: string; sub?: string; childr
 }
 
 const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
+// Team races in the early window, opened when the game loads (D-025).
+const RACES = ["five_kills", "gold_lead_15", "first_dragon"];
 
 /** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
 function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: number }) {
@@ -89,6 +91,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
   const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
   const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const early = game.early ?? "UPCOMING";
+  const races = RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
 
   return (
@@ -128,8 +131,12 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00" : undefined}>
         {early === "OPEN" ? (
           <>
-            <LaneDuels event={event} game={game.index} />
+            {races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m)} />)}
+            <div className="mp-sub">Kill line</div>
             <KillLine event={event} game={game.index} />
+            <div className="mp-sub">Lane duels · gold at 15:00</div>
+            <LaneDuels event={event} game={game.index} />
+            <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." />
           </>
         ) : early === "UPCOMING" && game.window !== "DONE" ? (
           <div className="mp-locked">
@@ -193,6 +200,7 @@ export default function EventPage() {
   const { data: event, error } = useSWR<EventT>(`/events/${id}`);
   const now = useNow();
   const [tab, setTab] = useState<number | null>(null);
+  const touch = useRef<{ x: number; y: number } | null>(null);
 
   if (error) {
     return (
@@ -215,6 +223,27 @@ export default function EventPage() {
   const current = tab ?? (event.status === "LIVE" && openGame ? openGame.index : 0);
   const shownGame = event.best_of === 1 ? (event.games ?? [])[0] : gameList.find((g) => g.index === current);
   const priced = markets.length > 0 && event.team_a && event.team_b;
+  // Phones: swipe left or right to move between Series and each game. Swipes that start on something
+  // that scrolls sideways itself (the champion row, the kill-line slider) stay with it.
+  const tabs = [0, ...gameList.map((g) => g.index)];
+  function onTouchStart(e: React.TouchEvent) {
+    const target = e.target as HTMLElement;
+    touch.current = target.closest(".champ-row, input, .swiss-board") ? null : { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  function onTouchEnd(e: React.TouchEvent) {
+    const start = touch.current;
+    touch.current = null;
+    if (!start || tabs.length < 2) return;
+    const dx = e.changedTouches[0].clientX - start.x;
+    const dy = e.changedTouches[0].clientY - start.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < 1.5 * Math.abs(dy)) return;
+    const at = tabs.indexOf(current);
+    const next = tabs[Math.max(0, Math.min(tabs.length - 1, at + (dx < 0 ? 1 : -1)))];
+    if (next !== current) {
+      setTab(next);
+      window.scrollTo({ top: 0 });
+    }
+  }
 
   return (
     <>
@@ -252,6 +281,7 @@ export default function EventPage() {
         </div>
       ) : null}
 
+      <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       {!priced ? (
         <div className="empty" style={{ marginTop: 12 }}>
           <h3>No prices yet</h3>
@@ -262,6 +292,7 @@ export default function EventPage() {
       ) : (
         <SeriesPanel event={event} />
       )}
+      </div>
       <FriendsPicks event={event} />
       <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
         Every pick is a single with its own price. Nothing is multiplied together.
