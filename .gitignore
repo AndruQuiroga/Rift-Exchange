@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .next/
+.next-*/
 .env
 .env.local
 *.log

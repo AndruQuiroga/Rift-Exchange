@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
-import { useNow } from "@/lib/hooks";
+import { useNow, usePlaced } from "@/lib/hooks";
 import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
@@ -34,6 +34,7 @@ function useOnDemand(event: EventT) {
   const [created, setCreated] = useState<Record<string, string>>({});
   const [error, setError] = useState<{ text: string; retry: () => void } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const held = usePlaced();
   const label = `${event.team_a?.code ?? "TBD"} vs ${event.team_b?.code ?? "TBD"}`;
   async function tap(key: string, path: string, body: unknown, code: string) {
     const known = created[key];
@@ -55,7 +56,12 @@ function useOnDemand(event: EventT) {
   }
   const selected = (key: string) => (created[key] ? slip.isSelected(created[key]) : false);
   const notice = error ? <RetryNotice text={error.text} onRetry={error.retry} /> : null;
-  return { tap, selected, isBusy: (key: string) => busy === key, notice };
+  // An on-demand market someone already created comes back on the event; mark it if you hold a pick on it.
+  const placed = (match: (m: MarketT) => boolean, code: string) => {
+    const o = (event.markets ?? []).find(match)?.outcomes.find((x) => x.code === code);
+    return !!o && held.has(o.id);
+  };
+  return { tap, selected, placed, isBusy: (key: string) => busy === key, notice };
 }
 
 /** The price on an on-demand button, or a spinner while its market is fetched. */
@@ -67,7 +73,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   const { data } = useSWR<DuelGrid>(`/events/${event.id}/duels?game=${game}`, { refreshInterval: 2000 });
   const now = useNow(1000);
   const [stat, setStat] = useState("kills");
-  const { tap, selected, isBusy, notice } = useOnDemand(event);
+  const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
   if (!data.duels.length) return <WindowNote data={data} now={now} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
@@ -87,11 +93,13 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
           const side = (s: Side) => {
             const key = `${game}:${d.role}:${stat}:${s}`;
             const px = d.odds[stat]?.[s];
+            const mine = placed((m) => m.kind === "lane_duel" && m.params.game_index === game && m.params.role === d.role && m.params.stat === stat, s);
             return (
               <button
                 className={`side${s === "B" ? " right" : ""}`}
                 style={{ minHeight: 48 }}
                 aria-pressed={selected(key)}
+                data-placed={mine || undefined}
                 disabled={!open || !px || isBusy(key)}
                 aria-busy={isBusy(key) || undefined}
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
@@ -121,7 +129,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
   const { data } = useSWR<LineGrid>(`/events/${event.id}/kill-lines?game=${game}`, { refreshInterval: 2000 });
   const now = useNow(1000);
   const [index, setIndex] = useState<number | null>(null);
-  const { tap, selected, isBusy, notice } = useOnDemand(event);
+  const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
   useEffect(() => {
     if (data && data.lines.length && index === null) {
       const typical = data.lines.findIndex((l) => l.line === data.typical);
@@ -162,12 +170,14 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
         {(["OVER", "UNDER"] as const).map((code) => {
           const key = `${game}:${row.line}:${code}`;
           const px = code === "OVER" ? row.over : row.under;
+          const mine = placed((m) => m.kind === "total_kills_game" && m.params.game_index === game && String(m.params.line) === String(row.line), code);
           return (
             <button
               key={code}
               className="side"
               style={{ justifyContent: "space-between" }}
               aria-pressed={selected(key)}
+              data-placed={mine || undefined}
               disabled={!open || isBusy(key)}
               aria-busy={isBusy(key) || undefined}
               onClick={() => tap(key, `/events/${event.id}/kill-lines`, { game_index: game, line: row.line }, code)}

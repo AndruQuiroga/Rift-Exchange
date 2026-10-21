@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
+import { SwissSummary } from "@/components/SwissProgress";
 import { countdown, dayLabel, longDate, odds as fmtOdds, rc, venueToday } from "@/lib/format";
 import { useNow, useSeason } from "@/lib/hooks";
 import type { EventT, MarketT, Standing } from "@/lib/types";
@@ -63,6 +64,8 @@ export default function TodayPage() {
           </span>
           <span className="go">Open →</span>
         </Link>
+      ) : futures?.markets.some((m) => m.kind === "swiss_record") ? (
+        <SwissSummary />
       ) : null}
 
       <section className="section" aria-label="Matches">

@@ -576,3 +576,40 @@ img { display: block; }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2s; } }
 .notice.retry { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 .notice.retry .btn { flex: none; margin: 0; }
+
+/* An outcome you already hold a placed pick on: a small check in the corner, on every builder. */
+[data-placed="true"] { position: relative; }
+[data-placed="true"]::before {
+  content: "✓"; position: absolute; top: -6px; left: -6px; width: 18px; height: 18px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 800; line-height: 1;
+  background: var(--win); color: var(--accent-ink); box-shadow: 0 0 0 2px var(--canvas);
+}
+
+/* Slip: picks grouped by match; with a bulk stake mode on, each line shows its amount until tapped. */
+.slip-group + .slip-group { margin-top: var(--s3); }
+.slip-group-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 4px 2px 6px; }
+.stake-chip { flex: 1; min-height: 44px; text-align: left; padding: 0 12px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); font-weight: 700; }
+
+/* My Picks: one heading per match, futures last. */
+.pick-group + .pick-group { margin-top: var(--s4); }
+.pick-group-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--s2); font-size: 14px; font-weight: 700; margin: 0 2px 8px; }
+.pick-group-head .muted { font-size: 12px; font-weight: 500; }
+.pick-group .pick + .pick { margin-top: var(--s2); }
+
+/* Swiss Board after lock: one row per call. */
+.swiss-progress { display: grid; gap: var(--s2); }
+.sp-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: var(--s3); padding: 10px 12px; border-radius: var(--radius-control); background: var(--surface); border: 1px solid var(--divider); }
+.sp-team { display: inline-flex; align-items: center; gap: 8px; min-width: 64px; }
+.sp-rec { font-size: 13px; }
+.sp-state { font-size: 12px; font-weight: 700; text-align: right; }
+.sp-state.win { color: var(--win); } .sp-state.live { color: var(--text); } .sp-state.loss { color: var(--subtle); }
+@media (max-width: 360px) { .sp-row { grid-template-columns: auto 1fr; } .sp-state { grid-column: 1 / -1; text-align: left; } }
+.banner.quiet { background: var(--surface); border-color: var(--divider); }
+.banner.quiet .go { color: var(--muted); }
+
+/* Live card spoiler guard. */
+.livecard .sub { display: inline-flex; align-items: center; gap: var(--s2); }
+.link-btn { min-height: 44px; padding: 0 4px; font-size: 12px; font-weight: 700; color: var(--info); }
+.link-btn[aria-pressed="true"] { color: var(--warn); }
+.spoiler-cover { display: block; width: 100%; margin-top: var(--s2); padding: 18px 14px; border-radius: var(--radius-control); border: 1px dashed var(--divider-strong); background: var(--surface-2); color: var(--muted); font-size: 13px; text-align: center; line-height: 1.45; }
+.spoiler-cover b { display: block; margin-top: 4px; color: var(--text); }

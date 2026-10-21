@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
-import { useNow } from "@/lib/hooks";
+import { useNow, usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
@@ -81,6 +81,7 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<{ text: string; retry: GridChampion } | null>(null);
   const [focusAt, setFocusAt] = useState(0);
+  const held = usePlaced();
   const [created, setCreated] = useState<Record<string, { outcomeId: string; label: string; odds: string | null }>>({});
   const { data: grid } = useSWR<Grid>(`/events/${event.id}/draft?game=${game}`);
 
@@ -266,6 +267,7 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
                 key={c.champion}
                 className={`ctile${loading ? " busy" : ""}`}
                 aria-pressed={k ? slip.isSelected(k.outcomeId) : false}
+                data-placed={(k && held.has(k.outcomeId)) || undefined}
                 aria-busy={loading || undefined}
                 disabled={!grid.open || loading || !!taken}
                 tabIndex={i === Math.min(focusAt, shown.length - 1) ? 0 : -1}

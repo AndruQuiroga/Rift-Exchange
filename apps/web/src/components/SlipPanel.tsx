@@ -17,12 +17,13 @@ type Phase =
   | { kind: "receipt"; receipt: Receipt };
 
 /** Multi-pick stakes in one move: the same amount on every pick, or one total split evenly. */
-function StakeMode({ count, available, apply }: { count: number; available: number; apply: (fn: (line: unknown, i: number) => number | null) => void }) {
+function StakeMode({ count, available, apply, onActive }: { count: number; available: number; apply: (fn: (line: unknown, i: number) => number | null) => void; onActive: (on: boolean) => void }) {
   const [mode, setMode] = useState<"each" | "spread">("each");
   const [amount, setAmount] = useState<number | null>(null);
 
   function set(next: number | null, m = mode) {
     setAmount(next);
+    onActive(!!next);
     if (!next) return apply(() => null);
     if (m === "each") return apply(() => next);
     const base = Math.floor(next / count);
@@ -45,7 +46,6 @@ function StakeMode({ count, available, apply }: { count: number; available: numb
         {(["each", "spread"] as const).map((m) => (
           <button
             key={m}
-           
             aria-pressed={mode === m}
             onClick={() => {
               setMode(m);
@@ -78,7 +78,7 @@ function StakeMode({ count, available, apply }: { count: number; available: numb
           </button>
         ))}
       </div>
-      <div className="hint">You can still change any single pick above.</div>
+      <div className="hint">Tap a pick&apos;s stake to change just that one.</div>
     </div>
   );
 }
@@ -90,6 +90,9 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState<string | null>(null);
+  // While "Same stake each" / "Spread a total" sets every stake, lines show the amount instead of an input.
+  const [bulk, setBulk] = useState(false);
+  const [editing, setEditing] = useState<Set<string>>(new Set());
   const keyRef = useRef<{ quoteId: string; key: string } | null>(null);
 
   const available = me?.wallet.available_rc ?? 0;
@@ -250,6 +253,13 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
 
   const reviewing = phase.kind === "review" ? phase : null;
   const changedIds = reviewing?.previous ? Object.keys(reviewing.previous) : [];
+  const groups = lines.reduce<{ label: string; lines: typeof lines }[]>((out, l) => {
+    const g = out.find((x) => x.label === l.eventLabel);
+    if (g) g.lines.push(l);
+    else out.push({ label: l.eventLabel, lines: [l] });
+    return out;
+  }, []);
+  const collapsed = bulk && lines.length > 1 && phase.kind === "edit";
 
   return (
     <div>
@@ -274,7 +284,15 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
         </div>
       ) : (
         <>
-          {lines.map((l) => {
+          {groups.map((g) => (
+            <div key={g.label} className="slip-group">
+              {groups.length > 1 ? (
+                <div className="slip-group-head">
+                  <span>{g.label}</span>
+                  <span className="muted num">{g.lines.length} pick{g.lines.length === 1 ? "" : "s"}</span>
+                </div>
+              ) : null}
+          {g.lines.map((l) => {
             const was = reviewing?.previous?.[l.outcomeId];
             return (
               <div className="slip-line" key={l.outcomeId}>
@@ -282,7 +300,8 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   <div style={{ minWidth: 0 }}>
                     <div className="sel">{l.outcomeLabel}</div>
                     <div className="ctx">
-                      {l.marketTitle} · {l.eventLabel}
+                      {l.marketTitle}
+                      {groups.length > 1 ? null : ` · ${l.eventLabel}`}
                     </div>
                   </div>
                   <div className="px num" aria-live="polite">
@@ -291,6 +310,16 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                 </div>
                 <div className="stake-row">
+                  {collapsed && !editing.has(l.outcomeId) ? (
+                    <button
+                      type="button"
+                      className="stake-chip num"
+                      onClick={() => setEditing((e) => new Set(e).add(l.outcomeId))}
+                      aria-label={`Stake ${l.stake ?? 0} RC on ${l.outcomeLabel}. Change`}
+                    >
+                      {l.stake ? `${rc(l.stake)} RC` : "No stake"} <span className="muted">· Change</span>
+                    </button>
+                  ) : (
                   <label className="stake-input">
                     <span className="sr-only">Stake for {l.outcomeLabel}</span>
                     <input
@@ -308,6 +337,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                     />
                     <span>RC</span>
                   </label>
+                  )}
                   <button className="icon-btn" aria-label={`Remove ${l.outcomeLabel}`} onClick={() => slip.remove(l.outcomeId)} disabled={phase.kind !== "edit"}>
                     <IconClose width={18} height={18} />
                   </button>
@@ -320,9 +350,19 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
               </div>
             );
           })}
+            </div>
+          ))}
 
           {phase.kind === "edit" && lines.length > 1 ? (
-            <StakeMode count={lines.length} available={available} apply={slip.setAllStakes} />
+            <StakeMode
+              count={lines.length}
+              available={available}
+              apply={slip.setAllStakes}
+              onActive={(on) => {
+                setBulk(on);
+                setEditing(new Set());
+              }}
+            />
           ) : phase.kind === "edit" ? (
             <div className="presets" role="group" aria-label="Stake shortcuts for the selected pick">
               <button onClick={() => preset("+100")}>+100</button>

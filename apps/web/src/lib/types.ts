@@ -97,6 +97,8 @@ export type SeasonT = {
 export type Pick = {
   id: string;
   ticket_id: string;
+  market_id: string;
+  outcome_id: string;
   status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID";
   stake_rc: number;
   odds: string;
@@ -110,6 +112,8 @@ export type Pick = {
   market_state_reason: string | null;
   /** Plain words for a void pick ("Tie", "Placed after first blood or 3:00"). */
   void_reason?: string | null;
+  /** Swiss Board picks: the team's Swiss record so far ("2-1"). */
+  swiss_record?: string | null;
   settled_revision: number;
   accepted_at: string;
   settled_at: string | null;

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { fetcher } from "./api";
-import type { Me, SeasonT } from "./types";
+import type { Me, Pick, SeasonT } from "./types";
 
 export function useMe() {
   return useSWR<Me>("/me", fetcher, { shouldRetryOnError: false });
@@ -52,4 +52,14 @@ export function useLiveUpdates(enabled: boolean) {
       if (timer) clearTimeout(timer);
     };
   }, [enabled, mutate]);
+}
+
+/** Outcomes you already hold an open pick on (outcome id -> RC staked), to mark them on every builder. */
+export function usePlaced(): Map<string, number> {
+  const { data } = useSWR<{ picks: Pick[] }>("/me/picks?state=open", fetcher);
+  return useMemo(() => {
+    const out = new Map<string, number>();
+    for (const p of data?.picks ?? []) out.set(p.outcome_id, (out.get(p.outcome_id) ?? 0) + p.stake_rc);
+    return out;
+  }, [data]);
 }

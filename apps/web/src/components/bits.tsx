@@ -2,6 +2,7 @@
 
 import type { MarketT, OutcomeT, Pick, Team } from "@/lib/types";
 import { odds as fmtOdds, oddsSpoken } from "@/lib/format";
+import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconCheck, IconLock } from "./icons";
 
@@ -18,6 +19,7 @@ export function TeamMark({ team, large }: { team: Team | null; large?: boolean }
 export function OddsButton({ market, outcome, eventLabel }: { market: MarketT; outcome: OutcomeT; eventLabel: string }) {
   const slip = useSlip();
   const selected = slip.isSelected(outcome.id);
+  const placed = usePlaced().has(outcome.id);
   const winner = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
   const available = market.state === "OPEN" && outcome.odds !== null;
   return (
@@ -25,9 +27,10 @@ export function OddsButton({ market, outcome, eventLabel }: { market: MarketT; o
       type="button"
       className={`odds${winner ? " won" : ""}`}
       aria-pressed={selected}
+      data-placed={placed || undefined}
       disabled={!available && !selected}
       onClick={() => slip.toggle(market, outcome, eventLabel)}
-      aria-label={`${outcome.label}, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${!available ? ", unavailable" : ""}`}
+      aria-label={`${outcome.label}, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${placed ? ", already placed" : ""}${!available ? ", unavailable" : ""}`}
     >
       <span className="lbl">{outcome.label}</span>
       <span className="px num">
@@ -35,10 +38,7 @@ export function OddsButton({ market, outcome, eventLabel }: { market: MarketT; o
           <span className="badge win">Won</span>
         ) : market.state === "OPEN" ? (
           outcome.odds ? (
-            <>
-              {fmtOdds(outcome.odds)}
-              <small>×</small>
-            </>
+            fmtOdds(outcome.odds)
           ) : (
             <small>—</small>
           )

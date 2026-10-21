@@ -3,6 +3,7 @@
 import Link from "next/link";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
 import { countdown, kickoff, odds as fmtOdds, oddsSpoken } from "@/lib/format";
+import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
@@ -44,6 +45,7 @@ export function Matchup({ event, large }: { event: EventT; large?: boolean }) {
 export function SideButton({ market, outcome, team, label, right }: { market: MarketT; outcome: OutcomeT; team: Team | null; label: string; right?: boolean }) {
   const slip = useSlip();
   const selected = slip.isSelected(outcome.id);
+  const placed = usePlaced().has(outcome.id);
   const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
   const open = market.state === "OPEN" && outcome.odds !== null;
   return (
@@ -51,9 +53,10 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
       type="button"
       className={`side${right ? " right" : ""}${won ? " won" : ""}`}
       aria-pressed={selected}
+      data-placed={placed || undefined}
       disabled={!open && !selected}
       onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${teamName(team)} to win, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}`}
+      aria-label={`${teamName(team)} to win, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${placed ? ", already placed" : ""}`}
     >
       <span className="who">
         <TeamMark team={team} />

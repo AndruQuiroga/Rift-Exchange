@@ -344,6 +344,22 @@ def void_reason(s: Selection, m: Market, result: MarketResult | None) -> str | N
     return "No verified result"
 
 
+def swiss_records(db: Session, season_ids: set, teams) -> dict[str, str]:
+    """team provider id -> its Swiss record so far ("2-1"), from completed Swiss series."""
+    if not season_ids:
+        return {}
+    by_id = {t.id: t.provider_id for t in teams}
+    record: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    for f in db.execute(select(Fixture).where(Fixture.season_id.in_(season_ids), Fixture.stage == "Swiss",
+                                              Fixture.status == "COMPLETED")).scalars():
+        if f.winner_team_id is None:
+            continue
+        loser = f.team_b_id if f.winner_team_id == f.team_a_id else f.team_a_id
+        record[by_id.get(f.winner_team_id)][0] += 1
+        record[by_id.get(loser)][1] += 1
+    return {pid: f"{w}-{lo}" for pid, (w, lo) in record.items() if pid}
+
+
 def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
     markets = {m.id: m for m in db.execute(select(Market).where(
         Market.id.in_({s.market_id for s in selections}))).scalars()} if selections else {}
@@ -351,6 +367,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
         Fixture.id.in_({m.fixture_id for m in markets.values() if m.fixture_id}))).scalars()} if markets else {}
     teams = _teams(db, [t for f in fixtures.values() for t in (f.team_a_id, f.team_b_id)])
     named = db.execute(select(Team)).scalars().all() if selections else []  # futures picks have no fixture
+    swiss = swiss_records(db, {m.season_id for m in markets.values() if m.kind == "swiss_record"}, named)
     results = _latest_results(db, list(markets))
     tickets = {t.id: t for t in db.execute(select(Ticket).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).scalars()} if selections else {}
@@ -359,7 +376,8 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
         m = markets[s.market_id]
         f = fixtures.get(m.fixture_id) if m.fixture_id else None
         out.append({
-            "id": str(s.id), "ticket_id": str(s.ticket_id), "status": s.status, "stake_rc": s.stake_rc,
+            "id": str(s.id), "ticket_id": str(s.ticket_id), "market_id": str(s.market_id),
+            "outcome_id": str(s.outcome_id), "status": s.status, "stake_rc": s.stake_rc,
             "odds": str(s.odds.quantize(CENT)), "return_rc": s.return_rc,
             "potential_return_rc": winning_return(s.stake_rc, s.odds),
             "partial_return_rc": partial_return(s.stake_rc, s.odds, s.rules_snapshot["params"]["consolation"])
@@ -368,6 +386,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "outcome_label": relabel(s.rules_snapshot.get("outcome"), named),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
             "void_reason": void_reason(s, m, results.get(m.id)),
+            "swiss_record": swiss.get(m.params.get("team"), "0-0") if m.kind == "swiss_record" else None,
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
             "settled_at": s.settled_at.isoformat() if s.settled_at else None,
             "event": fixture_view(f, teams) if f else None,
