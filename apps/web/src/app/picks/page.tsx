@@ -80,6 +80,9 @@ function PickCard({ pick: p }: { pick: Pick }) {
       {p.status === "OPEN" && p.partial_return_rc !== null ? (
         <p className="muted num" style={{ fontSize: 13, marginTop: 8 }}>Right side, wrong record returns {rc(p.partial_return_rc)} RC.</p>
       ) : null}
+      {p.status === "VOID" && p.void_reason ? (
+        <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Void — {p.void_reason}. Your stake was returned.</p>
+      ) : null}
       {p.market_state === "HOLD" && p.market_state_reason ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>{p.market_state_reason}</p> : null}
       {p.settled_revision > 1 ? <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>Corrected after a data update (revision {p.settled_revision}).</p> : null}
     </article>

@@ -109,8 +109,19 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
   // What sits in each champ select slot: the selected role pick on the slip for that side and role.
   const filled = (side: Side, r: string) =>
     Object.entries(known).find(([k, v]) => k.startsWith(`${game}:`) && k.endsWith(`:${side}:${r}`) && slip.isSelected(v.outcomeId));
+  // A champion can only be in one slot of a game: champion -> the other slot that holds it ("GEN mid").
+  const takenBy = new Map<string, string>();
+  if (mode === "select") {
+    for (const sd of ["A", "B"] as const) {
+      for (const x of ROLES) {
+        const f = filled(sd, x.id);
+        if (f && !(sd === slot.side && x.id === slot.role)) takenBy.set(f[1].label, `${code(sd)} ${x.short}`);
+      }
+    }
+  }
 
   async function tap(c: GridChampion) {
+    if (takenBy.has(c.champion)) return;
     const s: Scope = mode === "select" ? slot.side : scope;
     const r = mode === "select" ? slot.role : undefined;
     const key = keyOf(game, c.champion, s, r);
@@ -233,18 +244,21 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
             const key = keyOf(game, c.champion, s, mode === "select" ? slot.role : undefined);
             const k = known[key];
             const px = priceOf(c);
+            const taken = takenBy.get(c.champion);
             return (
               <button
                 key={c.champion}
                 className="ctile"
                 aria-pressed={k ? slip.isSelected(k.outcomeId) : false}
-                disabled={!grid.open || busy === key}
+                disabled={!grid.open || busy === key || !!taken}
                 onClick={() => tap(c)}
-                aria-label={`${c.label}, ${mode === "select" ? `${code(slot.side)} ${slot.role}` : scopeLabel(scope)}, Game ${game}, ${fmtOdds(px)} times`}
+                aria-label={taken
+                  ? `${c.label}, already in ${taken}`
+                  : `${c.label}, ${mode === "select" ? `${code(slot.side)} ${slot.role}` : scopeLabel(scope)}, Game ${game}, ${fmtOdds(px)} times`}
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>
-                <span className="px num">{fmtOdds(px)}×</span>
+                <span className="px num">{taken ? `In ${taken}` : `${fmtOdds(px)}×`}</span>
               </button>
             );
           })}

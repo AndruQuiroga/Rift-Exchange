@@ -19,9 +19,10 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from rift.config import Settings
+from rift.display import player_name, team_name
 from rift.domain.pricing import price
 from rift.markets import MIN_DRAFT_GAMES, MarketSpec, OutcomeSpec, TournamentStats, _nb_cdf, upsert_market
 from rift.models import Fixture, Game, Market, Season, Team
@@ -151,7 +152,7 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
             f"{kind}:{key}:{idx}", kind, "GAME", "OBJECTIVES", f"Game {idx} {title.lower()}",
             f"Team that gets {title.lower()} in Game {idx}. {when} {void}",
             close_at, "timeline_rates_v1", "EXPERIMENTAL",
-            [OutcomeSpec("A", a.name, p), OutcomeSpec("B", b.name, 1 - p)], {"game_index": idx}))
+            [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)], {"game_index": idx}))
     dragon = _smoothed(data.first_dragon, DRAGONS)
     specs.append(MarketSpec(
         f"first_dragon_type:{key}:{idx}", "first_dragon_type", "GAME", "OBJECTIVES", f"Game {idx} first dragon",
@@ -197,7 +198,14 @@ def lineups(session: Session, fixture: Fixture) -> dict[str, dict[str, dict]]:
             players = (team.lineup or {}).get("players") or {}
             if set(players) >= set(ROLES):
                 out[side] = players
-    return out
+    return _display_players(session, fixture, out)
+
+
+def _display_players(session: Session, fixture: Fixture, lineup: dict[str, dict[str, dict]]) -> dict:
+    """Drop the team prefix livestats puts on player names ("GEN Kiin" -> "Kiin")."""
+    codes = [t.code for t in (session.get(Team, fixture.team_a_id), session.get(Team, fixture.team_b_id)) if t]
+    return {side: {role: {**p, "name": player_name(p.get("name"), codes)} for role, p in roles.items()}
+            for side, roles in lineup.items()}
 
 
 def _player_estimate(data: TimelineData, pid: str, role: str, stat: str,
@@ -282,6 +290,11 @@ def early_cutoff(game: Game) -> datetime | None:
 def early_window(session: Session, fixture: Fixture, game_index: int, now: datetime) -> EarlyWindow:
     game = session.execute(select(Game).where(Game.fixture_id == fixture.id, Game.game_index == game_index)
                            ).scalar_one_or_none()
+    return early_state(fixture, game, game_index, now)
+
+
+def early_state(fixture: Fixture, game: Game | None, game_index: int, now: datetime) -> EarlyWindow:
+    """early_window for a game row already in hand."""
     loaded = game is not None and game.started_at is not None and bool((game.timeline or {}).get("participants"))
     if not loaded:
         if fixture.status == "COMPLETED" or (game is not None and game.state in ("completed", "unneeded")):
@@ -305,7 +318,7 @@ def game_lineup(game: Game, fixture: Fixture) -> dict[str, dict[str, dict]]:
         if side and p.get("role") in ROLES:
             out.setdefault(side, {})[p["role"]] = {"player_id": str(p.get("player_id") or p.get("name")),
                                                    "name": p.get("name"), "champion": p.get("champion")}
-    return out
+    return _display_players(object_session(fixture), fixture, out)
 
 
 def _window_view(w: EarlyWindow) -> dict:

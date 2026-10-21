@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from rift.config import Settings
+from rift.display import team_name
 from rift.domain.pricing import (
     normalise,
     price,
@@ -118,7 +119,7 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
             f"game_winner:{key}:{idx}", "game_winner", "GAME", "WINNER", f"Game {idx} winner",
             f"Winner of Game {idx} of this series. {when} Void if Game {idx} is not played.",
             close_at, "elo_v1", confidence,
-            [OutcomeSpec("A", a.name, q), OutcomeSpec("B", b.name, 1 - q)], {"game_index": idx}))
+            [OutcomeSpec("A", team_name(a.code, a.name), q), OutcomeSpec("B", team_name(b.code, b.name), 1 - q)], {"game_index": idx}))
     if stats.timeline is not None:
         from rift.props import objective_specs
 
@@ -166,8 +167,8 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
         f"Settles on the official {fmt} series winner. Locks at the scheduled start. Void if the series is "
         "cancelled or not completed.",
         fixture.scheduled_at, "elo_v1", confidence,
-        [OutcomeSpec("A", a.name, series_win_probability(q, bo)),
-         OutcomeSpec("B", b.name, 1 - series_win_probability(q, bo))], {})]
+        [OutcomeSpec("A", team_name(a.code, a.name), series_win_probability(q, bo)),
+         OutcomeSpec("B", team_name(b.code, b.name), 1 - series_win_probability(q, bo))], {})]
     if bo > 1:
         dist = series_score_distribution(q, bo)
         order = sorted(dist, key=lambda s: (-(s[0] > s[1]), -(s[0] - s[1])))
@@ -199,15 +200,15 @@ def futures_specs(season: Season, fixtures: list[Fixture], teams: dict, sim: Fut
             "tournament_winner", "tournament_winner", "TOURNAMENT", "FUTURES", "Worlds 2026 champion",
             "Settles on the winner of the Worlds 2026 final. Locks when the quarterfinals begin.",
             qf_start, "elo_v1_bracket_sim", "EXPERIMENTAL",
-            [OutcomeSpec(teams[t].provider_id, teams[t].name, champ[str(t)])
+            [OutcomeSpec(teams[t].provider_id, team_name(teams[t].code, teams[t].name), champ[str(t)])
              for t in sorted(sim.champion, key=lambda t: -sim.champion[t])], {}))
     if swiss_start:
         for t, p in sorted(sim.advance.items(), key=lambda kv: -kv[1]):
             team = teams[t]
             specs.append(MarketSpec(
                 f"swiss_record:{team.provider_id}", "swiss_record", "STAGE", "FUTURES",
-                f"{team.name} Swiss record",
-                f"Pick {team.name}'s final Swiss record. Exact record pays the full price. Right side but wrong "
+                f"{team_name(team.code, team.name)} Swiss record",
+                f"Pick {team_name(team.code, team.name)}'s final Swiss record. Exact record pays the full price. Right side but wrong "
                 "record (advanced, or eliminated) pays a quarter of the full return. Locks before the first "
                 "Swiss match.",
                 swiss_start, "elo_v1_bracket_sim_record", "EXPERIMENTAL",
@@ -258,6 +259,7 @@ def upsert_market(session: Session, season: Season, fixture: Fixture | None, spe
     else:
         market.close_at = spec.close_at  # follows reschedules; lock_due() closes anything now past due
         market.confidence = spec.confidence
+        market.title = spec.title  # display names can change; accepted picks keep their own snapshot
     reprice(session, market, spec, settings)
     return market
 

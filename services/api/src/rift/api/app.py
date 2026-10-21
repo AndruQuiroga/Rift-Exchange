@@ -163,7 +163,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     @app.get("/api/v1/events")
     def list_events(session: Db, user: CurrentUser, date: str | None = None, stage: str | None = None):
-        return {"events": views.events(session, season_of(session), date, stage)}
+        return {"events": views.events(session, season_of(session), date, stage, db_now(session))}
 
     @app.get("/api/v1/events/{event_id}")
     def get_event(event_id: uuid.UUID, session: Db, user: CurrentUser):

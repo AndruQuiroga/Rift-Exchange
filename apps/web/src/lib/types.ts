@@ -37,6 +37,8 @@ export type EventT = {
   market_count?: number;
   /** Categories with an open market, for the "what's inside" tags on Today. */
   categories?: string[];
+  /** Duels and kill lines can be picked right now (the loaded game's first minutes). */
+  early_open?: boolean;
   close_at?: string | null;
   featured?: MarketT | null;
   markets?: MarketT[];
@@ -54,6 +56,8 @@ export type GameT = {
   window: GameWindow;
   opens_when: string | null;
   closes_at: string | null;
+  /** Duels and kill lines: UPCOMING until the game loads, OPEN until 3:00 or first blood. */
+  early?: "UPCOMING" | "OPEN" | "CLOSED";
   burned_champions: string[];
 };
 
@@ -104,6 +108,8 @@ export type Pick = {
   outcome_label: string;
   market_state: MarketState;
   market_state_reason: string | null;
+  /** Plain words for a void pick ("Tie", "Placed after first blood or 3:00"). */
+  void_reason?: string | null;
   settled_revision: number;
   accepted_at: string;
   settled_at: string | null;

@@ -80,6 +80,15 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
     );
   }
   const lock = game.closes_at ? countdown(game.closes_at, now) : null;
+  const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
+  const objectives = (event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES");
+  const early = game.early ?? "UPCOMING";
+  const later =
+    early === "UPCOMING" && game.window !== "DONE"
+      ? "Lane duels and the kill line open when the game loads, until 3:00 or first blood."
+      : !pregame && early !== "OPEN"
+        ? game.window === "DONE" ? `Game ${game.index} is over.` : `Game ${game.index} picks are closed.`
+        : null;
   return (
     <>
       {winner && a && b ? (
@@ -95,18 +104,30 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
           <Rules markets={[winner]} />
         </section>
       ) : null}
+      {/* Only the builders that take picks right now; the rest are one line saying when they open. */}
       <div style={{ marginTop: 8 }}>
-        <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
-          <ChampionGrid event={event} game={game.index} />
-        </Builder>
-        <Builder title="Players" sub="Lane duels · kills, CS at 15:00, damage">
-          <LaneDuels event={event} game={game.index} />
-        </Builder>
-        <Builder title="Game" sub="Kill line · first blood, dragons, Baron, soul">
-          <KillLine event={event} game={game.index} />
-          <Objectives event={event} game={game.index} />
-          <Rules markets={(event.markets ?? []).filter((m) => ofGame(m) && m.category === "OBJECTIVES")} />
-        </Builder>
+        {pregame ? (
+          <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
+            <ChampionGrid event={event} game={game.index} />
+          </Builder>
+        ) : null}
+        {objectives.some((m) => m.state === "OPEN") ? (
+          <Builder title="Objectives" sub="First blood, tower, dragon · Baron, soul">
+            <Objectives event={event} game={game.index} />
+            <Rules markets={objectives} />
+          </Builder>
+        ) : null}
+        {early === "OPEN" ? (
+          <>
+            <Builder title="Lane duels" sub="Kills, CS at 15:00, damage · until 3:00 or first blood" open>
+              <LaneDuels event={event} game={game.index} />
+            </Builder>
+            <Builder title="Kill line" sub="Total kills · until 3:00 or first blood">
+              <KillLine event={event} game={game.index} />
+            </Builder>
+          </>
+        ) : null}
+        {later ? <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{later}</p> : null}
       </div>
     </>
   );

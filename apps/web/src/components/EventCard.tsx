@@ -67,7 +67,19 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
   );
 }
 
-const TAGS: Record<string, string> = { DRAFT: "Draft", PROPS: "Kill line", PLAYERS: "Duels", OBJECTIVES: "Objectives" };
+/** Only what can be tapped now, plus one line saying when the in-game picks open. */
+function matchTags(event: EventT): { now: string[]; later: string | null } {
+  const cats = event.categories ?? [];
+  const pregame = event.featured?.state === "OPEN";
+  const between = event.status === "LIVE" && cats.includes("WINNER"); // the next game's winner and draft are open
+  const now: string[] = [];
+  if (pregame && event.best_of > 1) now.push("Score");
+  if (pregame || between) now.push("Draft");
+  if (cats.includes("OBJECTIVES")) now.push("Objectives");
+  if (event.early_open) now.push("Duels", "Kill line");
+  const later = !event.early_open && (pregame || between) ? "Duels at game start" : null;
+  return { now, later };
+}
 
 export function EventCard({ event, now }: { event: EventT; now: number }) {
   const cd = event.close_at ? countdown(event.close_at, now) : null;
@@ -75,8 +87,7 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
   const a = market?.outcomes.find((o) => o.code === "A");
   const b = market?.outcomes.find((o) => o.code === "B");
   const ready = event.team_a && event.team_b;
-  // Draft and duels are created on demand, so they are always available once both teams are known.
-  const tags = [...new Set(["Draft", "Duels", ...(event.categories ?? []).map((c) => TAGS[c]).filter(Boolean)])];
+  const tags = matchTags(event);
   return (
     <article className="mrow" aria-label={`${teamName(event.team_a)} versus ${teamName(event.team_b)}`}>
       <div className="mrow-meta">
@@ -97,9 +108,10 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
       {ready ? (
         <Link className="mrow-foot" href={`/events/${event.id}`}>
           <span className="tags">
-            {(event.best_of > 1 ? ["Score", ...tags] : tags).map((t) => (
+            {tags.now.map((t) => (
               <span className="tagpill" key={t}>{t}</span>
             ))}
+            {tags.later ? <span className="tagpill later">{tags.later}</span> : null}
           </span>
           <span className="link">Match →</span>
         </Link>

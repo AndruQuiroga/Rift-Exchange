@@ -7,7 +7,6 @@ import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
 import { countdown, dayLabel, longDate, rc, venueToday } from "@/lib/format";
 import { useNow, useSeason } from "@/lib/hooks";
-import { teamName } from "@/lib/teams";
 import type { EventT, MarketT, Standing } from "@/lib/types";
 
 export default function TodayPage() {
@@ -98,7 +97,7 @@ export default function TodayPage() {
             <div className="rows">
               {champion.outcomes.slice(0, 4).map((o) => (
                 <Link className="row" key={o.id} href="/explore?tab=FUTURES">
-                  <div className="title">{teamName({ code: "", name: o.label })}</div>
+                  <div className="title">{o.label}</div>
                   <div className="amount num">{o.odds ? `${Number(o.odds).toFixed(2)}×` : "—"}</div>
                 </Link>
               ))}
