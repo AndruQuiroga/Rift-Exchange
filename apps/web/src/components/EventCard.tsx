@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
-import { countdown, kickoff, odds as fmtOdds, oddsSpoken } from "@/lib/format";
+import { countdown, kickoff, oddsSpoken } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
+import { Odds } from "./Odds";
 
 export function eventLabel(e: EventT) {
   return `${e.team_a?.code ?? "TBD"} vs ${e.team_b?.code ?? "TBD"}`;
@@ -65,7 +66,7 @@ export function SideButton({ market, outcome, team, label, right }: { market: Ma
           <span className="nm">{teamName(team)}</span>
         </span>
       </span>
-      <span className="px num">{won ? "Won" : fmtOdds(outcome.odds)}</span>
+      <span className="px num">{won ? "Won" : <Odds value={outcome.odds} />}</span>
     </button>
   );
 }

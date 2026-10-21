@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { useNow, usePlaced } from "@/lib/hooks";
-import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
+import { countdown, oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
 import { Choice } from "./Choice";
+import { Odds } from "./Odds";
 
 type Side = "A" | "B";
 type WindowState = { open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close_at: string | null; opens_when: string | null };
@@ -66,7 +67,7 @@ function useOnDemand(event: EventT) {
 
 /** The price on an on-demand button, or a spinner while its market is fetched. */
 function Price({ odds, busy, style }: { odds: string | null; busy: boolean; style?: React.CSSProperties }) {
-  return <span className="px num" style={style}>{busy ? <span className="spinner" aria-hidden="true" /> : fmtOdds(odds)}</span>;
+  return <span className="px num" style={style}>{busy ? <span className="spinner" aria-hidden="true" /> : <Odds value={odds} />}</span>;
 }
 
 export function LaneDuels({ event, game }: { event: EventT; game: number }) {
@@ -207,7 +208,7 @@ export function Objectives({ event, game }: { event: EventT; game: number }) {
           <div className="opts">
             {m.outcomes.map((o) => (
               <Choice key={o.id} market={m} outcome={o} label={label} className="mini">
-                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num">{fmtOdds(o.odds)}</b>
+                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num"><Odds value={o.odds} /></b>
               </Choice>
             ))}
           </div>

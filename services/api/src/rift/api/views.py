@@ -425,12 +425,17 @@ def standings(db: Session, season: Season) -> list[dict]:
     return rows
 
 
-def activity(db: Session, season: Season, limit: int = 50) -> list[dict]:
-    """Friends' picks, but only once the market has locked (A-010)."""
+def activity(db: Session, season: Season, limit: int = 50, fixture_id: uuid.UUID | None = None,
+             exclude_user_id: uuid.UUID | None = None) -> list[dict]:
+    """Friends' picks, but only once the market has locked (A-010). Optionally one match, without your own."""
     q = (select(Selection).join(Market, Market.id == Selection.market_id)
          .join(Ticket, Ticket.id == Selection.ticket_id)
-         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED")
-         .order_by(Ticket.accepted_at.desc()).limit(limit))
+         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED"))
+    if fixture_id is not None:
+        q = q.where(Market.fixture_id == fixture_id)
+    if exclude_user_id is not None:
+        q = q.where(Selection.user_id != exclude_user_id)
+    q = q.order_by(Ticket.accepted_at.desc()).limit(limit)
     selections = list(db.execute(q).scalars())
     users = {u.id: u for u in db.execute(select(User)).scalars()}
     rows = selection_rows(db, selections)

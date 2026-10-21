@@ -8,6 +8,7 @@ import { useNow, usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
+import { Odds } from "./Odds";
 
 type Scope = "picked" | "A" | "B" | "banned" | "first";
 type Side = "A" | "B";
@@ -279,7 +280,7 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>
-                <span className="px num">{taken ? `In ${taken}` : loading ? <span className="spinner" aria-hidden="true" /> : fmtOdds(px)}</span>
+                <span className="px num">{taken ? `In ${taken}` : loading ? <span className="spinner" aria-hidden="true" /> : <Odds value={px} />}</span>
               </button>
             );
           })}

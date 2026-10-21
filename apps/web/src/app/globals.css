@@ -613,3 +613,21 @@ img { display: block; }
 .link-btn[aria-pressed="true"] { color: var(--warn); }
 .spoiler-cover { display: block; width: 100%; margin-top: var(--s2); padding: 18px 14px; border-radius: var(--radius-control); border: 1px dashed var(--divider-strong); background: var(--surface-2); color: var(--muted); font-size: 13px; text-align: center; line-height: 1.45; }
 .spoiler-cover b { display: block; margin-top: 4px; color: var(--text); }
+.friend-pick { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: 10px 0; }
+.friend-pick + .friend-pick { border-top: 1px solid var(--divider); }
+
+/* A builder price that just moved. */
+.moved { display: inline-flex; align-items: center; gap: 3px; border-radius: 4px; padding: 0 3px; }
+.moved > span[aria-hidden] { font-size: 0.6em; }
+.moved.up { color: var(--win); background: rgba(127, 220, 170, 0.12); }
+.moved.down { color: var(--loss); background: rgba(255, 158, 154, 0.12); }
+@media (prefers-reduced-motion: no-preference) { .moved { animation: pulse 0.9s ease-in-out 2; } }
+
+/* In-app alert when a game you asked about opens. */
+.toast {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(84px + env(safe-area-inset-bottom)); z-index: 60;
+  width: min(520px, calc(100% - 32px)); display: flex; align-items: center; gap: var(--s3); justify-content: space-between;
+  padding: 8px 8px 8px 14px; border-radius: var(--radius-card); background: var(--surface-3); border: 1px solid var(--accent);
+  font-size: 14px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.toast .link { white-space: nowrap; font-weight: 700; }

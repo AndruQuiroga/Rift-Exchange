@@ -9,11 +9,14 @@ import { Choice } from "@/components/Choice";
 import { ChampionGrid } from "@/components/ChampionGrid";
 import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
 import { IconBack } from "@/components/icons";
+import { FriendsPicks } from "@/components/FriendsPicks";
+import { NotifyButton } from "@/components/GameAlerts";
 import { LiveCard } from "@/components/LiveCard";
 import { KillLine, LaneDuels, Objectives } from "@/components/PropsBuilders";
-import { countdown, kickoff, longDate, odds as fmtOdds } from "@/lib/format";
+import { countdown, kickoff, longDate } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import type { EventT, GameT, MarketT } from "@/lib/types";
+import { Odds } from "@/components/Odds";
 
 /** One plain sentence on how these settle; each market's full rules one tap away. */
 function Rules({ markets, summary }: { markets: (MarketT | undefined)[]; summary: string }) {
@@ -72,6 +75,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
           Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00 or first blood.
         </p>
+        <NotifyButton event={event.id} game={game.index} label={label} />
       </div>
     );
   }
@@ -241,7 +245,7 @@ export default function EventPage() {
                       <Choice key={o.id} market={score} outcome={o} label={label} className="sl">
                         <span className="t">{o.label.slice(0, cut)}</span>
                         <span className="s num">{o.label.slice(cut + 1)}</span>
-                        <span className="p num">{fmtOdds(o.odds)}</span>
+                        <span className="p num"><Odds value={o.odds} /></span>
                       </Choice>
                     );
                   })}
@@ -253,7 +257,7 @@ export default function EventPage() {
                   <span className="opts">
                     {games.outcomes.map((o) => (
                       <Choice key={o.id} market={games} outcome={o} label={label} className="mini">
-                        {o.label.replace(" games", "")} <b className="num">{fmtOdds(o.odds)}</b>
+                        {o.label.replace(" games", "")} <b className="num"><Odds value={o.odds} /></b>
                       </Choice>
                     ))}
                   </span>
@@ -290,6 +294,7 @@ export default function EventPage() {
           ) : null}
         </>
       )}
+      <FriendsPicks event={event} />
       <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
         Every pick is a single with its own price. Nothing is multiplied together.
       </p>

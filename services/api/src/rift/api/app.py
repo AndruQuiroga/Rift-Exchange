@@ -354,6 +354,12 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     def league_activity(user: CurrentUser, session: Db):
         return {"activity": views.activity(session, season_of(session))}
 
+    @app.get("/api/v1/events/{event_id}/league")
+    def event_league(event_id: uuid.UUID, user: CurrentUser, session: Db):
+        """Friends' picks on this match, each shown once its market has locked."""
+        return {"picks": views.activity(session, season_of(session), limit=200, fixture_id=event_id,
+                                        exclude_user_id=user.id)}
+
     # ------------------------------------------------------------ stream
 
     @app.get("/api/v1/stream")

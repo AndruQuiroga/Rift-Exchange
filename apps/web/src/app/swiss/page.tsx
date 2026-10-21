@@ -6,11 +6,12 @@ import useSWR from "swr";
 import { TeamMark } from "@/components/bits";
 import { SwissProgress } from "@/components/SwissProgress";
 import { IconBack } from "@/components/icons";
-import { countdown, odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
+import { countdown, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import type { MarketT, Pick } from "@/lib/types";
+import { Odds } from "@/components/Odds";
 
 const RECORDS = [
   { code: "3-0", label: "3–0", note: "undefeated", slots: 2 },
@@ -133,7 +134,7 @@ export default function SwissBoardPage() {
                       <button key={m.id} className="tchip placed" onClick={() => slip.remove(o.id)} aria-label={`Remove ${teamName(m.team)} from ${r.label}`}>
                         <TeamMark team={m.team ?? null} />
                         {m.team?.code}
-                        <span className="o num">{fmtOdds(o.odds)}</span>
+                        <span className="o num"><Odds value={o.odds} /></span>
                       </button>
                     );
                   })}
@@ -145,7 +146,7 @@ export default function SwissBoardPage() {
                         setSelected(null);
                       }}
                     >
-                      + {sel.team?.code} here · {fmtOdds(target.odds)}
+                      + {sel.team?.code} here · <Odds value={target.odds} />
                     </button>
                   ) : null}
                 </div>

@@ -5,6 +5,7 @@ import { odds as fmtOdds, oddsSpoken } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconCheck, IconLock } from "./icons";
+import { Odds } from "./Odds";
 
 export function TeamMark({ team, large }: { team: Team | null; large?: boolean }) {
   const src = team?.image_url?.replace(/^http:/, "https:");
@@ -38,7 +39,7 @@ export function OddsButton({ market, outcome, eventLabel }: { market: MarketT; o
           <span className="badge win">Won</span>
         ) : market.state === "OPEN" ? (
           outcome.odds ? (
-            fmtOdds(outcome.odds)
+            <Odds value={outcome.odds} />
           ) : (
             <small>—</small>
           )
