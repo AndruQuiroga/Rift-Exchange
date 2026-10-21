@@ -255,7 +255,33 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                 </div>
                 <div className="stake-row">
-                  {!editing.has(l.outcomeId) ? (
+                  {!editing.has(l.outcomeId) && lines.length > 1 ? (
+                    // Several picks: each has its own amounts, so they can differ without typing.
+                    <div className="line-presets" role="group" aria-label={`Stake on ${l.outcomeLabel}`}>
+                      {STAKES.map((v) => (
+                        <button
+                          key={v}
+                          type="button"
+                          className="num"
+                          aria-pressed={l.stake === v}
+                          disabled={phase.kind !== "edit"}
+                          onClick={() => slip.setStake(l.outcomeId, v)}
+                        >
+                          {v >= 1000 ? `${v / 1000}K` : v}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="num"
+                        aria-pressed={!!l.stake && !STAKES.includes(l.stake)}
+                        disabled={phase.kind !== "edit"}
+                        onClick={() => setEditing((e) => new Set(e).add(l.outcomeId))}
+                        aria-label={`Custom stake on ${l.outcomeLabel}${l.stake && !STAKES.includes(l.stake) ? `, now ${l.stake} RC` : ""}`}
+                      >
+                        {l.stake && !STAKES.includes(l.stake) ? rc(l.stake) : "Other"}
+                      </button>
+                    </div>
+                  ) : !editing.has(l.outcomeId) ? (
                     <button
                       type="button"
                       className="stake-chip num"
@@ -309,7 +335,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                 ))}
                 <button onClick={() => preset("all")}>All</button>
               </div>
-              {lines.length > 1 ? <div className="hint">Sets every pick · All splits your balance across them.</div> : null}
+              {lines.length > 1 ? <div className="hint">Sets every pick at once · All splits your balance across them.</div> : null}
             </>
           ) : null}
 
