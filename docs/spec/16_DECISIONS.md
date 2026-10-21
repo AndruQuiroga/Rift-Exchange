@@ -28,7 +28,7 @@
 | D-022 | Opening grant 5,000 RC (was 1,000); match-day grant stays 1,000. Members who joined earlier get the difference once, as an opening-grant top-up | Owner decision 2026-10-21 | Round 1 has many matches to play. |
 | D-023 | Objectives offered: first blood, first tower, Baron before 25:00. First dragon element and dragon soul are no longer offered (earlier ones still settle) | Owner decision 2026-10-21 | Too many near-random options per game. |
 | D-024 | Lane duels and kill lines stay open from game load to 3:00 of game time; an early kill no longer closes them. Kill lines are offered from 5 above the kills scored so far. "Games played" is no longer offered (the exact score covers it); earlier ones still settle | Owner decision 2026-10-21 | First blood should not end the early window. |
-| D-025 | Early-window markets (game load to 3:00): team races first to 5 kills, gold lead at 15:00 and first dragon (any element), plus lane duels on player gold at 15:00, where a gap under 700 gold is a tie and void. Kills, CS and damage duels are no longer offered (earlier ones still settle) | Owner decision 2026-10-21 | Per-role kill and damage duels were too predictable. |
+| D-025 | Early-window markets (game load to 3:00): team races first to 5 kills, gold lead at 15:00 (a gap under 700 gold is a tie and void) and first dragon (any element), plus lane duels on player gold at 15:00, where a gap under 700 gold is a tie and void. Kills, CS and damage duels are no longer offered (earlier ones still settle) | Owner decision 2026-10-21 | Per-role kill and damage duels were too predictable. |
 
 ## Chosen defaults, configurable (not yet separately confirmed)
 

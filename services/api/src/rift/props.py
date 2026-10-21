@@ -41,6 +41,7 @@ STATS = {
 OFFERED_STATS = ("gold15",)
 # A lead smaller than this is a tie, and ties void.
 TIE_MARGIN = {"gold15": 700}
+TEAM_GOLD_TIE = 700  # the team gold lead at 15:00 uses the same tie band
 SHRINK_GAMES = 3  # pseudo-games of the role average added to each player's own record
 OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul")
 # Team races in the early window (D-025): open from game load to 3:00, settled from the timeline.
@@ -132,7 +133,7 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
                 took[(what, "n")] += 1
                 took[(what, "w")] += int(first.get("team_id") == str(g.winner_team_id))
         lead = gold15_lead(g)
-        if lead and lead[0] and g.winner_team_id is not None:
+        if lead and lead[0] and lead[1] >= TEAM_GOLD_TIE and g.winner_team_id is not None:
             took[("gold15", "n")] += 1
             took[("gold15", "w")] += int(lead[0] == str(g.winner_team_id))
         if firsts.get("dragon"):
@@ -206,7 +207,8 @@ def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, dat
         ("five_kills", "five_kills", "First to 5 kills",
          "Team that reaches 5 kills first. Void if neither does, or both in the same moment."),
         ("gold_lead_15", "gold15", "Gold lead at 15:00",
-         "Team with more total gold at 15:00 of game time. Void if the game ends before 15:00."),
+         ("Team with more total gold at 15:00 of game time. A gap under 700 gold is a tie and void, as is a game "
+         "that ends before 15:00.")),
         ("first_dragon", "dragon", "First dragon",
          "Team that takes the first dragon, any element. Void if no dragon is taken."),
     )
@@ -548,8 +550,8 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
         if lead is None:
             return Grade("VOID", reason="No 15:00 gold (the game ended before 15:00)", evidence=ev)
         code = side_code.get(lead[0] or "")
-        if code is None:
-            return Grade("VOID", reason="Gold dead level at 15:00", evidence={**ev, "gap": lead[1]})
+        if code is None or lead[1] < TEAM_GOLD_TIE:
+            return Grade("VOID", reason=f"Within {TEAM_GOLD_TIE:,} gold at 15:00 (void rule)", evidence={**ev, "gap": lead[1]})
         return Grade("RESULT", [code], "Gold lead at 15:00 confirmed", {**ev, "gap": lead[1]})
     if kind in ("first_blood", "first_tower", "first_dragon", "five_kills"):
         first = firsts.get({"first_blood": "blood", "first_tower": "tower", "first_dragon": "dragon",

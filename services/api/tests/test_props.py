@@ -322,3 +322,19 @@ def test_team_races_open_with_the_game_and_close_at_three_minutes(factory, seaso
     with factory() as s, s.begin():  # after 3:00 nothing new opens
         season = s.get(Season, season_games["season"])
         assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=4)) == 0
+
+
+def test_team_gold_lead_under_700_is_a_tie(factory, world):
+    close = (5100, 4900, 6200, 6100, 3200)  # 25,500 against the default 24,500: a 1,000 lead
+    with factory() as s, s.begin():
+        m = Market(season_id=world["season"], fixture_id=world["fixture"], template_key="gold_lead_15:x",
+                   kind="gold_lead_15", scope="GAME", category="OBJECTIVES", title="g", rules_text="",
+                   params={"game_index": 1}, model_key="t", confidence="EXPERIMENTAL", close_at=T0)
+        g = Game(fixture_id=world["fixture"], provider_id="g1", game_index=1, state="completed",
+                 blue_team_id=world["team_a"], red_team_id=world["team_b"], timeline_complete=True,
+                 timeline=timeline(world["team_a"], world["team_b"], a_gold=close))
+        s.add_all([m, g])
+        s.flush()
+        assert grade_market(s, m).winning_codes == ["A"]
+        g.timeline = timeline(world["team_a"], world["team_b"], a_gold=(5000, 4800, 5900, 6000, 3200))  # +400
+        assert grade_market(s, m).status == "VOID"
