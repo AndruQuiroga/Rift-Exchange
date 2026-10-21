@@ -130,7 +130,8 @@ def test_full_series_lifecycle(factory):
                       idempotency_key="t1", now=now[0])
         user_id, atlas_odds, nova_odds = user.id, atlas.odds, nova_g1.odds
     # 06:00 venue time on Oct 23 is already a match day: opening + match-day grant, minus 600 staked.
-    assert _balance(factory, user_id) == 2000 - 600
+    start = Settings().opening_grant_rc + Settings().match_day_grant_rc  # opening grant + the Oct 23 match day
+    assert _balance(factory, user_id) == start - 600
 
     # Series goes live: markets lock immediately; no second grant for the same day.
     now[0] = START + timedelta(minutes=5)
@@ -138,7 +139,7 @@ def test_full_series_lifecycle(factory):
     worker.cycle()
     with factory() as s:
         assert {m.state for m in s.execute(select(Market)).scalars()} == {"LOCKED"}
-    assert _balance(factory, user_id) == 1400
+    assert _balance(factory, user_id) == start - 600
 
     # Game 1 to Nova, observed by a poll; then games 2 and 3 to Atlas, observed one poll each.
     for idx, side, minutes in ((1, "B", 40), (2, "A", 80), (3, "A", 120)):
@@ -162,7 +163,7 @@ def test_full_series_lifecycle(factory):
         assert set(states.values()) == {"SETTLED"}
         sels = {sel.stake_rc: sel for sel in s.execute(select(Selection)).scalars()}
         assert sels[500].status == "WON" and sels[100].status == "WON"
-        expected = 1400 + winning_return(500, atlas_odds) + winning_return(100, nova_odds)
+        expected = start - 600 + winning_return(500, atlas_odds) + winning_return(100, nova_odds)
     assert _balance(factory, user_id) == expected
 
 

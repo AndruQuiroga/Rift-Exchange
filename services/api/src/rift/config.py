@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     season_name: str = "Worlds 2026"
     season_timezone: str = "America/Chicago"
     season_first_match_day: str = "2026-10-23"
-    opening_grant_rc: int = 1000
+    opening_grant_rc: int = 5000
     match_day_grant_rc: int = 1000
 
     # Provider settings (D-009)

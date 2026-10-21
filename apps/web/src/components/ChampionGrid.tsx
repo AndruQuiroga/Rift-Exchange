@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { countdown, oddsSpoken } from "@/lib/format";
@@ -8,6 +8,8 @@ import { useNow, usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
+import { IconCheck } from "./icons";
+import { Sheet } from "./MorePicks";
 import { Odds } from "./Odds";
 
 // "Picked by either team" is the one draft call offered; existing picks on other draft markets still settle.
@@ -118,46 +120,51 @@ function useDraft(event: EventT, game: number) {
   return { grid, tap, state, notice };
 }
 
-/** A few champions worth a yes/no call: the ones closest to a coin flip, not the near-certain picks. */
-function featuredOf(grid: Grid | undefined, n: number): GridChampion[] {
-  const priced = (grid?.champions ?? []).filter((c) => c.odds.picked).map((c) => ({ c, o: Number(c.odds.picked) }));
-  const lively = priced.filter((x) => x.o >= 1.5 && x.o <= 4.5).sort((a, b) => Math.abs(a.o - 2.2) - Math.abs(b.o - 2.2));
-  const pool = lively.length >= n ? lively : priced.sort((a, b) => a.o - b.o);
-  return pool.slice(0, n).map((x) => x.c);
-}
-
-/** One-tap draft calls for the match page: "Is this champion picked in Game N?" */
-export function FeaturedDraft({ event, game }: { event: EventT; game: number }) {
+/** "Who gets picked?": a swipeable row of champion cards, your calls first, then the likeliest picks. */
+export function ChampionRow({ event, game }: { event: EventT; game: number }) {
   const { grid, tap, state, notice } = useDraft(event, game);
-  if (!grid?.open) return null;
-  const picks = featuredOf(grid, 3);
-  if (!picks.length) return null;
+  const [all, setAll] = useState(false);
+  const close = useCallback(() => setAll(false), []);
+  if (!grid) return <div className="skeleton" style={{ height: 176 }} />;
+  if (!grid.open) return <p className="muted" style={{ fontSize: 13 }}>{game === 1 ? "Draft picks for this series are closed." : `Game ${game} draft picks open when Game ${game - 1} ends.`}</p>;
+  const priced = grid.champions.filter((c) => c.odds.picked);
+  const mine = priced.filter((c) => state(c, "picked").selected || state(c, "picked").placed);
+  const rest = priced.filter((c) => !mine.includes(c)).sort((x, y) => Number(x.odds.picked) - Number(y.odds.picked));
+  const row = [...mine, ...rest].slice(0, Math.max(10, mine.length));
   return (
     <>
-      {picks.map((c) => {
-        const s = state(c, "picked");
-        return (
-          <button
-            key={c.champion}
-            type="button"
-            className="fcard"
-            aria-pressed={s.selected}
-            data-placed={s.placed || undefined}
-            aria-busy={s.busy || undefined}
-            disabled={s.busy}
-            onClick={() => tap(c, "picked")}
-            aria-label={`${c.label} picked in Game ${game}: yes, ${oddsSpoken(c.odds.picked ?? null)}`}
-          >
-            <ChampIcon id={c.champion} label={c.label} />
-            <span className="q">
-              <span className="t">{c.label} picked?</span>
-              <span className="s">Game {game} draft · either team</span>
-            </span>
-            <span className="px num">{s.busy ? <span className="spinner" aria-hidden="true" /> : <>Yes <Odds value={c.odds.picked ?? null} /></>}</span>
-          </button>
-        );
-      })}
+      <div className="champ-row" role="group" aria-label={`Champions picked in Game ${game}`}>
+        {row.map((c) => {
+          const s = state(c, "picked");
+          return (
+            <button
+              key={c.champion}
+              type="button"
+              className="champ-card"
+              aria-pressed={s.selected}
+              data-held={s.placed || undefined}
+              aria-busy={s.busy || undefined}
+              disabled={s.busy}
+              onClick={() => tap(c, "picked")}
+              aria-label={`${c.label} picked in Game ${game}, ${oddsSpoken(c.odds.picked ?? null)}${s.selected ? ", in slip" : ""}${s.placed ? ", already placed" : ""}`}
+            >
+              <ChampIcon id={c.champion} label={c.label} />
+              <span className="nm">{c.label}</span>
+              <span className="px num">
+                {s.busy ? <span className="spinner" aria-hidden="true" /> : s.selected ? <><IconCheck width={13} height={13} aria-hidden="true" /> <Odds value={c.odds.picked ?? null} /></> : <Odds value={c.odds.picked ?? null} />}
+              </span>
+              {s.placed && !s.selected ? <span className="pk-tag">Placed</span> : null}
+            </button>
+          );
+        })}
+      </div>
       {notice}
+      <button type="button" className="all-champs" onClick={() => setAll(true)}>
+        All {grid.champions.length} champions
+      </button>
+      {all ? (
+        <Sheet title={`Game ${game} draft`} tabs={[{ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={game} /> }]} tab="draft" setTab={() => {}} onClose={close} />
+      ) : null}
     </>
   );
 }

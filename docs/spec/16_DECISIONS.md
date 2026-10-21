@@ -25,6 +25,7 @@
 | D-019 | Draft (champion picked) and game-1 total-kills markets open once ≥15 Worlds games have verified stats; priced from this tournament's pick rates / kill totals and labelled experimental | Build decision 2026-10-20 | Play-Ins supply the first 22 games. |
 | D-020 | Swiss record calls are a free card, not stakes: one call per team, rows capped 2/3/3/3/3/2, price locked when called; exact pays 100 RC x price (cap 1,000), right side a quarter, paid as REWARD ledger entries. Open staked record picks were refunded and carried onto the card | Owner decision 2026-10-21 | No stake decision; underdog calls still pay more. |
 | D-021 | Draft calls are only "picked by either team"; by-team, ban, first-pick and role markets are no longer created (earlier ones still settle) | Owner decision 2026-10-21 | One question per champion. |
+| D-022 | Opening grant 5,000 RC (was 1,000); match-day grant stays 1,000. Members who joined earlier get the difference once, as an opening-grant top-up | Owner decision 2026-10-21 | Round 1 has many matches to play. |
 
 ## Chosen defaults, configurable (not yet separately confirmed)
 

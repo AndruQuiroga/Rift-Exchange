@@ -41,7 +41,7 @@ function Join() {
           You&apos;re invited
         </h1>
         <ul className="muted" style={{ marginTop: 14, paddingLeft: 18, display: "grid", gap: 6, fontSize: 15 }}>
-          <li>Start with 1,000 RC, plus 1,000 RC every Worlds match day.</li>
+          <li>Start with 5,000 RC, plus 1,000 RC every Worlds match day.</li>
           <li>Back match winners, scores and drafts. Odds include your stake.</li>
           <li>Call every team&apos;s Swiss record for free, for RC rewards.</li>
           <li>Play credits only: nothing to buy, nothing to cash out. Bragging rights only.</li>

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, type ReactNode } from "react";
 import { ApiError } from "@/lib/api";
-import { rc, venueToday } from "@/lib/format";
+import { potentialReturn, rc, venueToday } from "@/lib/format";
 import { useLiveUpdates, useMe, useSeason } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconArrow, IconExplore, IconLeague, IconPicks, IconProfile, IconToday } from "./icons";
@@ -89,7 +89,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         <button className="slipbar" onClick={() => slip.setSheetOpen(true)}>
           <span>
             <span className="n num">{slip.lines.length}</span>
-            {slip.lines.length === 1 ? "pick" : "picks"} in slip
+            <span className="num">
+              {rc(slip.lines.reduce((s, l) => s + (l.stake ?? 0), 0))} RC
+              <span className="ret"> → {rc(slip.lines.reduce((s, l) => s + (l.stake ? potentialReturn(l.stake, l.odds) : 0), 0))} RC</span>
+            </span>
           </span>
           <span>
             Review <IconArrow width={16} height={16} style={{ verticalAlign: "-3px" }} />

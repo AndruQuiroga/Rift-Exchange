@@ -3,14 +3,12 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import { kickoff, oddsSpoken } from "@/lib/format";
-import { usePlaced } from "@/lib/hooks";
-import { useSlip } from "@/lib/slip";
+import { kickoff } from "@/lib/format";
 import { dash, swissBoard, SWISS_COLUMNS, type SwissCell } from "@/lib/swiss";
 import type { EventT, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
-import { eventLabel } from "./EventCard";
-import { Odds } from "./Odds";
+import { ChanceBar, useMyWinnerPick } from "./EventCard";
+import { IconCheck } from "./icons";
 
 /**
  * The whole Swiss stage laid out like the official board: every match slot from Round 1 to the final
@@ -158,49 +156,35 @@ function Finish({ cell, teams, calls }: { cell: SwissCell; teams: Team[]; calls:
 }
 
 function Tile({ event, calls, today }: { event: EventT; calls: Map<string, string>; today: boolean }) {
-  const slip = useSlip();
-  const placed = usePlaced();
-  const market = event.featured;
+  const mine = useMyWinnerPick(event.featured);
   const done = event.status === "COMPLETED";
-  const label = eventLabel(event);
+  const scored = done || event.status === "LIVE";
   const side = (code: "A" | "B", team: Team | null) => {
-    const o = market?.outcomes.find((x) => x.code === code);
-    const open = market?.state === "OPEN" && !!o?.odds;
     const call = team ? calls.get(team.id) : undefined;
-    const inner = (
-      <>
+    const picked = mine?.code === code;
+    return (
+      <span className={`sb-side${event.winner === code ? " won" : done ? " lost" : ""}`}>
         <TeamMark team={team} />
         <span className="code">{team?.code ?? "TBD"}</span>
+        {picked ? <IconCheck className="picked" width={13} height={13} aria-label={mine?.placed ? "your placed pick" : "in your slip"} /> : null}
         {call ? <span className="call num" title="Your record call">{dash(call)}</span> : null}
-        <span className="px num">
-          {done || event.status === "LIVE" ? event.score[code === "A" ? 0 : 1] : o ? <Odds value={o.odds} /> : null}
-        </span>
-      </>
-    );
-    if (!o || !market || (!open && !slip.isSelected(o.id))) {
-      return <div className={`sb-side${event.winner === code ? " won" : done ? " lost" : ""}`}>{inner}</div>;
-    }
-    return (
-      <button
-        type="button"
-        className="sb-side"
-        aria-pressed={slip.isSelected(o.id)}
-        data-placed={placed.has(o.id) || undefined}
-        onClick={() => slip.toggle(market, o, label)}
-        aria-label={`${team?.code ?? "TBD"} to beat ${(code === "A" ? event.team_b : event.team_a)?.code ?? "TBD"}, ${oddsSpoken(o.odds)}`}
-      >
-        {inner}
-      </button>
+        {scored ? <span className="px num">{event.score[code === "A" ? 0 : 1]}</span> : null}
+      </span>
     );
   };
   return (
-    <div className={`sb-tile${today ? " today" : ""}${event.status === "LIVE" ? " live" : ""}`}>
+    <Link
+      className={`sb-tile${today ? " today" : ""}${event.status === "LIVE" ? " live" : ""}`}
+      href={`/events/${event.id}`}
+      aria-label={`${event.team_a?.code ?? "TBD"} versus ${event.team_b?.code ?? "TBD"}${mine ? `, your pick ${mine.code === "A" ? event.team_a?.code : event.team_b?.code}` : ""}. Open match`}
+    >
       {side("A", event.team_a)}
       {side("B", event.team_b)}
-      <Link className="sb-foot" href={`/events/${event.id}`}>
+      {!scored && event.featured ? <ChanceBar event={event} market={event.featured} compact /> : null}
+      <span className="sb-foot">
         <span className="num">{event.status === "LIVE" ? "Live" : done ? "Final" : kickoff(event.scheduled_at)}</span>
-        <span>Picks →</span>
-      </Link>
-    </div>
+        <span>Open →</span>
+      </span>
+    </Link>
   );
 }

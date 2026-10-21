@@ -4,11 +4,11 @@ import uuid
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from rift import ledger
-from rift.models import Fixture, Season, Wallet
+from rift.models import Fixture, LedgerEntry, Season, Wallet
 
 
 def season_local_date(season: Season, at: datetime) -> date:
@@ -46,20 +46,34 @@ def join_season(session: Session, season: Season, user_id: uuid.UUID, now: datet
     if season.opening_grant_rc > 0 and not ledger.entry_exists(session, key):
         ledger.credit(session, wallet, kind="GRANT_OPENING", amount_rc=season.opening_grant_rc, key=key,
                       ref_type="season", ref_id=str(season.id), memo="Opening grant")
+    _top_up_opening(session, season, wallet)
     _grant_days(session, season, wallet, eligible_match_days(session, season, season_local_date(season, now)))
     return wallet
+
+
+def _top_up_opening(session: Session, season: Season, wallet: Wallet) -> int:
+    """If the season's opening grant was raised after members joined, pay them the difference (once per level)."""
+    paid = session.execute(select(func.coalesce(func.sum(LedgerEntry.gross_rc), 0)).where(
+        LedgerEntry.wallet_id == wallet.id, LedgerEntry.kind == "GRANT_OPENING")).scalar()
+    short = season.opening_grant_rc - int(paid)
+    key = f"grant:opening-topup:{season.id}:{wallet.user_id}:{season.opening_grant_rc}"
+    if short <= 0 or int(paid) == 0 or ledger.entry_exists(session, key):
+        return 0
+    ledger.credit(session, wallet, kind="GRANT_OPENING", amount_rc=short, key=key, ref_type="season",
+                  ref_id=str(season.id), memo=f"Opening grant raised to {season.opening_grant_rc:,} RC")
+    return 1
 
 
 def run_match_day_grants(session: Session, season: Season, now: datetime) -> int:
     """Grant every member for every eligible day so far. Safe to run repeatedly; returns grants issued."""
     days = eligible_match_days(session, season, season_local_date(season, now))
-    if not days:
-        return 0
     issued = 0
     wallet_ids = session.execute(select(Wallet.id).where(Wallet.season_id == season.id)).scalars().all()
     for wallet_id in sorted(wallet_ids):
         wallet = ledger.lock_wallet(session, wallet_id)
-        issued += _grant_days(session, season, wallet, days)
+        issued += _top_up_opening(session, season, wallet)
+        if days:
+            issued += _grant_days(session, season, wallet, days)
     return issued
 
 

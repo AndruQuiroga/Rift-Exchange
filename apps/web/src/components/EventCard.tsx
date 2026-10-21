@@ -1,13 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
-import { countdown, kickoff, oddsSpoken } from "@/lib/format";
+import type { EventT, MarketT } from "@/lib/types";
+import { countdown, odds as fmtOdds, kickoff } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
-import { Odds } from "./Odds";
+import { IconCheck } from "./icons";
 
 export function eventLabel(e: EventT) {
   return `${e.team_a?.code ?? "TBD"} vs ${e.team_b?.code ?? "TBD"}`;
@@ -42,86 +42,68 @@ export function Matchup({ event, large }: { event: EventT; large?: boolean }) {
   );
 }
 
-/** One side of a match winner market: the team and its price in a single tap target. */
-export function SideButton({ market, outcome, team, label, right }: { market: MarketT; outcome: OutcomeT; team: Team | null; label: string; right?: boolean }) {
+/** Your side of a match winner, from the slip or what you have placed: the indicator on every match card. */
+export function useMyWinnerPick(market: MarketT | null | undefined): { code: string; placed: boolean } | null {
   const slip = useSlip();
-  const selected = slip.isSelected(outcome.id);
-  const placed = usePlaced().has(outcome.id);
-  const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
-  const open = market.state === "OPEN" && outcome.odds !== null;
+  const placed = usePlaced();
+  if (!market) return null;
+  const inSlip = market.outcomes.find((o) => slip.isSelected(o.id));
+  if (inSlip) return { code: inSlip.code, placed: false };
+  const held = market.outcomes.find((o) => placed.has(o.id));
+  return held ? { code: held.code, placed: true } : null;
+}
+
+/** Each team's chance from the winner prices (overround removed), as a split bar with the prices under it. */
+export function ChanceBar({ event, market, compact }: { event: EventT; market: MarketT; compact?: boolean }) {
+  const a = market.outcomes.find((o) => o.code === "A");
+  const b = market.outcomes.find((o) => o.code === "B");
+  if (!a?.odds || !b?.odds) return null;
+  const pa = 1 / Number(a.odds);
+  const pb = 1 / Number(b.odds);
+  const share = Math.round((100 * pa) / (pa + pb));
+  const fav = share >= 50 ? "A" : "B";
   return (
-    <button
-      type="button"
-      className={`side${right ? " right" : ""}${won ? " won" : ""}`}
-      aria-pressed={selected}
-      data-placed={placed || undefined}
-      disabled={!open && !selected}
-      onClick={() => slip.toggle(market, outcome, label)}
-      aria-label={`${teamName(team)} to win, ${oddsSpoken(outcome.odds)}${selected ? ", in slip" : ""}${placed ? ", already placed" : ""}`}
-    >
-      <span className="who">
-        <TeamMark team={team} />
-        <span style={{ minWidth: 0 }}>
-          <span className="code">{team?.code ?? "TBD"}</span>
-          <span className="nm">{teamName(team)}</span>
-        </span>
+    <span className={`chance${compact ? " compact" : ""}`} aria-label={`${event.team_a?.code} ${share}%, ${event.team_b?.code} ${100 - share}%`}>
+      <span className="bar" aria-hidden="true">
+        <span className={fav === "A" ? "fav" : ""} style={{ width: `${share}%` }} />
+        <span className={fav === "B" ? "fav" : ""} style={{ width: `${100 - share}%` }} />
       </span>
-      <span className="px num">{won ? "Won" : <Odds value={outcome.odds} />}</span>
-    </button>
+      <span className="nums num" aria-hidden="true">
+        <span>{share}% · {fmtOdds(a.odds)}</span>
+        <span>{fmtOdds(b.odds)} · {100 - share}%</span>
+      </span>
+    </span>
   );
 }
 
-/** Only what can be tapped now, plus one line saying when the in-game picks open. */
-function matchTags(event: EventT): { now: string[]; later: string | null } {
-  const cats = event.categories ?? [];
-  const pregame = event.featured?.state === "OPEN";
-  const between = event.status === "LIVE" && cats.includes("WINNER"); // the next game's winner and draft are open
-  const now: string[] = [];
-  if (pregame && event.best_of > 1) now.push("Score");
-  if (pregame || between) now.push("Draft");
-  if (cats.includes("OBJECTIVES")) now.push("Objectives");
-  if (event.early_open) now.push("Duels", "Kill line");
-  const later = !event.early_open && (pregame || between) ? "Duels at game start" : null;
-  return { now, later };
-}
-
+/** A match on Today: one tap target. The bar shows who is favoured; the match page takes every pick. */
 export function EventCard({ event, now }: { event: EventT; now: number }) {
   const cd = event.close_at ? countdown(event.close_at, now) : null;
   const market = event.featured;
-  const a = market?.outcomes.find((o) => o.code === "A");
-  const b = market?.outcomes.find((o) => o.code === "B");
+  const mine = useMyWinnerPick(market);
   const ready = event.team_a && event.team_b;
-  const tags = matchTags(event);
-  return (
-    <article className="mrow" aria-label={`${teamName(event.team_a)} versus ${teamName(event.team_b)}`}>
-      <div className="mrow-meta">
+  const body = (
+    <>
+      <span className="mrow-meta">
         <span className="num">
           <b>{kickoff(event.scheduled_at)}</b> · Bo{event.best_of}
-          {event.status === "LIVE" || event.status === "COMPLETED" ? ` · ${event.score[0]}–${event.score[1]}` : ""}
         </span>
-        <EventStatus status={event.status} closeAt={event.close_at} countdownText={cd} />
-      </div>
-      {market && a && b ? (
-        <div className="mrow-sides">
-          <SideButton market={market} outcome={a} team={event.team_a} label={eventLabel(event)} />
-          <SideButton market={market} outcome={b} team={event.team_b} label={eventLabel(event)} right />
-        </div>
-      ) : (
-        <Matchup event={event} />
-      )}
-      {ready ? (
-        <Link className="mrow-foot" href={`/events/${event.id}`}>
-          <span className="tags">
-            {tags.now.map((t) => (
-              <span className="tagpill" key={t}>{t}</span>
-            ))}
-            {tags.later ? <span className="tagpill later">{tags.later}</span> : null}
-          </span>
-          <span className="link">Match →</span>
-        </Link>
-      ) : (
-        <p className="muted" style={{ marginTop: 10, fontSize: 13 }}>Prices open once the Swiss draw sets this matchup.</p>
-      )}
-    </article>
+        {mine ? (
+          <span className="mypick"><IconCheck width={12} height={12} aria-hidden="true" /> {mine.placed ? "Placed" : "In slip"}: {mine.code === "A" ? event.team_a?.code : event.team_b?.code}</span>
+        ) : (
+          <EventStatus status={event.status} closeAt={event.close_at} countdownText={cd} />
+        )}
+      </span>
+      <Matchup event={event} />
+      {market && event.status === "SCHEDULED" ? <ChanceBar event={event} market={market} /> : null}
+      {ready ? null : <span className="muted" style={{ fontSize: 13 }}>Prices open once the Swiss draw sets this matchup.</span>}
+    </>
+  );
+  return ready ? (
+    <Link className="mrow tap" href={`/events/${event.id}`} aria-label={`${teamName(event.team_a)} versus ${teamName(event.team_b)}, ${kickoff(event.scheduled_at)}. Open match`}>
+      {body}
+    </Link>
+  ) : (
+    <article className="mrow">{body}</article>
   );
 }

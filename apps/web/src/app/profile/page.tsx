@@ -79,7 +79,7 @@ export default function ProfilePage() {
         <div className="rows">
           <div className="row" style={{ display: "block" }}>
             <p className="muted" style={{ fontSize: 14 }}>
-              You start with {rc(season?.opening_grant_rc ?? 1000)} RC and get {rc(season?.match_day_grant_rc ?? 1000)} RC on every Worlds match
+              You start with {rc(season?.opening_grant_rc ?? 5000)} RC and get {rc(season?.match_day_grant_rc ?? 1000)} RC on every Worlds match
               day. Odds include your stake: 2.30× on 100 RC returns 230 RC, a profit of 130. Markets lock at the scheduled start, odds are fixed
               when you place, and results settle automatically once verified match data is in. Stake as much of your balance as you like.
             </p>
