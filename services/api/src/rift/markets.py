@@ -261,6 +261,8 @@ def upsert_market(session: Session, season: Season, fixture: Fixture | None, spe
         return market
     else:
         market.close_at = spec.close_at  # follows reschedules; lock_due() closes anything now past due
+        market.params = {**market.params, **spec.params}  # rule changes (e.g. through_draft) reach open markets
+        market.rules_text = spec.rules_text
         market.confidence = spec.confidence
         market.title = spec.title  # display names can change; accepted picks keep their own snapshot
     reprice(session, market, spec, settings)

@@ -349,3 +349,17 @@ def test_game_specs_hold_pre_game_markets_only():
     assert fresh["game_winner"].close_at == close + markets.DRAFT_GRACE and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
     assert "until 3:00" in fresh["game_winner"].rules_text and fresh["game_winner"].params["through_draft"]
     assert "total_kills_game" not in fresh  # kill lines open once the game loads (early-game window)
+
+def test_open_markets_pick_up_new_rules_on_the_next_pricing_pass(factory, world):
+    from conftest import make_market
+
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, world["season"]), s.get(Fixture, world["fixture"])
+        old = make_market(s, season, fx, "game_winner", [("A", "A", "1.80"), ("B", "B", "2.00")],
+                          params={"game_index": 1}, scope="GAME", key="game_winner:x:1")
+        spec = markets.MarketSpec("game_winner:x:1", "game_winner", "GAME", "WINNER", "Game 1 winner", "new rules",
+                                  fx.scheduled_at + markets.DRAFT_GRACE, "elo_v1", "MODEL",
+                                  [markets.OutcomeSpec("A", "A", 0.55), markets.OutcomeSpec("B", "B", 0.45)],
+                                  {"game_index": 1, "through_draft": True})
+        markets.upsert_market(s, season, fx, spec, Settings(season_code="test"), START - timedelta(days=30))
+        assert old.params == {"game_index": 1, "through_draft": True} and old.rules_text == "new rules"
