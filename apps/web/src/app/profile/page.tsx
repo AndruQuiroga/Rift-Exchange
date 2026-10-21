@@ -15,6 +15,7 @@ const KIND: Record<string, string> = {
   PAYOUT: "Winnings",
   VOID_REFUND: "Void refund",
   REVERSAL: "Correction",
+  REWARD: "Record call reward",
 };
 
 export default function ProfilePage() {
@@ -26,7 +27,7 @@ export default function ProfilePage() {
     <>
       <div className="page-head">
         <div>
-          <div className="eyebrow">@{me?.user.handle}</div>
+          <div className="eyebrow">Your profile</div>
           <h1 style={{ marginTop: 6 }}>{me?.user.display_name ?? "Profile"}</h1>
         </div>
       </div>

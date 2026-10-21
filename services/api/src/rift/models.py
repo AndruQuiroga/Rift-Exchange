@@ -127,7 +127,7 @@ class LedgerEntry(Base):
     created_at: Mapped[datetime] = _created()
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('GRANT_OPENING','GRANT_MATCH_DAY','STAKE','PAYOUT','VOID_REFUND','REVERSAL')",
+            "kind IN ('GRANT_OPENING','GRANT_MATCH_DAY','STAKE','PAYOUT','VOID_REFUND','REVERSAL','REWARD')",
             name="ck_ledger_kind",
         ),
     )
@@ -349,6 +349,29 @@ class Selection(Base):
         CheckConstraint("stake_rc > 0", name="ck_selection_stake"),
         CheckConstraint("odds > 1", name="ck_selection_odds"),
         CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID')", name="ck_selection_status"),
+    )
+
+
+class SwissCall(Base):
+    """A free record call on the Swiss card: no stake, a capped RC reward at the price locked when called."""
+
+    __tablename__ = "swiss_calls"
+    id: Mapped[uuid.UUID] = _uuid()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    market_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("markets.id"), index=True)
+    outcome_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("outcomes.id"))
+    odds: Mapped[Decimal] = mapped_column(Numeric(12, 4))
+    odds_version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(8), default="OPEN")
+    reward_rc: Mapped[int] = mapped_column(BigInteger, default=0)
+    settled_revision: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = _created()
+    settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    __table_args__ = (
+        UniqueConstraint("user_id", "market_id", name="uq_swiss_call_market"),
+        CheckConstraint("odds > 1", name="ck_swiss_call_odds"),
+        CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID')", name="ck_swiss_call_status"),
     )
 
 

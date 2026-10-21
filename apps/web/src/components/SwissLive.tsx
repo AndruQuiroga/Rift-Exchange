@@ -6,75 +6,98 @@ import useSWR from "swr";
 import { kickoff, oddsSpoken } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
-import { dash, swissRounds, type SwissFinish } from "@/lib/swiss";
+import { dash, swissBoard, SWISS_COLUMNS, type SwissCell } from "@/lib/swiss";
 import type { EventT, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
 import { eventLabel } from "./EventCard";
 import { Odds } from "./Odds";
 
-/** The whole Swiss stage on one board: a column per round, pools by record, winner picks right on each match. */
-export function SwissLive({ calls }: { calls: Map<string, string> }) {
+/**
+ * The whole Swiss stage laid out like the official board: every match slot from Round 1 to the final
+ * records, TBD until drawn. Tap a team to pick the winner; tap the match for its draft and in-game picks.
+ */
+export function SwissLive({ calls, day }: { calls: Map<string, string>; day?: string | null }) {
   const { data } = useSWR<{ events: EventT[] }>("/events?stage=Swiss");
-  const board = useMemo(() => swissRounds(data?.events ?? []), [data]);
+  const board = useMemo(() => swissBoard(data?.events ?? []), [data]);
   const scroller = useRef<HTMLDivElement>(null);
-  const current = board.rounds.find((r) => !r.done)?.index ?? board.rounds.length;
+  const current = board.current;
 
   // Open on the round being played, not on Round 1.
   useEffect(() => {
-    const col = scroller.current?.querySelector<HTMLElement>(`[data-round="${current}"]`);
+    const col = scroller.current?.querySelector<HTMLElement>(`[data-col="${current}"]`);
     if (col && scroller.current) scroller.current.scrollLeft = col.offsetLeft - scroller.current.offsetLeft;
   }, [current, data]);
 
-  if (!data) return <div className="skeleton" style={{ marginTop: 14, height: 320 }} />;
-  if (!data.events.length) {
-    return (
-      <div className="empty" style={{ marginTop: 14 }}>
-        <h3>No Swiss matches yet</h3>
-        <p>The board fills in as soon as the Swiss draw is published.</p>
-      </div>
-    );
-  }
+  if (!data) return <div className="skeleton" style={{ height: 420 }} />;
   return (
-    <section className="section" aria-label="Swiss live board" style={{ marginTop: 14 }}>
-      <p className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
-        Teams meet others on the same record. Pick each winner here, or open a match for its draft and in-game picks.
-      </p>
-      <div className="swiss-live" ref={scroller}>
-        {board.rounds.map((r) => (
-          <div className="sl-round" key={r.index} data-round={r.index} aria-label={`Round ${r.index}`}>
-            <div className="sl-round-head">
-              <span className="display">Round {r.index}</span>
-              <span className={`muted${r.index === current ? " now" : ""}`}>{r.done ? "Done" : r.index === current ? "Now" : "Later"}</span>
-            </div>
-            {r.pools.map((p) => (
-              <div className="sl-pool" key={p.record}>
-                <div className={`sl-pool-head num${poolTone(p.record)}`}>{dash(p.record)}</div>
-                {p.matches.map((e) => <SwissTile key={e.id} event={e} calls={calls} />)}
-              </div>
-            ))}
-            {r.toDraw ? (
-              <div className="sl-tbd">
-                {r.toDraw} match{r.toDraw === 1 ? "" : "es"} drawn after Round {r.index - 1}
-              </div>
-            ) : null}
+    <div className="swiss-board" ref={scroller} role="group" aria-label="Swiss stage board">
+      {SWISS_COLUMNS.map((col, i) => (
+        <div className="sb-col" key={col.title} data-col={i}>
+          <div className="sb-col-head">
+            <span className="display">{col.title}</span>
+            {i === current ? <span className="now">Now</span> : null}
           </div>
-        ))}
-        <div className="sl-round" aria-label="Finished">
-          <div className="sl-round-head">
-            <span className="display">Finished</span>
+          <div className="sb-cells">
+            {col.cells.map((cell) =>
+              cell.kind === "pool" ? (
+                <Pool key={cell.record} cell={cell} matches={board.pools.get(cell.record) ?? []} calls={calls} day={day} />
+              ) : (
+                <Finish key={cell.record} cell={cell} teams={board.finished.get(cell.record) ?? []} calls={calls} />
+              ),
+            )}
           </div>
-          <Finished title="Through" teams={board.advanced} tone="adv" calls={calls} />
-          <Finished title="Out" teams={board.out} tone="out" calls={calls} />
         </div>
+      ))}
+    </div>
+  );
+}
+
+// Advancement and elimination matches (a team on two wins or two losses) are best-of-three.
+const decisive = (record: string) => record.includes("2");
+
+function Pool({ cell, matches, calls, day }: { cell: SwissCell; matches: EventT[]; calls: Map<string, string>; day?: string | null }) {
+  const empty = Math.max(cell.slots - matches.length, 0);
+  return (
+    <section className="sb-pool" aria-label={`${dash(cell.record)} pool`}>
+      <div className="sb-pool-head">
+        <span className="num">{dash(cell.record)}</span>
+        <span className="muted">{decisive(cell.record) ? "Bo3" : "Bo1"}</span>
       </div>
+      {matches.map((e) => <Tile key={e.id} event={e} calls={calls} today={!!day && e.local_date === day} />)}
+      {Array.from({ length: empty }, (_, i) => (
+        <div className="sb-tile tbd" key={`tbd-${i}`} aria-label="Match to be drawn">
+          <div className="sb-side"><span className="mark" aria-hidden="true" /><span className="code">TBD</span></div>
+          <div className="sb-side"><span className="mark" aria-hidden="true" /><span className="code">TBD</span></div>
+        </div>
+      ))}
     </section>
   );
 }
 
-// Pools one win from advancing or one loss from going out are the ones to watch.
-const poolTone = (record: string) => (record[0] === "2" && record[2] !== "2" ? " adv" : record[2] === "2" && record[0] !== "2" ? " out" : record === "2-2" ? " decider" : "");
+function Finish({ cell, teams, calls }: { cell: SwissCell; teams: Team[]; calls: Map<string, string> }) {
+  const adv = cell.record.startsWith("3");
+  return (
+    <section className={`sb-finish ${adv ? "adv" : "out"}`} aria-label={`Finished ${dash(cell.record)}`}>
+      <div className="sb-pool-head">
+        <span className="num">{dash(cell.record)}</span>
+        <span>{adv ? "Through" : "Out"}</span>
+      </div>
+      {Array.from({ length: cell.slots }, (_, i) => {
+        const t = teams[i];
+        const call = t ? calls.get(t.id) : undefined;
+        return (
+          <div className={`sb-side${t ? "" : " tbd"}`} key={t?.id ?? `tbd-${i}`}>
+            <TeamMark team={t ?? null} />
+            <span className="code">{t?.code ?? "TBD"}</span>
+            {call ? <span className={`call num${call === cell.record ? " hit" : ""}`}>{call === cell.record ? "Called" : dash(call)}</span> : null}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
 
-function SwissTile({ event, calls }: { event: EventT; calls: Map<string, string> }) {
+function Tile({ event, calls, today }: { event: EventT; calls: Map<string, string>; today: boolean }) {
   const slip = useSlip();
   const placed = usePlaced();
   const market = event.featured;
@@ -83,25 +106,24 @@ function SwissTile({ event, calls }: { event: EventT; calls: Map<string, string>
   const side = (code: "A" | "B", team: Team | null) => {
     const o = market?.outcomes.find((x) => x.code === code);
     const open = market?.state === "OPEN" && !!o?.odds;
-    const won = event.winner === code;
     const call = team ? calls.get(team.id) : undefined;
     const inner = (
       <>
         <TeamMark team={team} />
         <span className="code">{team?.code ?? "TBD"}</span>
-        {call ? <span className="call num" title="Your Swiss Board call">{dash(call)}</span> : null}
+        {call ? <span className="call num" title="Your record call">{dash(call)}</span> : null}
         <span className="px num">
-          {done || event.status === "LIVE" ? event.score[code === "A" ? 0 : 1] : o ? <Odds value={o.odds} /> : "—"}
+          {done || event.status === "LIVE" ? event.score[code === "A" ? 0 : 1] : o ? <Odds value={o.odds} /> : null}
         </span>
       </>
     );
     if (!o || !market || (!open && !slip.isSelected(o.id))) {
-      return <div className={`sl-side${won ? " won" : done ? " lost" : ""}`}>{inner}</div>;
+      return <div className={`sb-side${event.winner === code ? " won" : done ? " lost" : ""}`}>{inner}</div>;
     }
     return (
       <button
         type="button"
-        className="sl-side"
+        className="sb-side"
         aria-pressed={slip.isSelected(o.id)}
         data-placed={placed.has(o.id) || undefined}
         onClick={() => slip.toggle(market, o, label)}
@@ -112,36 +134,13 @@ function SwissTile({ event, calls }: { event: EventT; calls: Map<string, string>
     );
   };
   return (
-    <div className="sl-tile">
+    <div className={`sb-tile${today ? " today" : ""}${event.status === "LIVE" ? " live" : ""}`}>
       {side("A", event.team_a)}
       {side("B", event.team_b)}
-      <Link className="sl-foot" href={`/events/${event.id}`}>
-        <span className="num">{event.status === "LIVE" ? "Live" : done ? "Final" : `${kickoff(event.scheduled_at)} · Bo${event.best_of}`}</span>
-        <span>Match →</span>
+      <Link className="sb-foot" href={`/events/${event.id}`}>
+        <span className="num">{event.status === "LIVE" ? "Live" : done ? "Final" : kickoff(event.scheduled_at)}</span>
+        <span>Picks →</span>
       </Link>
-    </div>
-  );
-}
-
-function Finished({ title, teams, tone, calls }: { title: string; teams: SwissFinish[]; tone: "adv" | "out"; calls: Map<string, string> }) {
-  return (
-    <div className="sl-pool">
-      <div className={`sl-pool-head ${tone}`}>{title}</div>
-      {teams.length ? (
-        teams.map(({ team, record }) => {
-          const call = calls.get(team.id);
-          return (
-            <div className="sl-done" key={team.id}>
-              <TeamMark team={team} />
-              <b>{team.code}</b>
-              <span className="num">{dash(record)}</span>
-              {call ? <span className={`call num${call === record ? " hit" : ""}`}>{call === record ? "Called it" : `Called ${dash(call)}`}</span> : null}
-            </div>
-          );
-        })
-      ) : (
-        <div className="sl-tbd">None yet</div>
-      )}
     </div>
   );
 }

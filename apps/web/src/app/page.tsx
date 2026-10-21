@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Disclaimer } from "@/components/Disclaimer";
 import { EventCard } from "@/components/EventCard";
-import { SwissSummary } from "@/components/SwissProgress";
+import { SwissSummary, useSwissCalls } from "@/components/SwissProgress";
+import { SwissLive } from "@/components/SwissLive";
 import { countdown, dayLabel, longDate, rc, venueToday } from "@/lib/format";
 import { useNow, useSeason } from "@/lib/hooks";
 import type { EventT, MarketT, Standing } from "@/lib/types";
@@ -33,6 +34,8 @@ export default function TodayPage() {
   const board = open.filter((m) => m.kind === "swiss_record");
   const boardLock = board[0] ? countdown(board[0].close_at, now) : null;
   const champion = open.find((m) => m.kind === "tournament_winner");
+  const swissDay = !!day && season?.stages_by_day[day] === "Swiss";
+  const calls = useSwissCalls(futures?.markets);
 
   return (
     <>
@@ -60,8 +63,8 @@ export default function TodayPage() {
       {board.length ? (
         <Link className="banner section" href="/swiss" style={{ marginTop: 14 }}>
           <span>
-            <span className="t" style={{ display: "block" }}>Swiss Board is open</span>
-            <span className="s">Call each team&apos;s record{boardLock ? ` · locks in ${boardLock}` : ""}</span>
+            <span className="t" style={{ display: "block" }}>Record calls are open</span>
+            <span className="s">Free to play · call each team&apos;s Swiss record{boardLock ? ` · locks in ${boardLock}` : ""}</span>
           </span>
           <span className="go">Open →</span>
         </Link>
@@ -69,6 +72,15 @@ export default function TodayPage() {
         <SwissSummary />
       ) : null}
 
+      {swissDay ? (
+        <section className="section" aria-label="Swiss stage">
+          <div className="section-head">
+            <h2>Swiss stage</h2>
+            <span className="muted" style={{ fontSize: 13 }}>Tap a team to pick the winner · Picks → for draft and more</span>
+          </div>
+          <SwissLive calls={calls} day={day} />
+        </section>
+      ) : (
       <section className="section" aria-label="Matches">
         {isLoading || !events ? (
           <>
@@ -90,6 +102,7 @@ export default function TodayPage() {
           </>
         )}
       </section>
+      )}
 
       <div className="two-col section">
         {champion ? (

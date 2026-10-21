@@ -44,6 +44,19 @@ def test_invite_flow_and_csrf(api):
     assert r.json()["error"]["code"] == "INVITE_INVALID"
 
 
+def test_one_name_makes_the_account(api):
+    app, codes = api
+    client = TestClient(app)
+    r = client.post("/api/v1/auth/redeem", json={"code": codes[0], "name": "  Alice   W "}, headers=H)
+    assert r.status_code == 200, r.text
+    # "alice" is already the world fixture's handle, so the internal handle gets a suffix.
+    assert r.json()["user"] == {**r.json()["user"], "handle": "alice_w", "display_name": "Alice W"}
+    r = TestClient(app).post("/api/v1/auth/redeem", json={"code": codes[1], "name": "alice w"}, headers=H)
+    assert r.json()["error"]["code"] == "NAME_TAKEN"
+    r = TestClient(app).post("/api/v1/auth/redeem", json={"code": codes[1], "name": "A"}, headers=H)
+    assert r.json()["error"]["code"] == "NAME_INVALID"
+
+
 def test_place_retry_and_privacy(api, factory, world):
     app, codes = api
     kai, mika = signup(app, codes[0], "kai"), signup(app, codes[1], "mika")

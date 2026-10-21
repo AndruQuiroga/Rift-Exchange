@@ -158,3 +158,25 @@ export type Quote = {
 export type Receipt = { ticket_id: string; accepted_at: string; total_stake_rc: number; selections: Pick[]; wallet: Wallet };
 
 export type LedgerRow = { id: number; kind: string; amount_rc: number; available_delta_rc: number; memo: string; created_at: string };
+
+/** A free Swiss record call: price locked when made; exact pays exact_rc, right side partial_rc. */
+export type SwissCallT = {
+  market_id: string;
+  outcome_id: string;
+  record: string;
+  odds: string;
+  status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID";
+  reward_rc: number;
+  exact_rc: number;
+  partial_rc: number;
+  /** The team's Swiss record so far ("2-1"). */
+  swiss_record: string;
+};
+
+export type SwissCardT = {
+  open: boolean;
+  close_at: string | null;
+  reward: { base_rc: number; cap_rc: number; partial_share: string };
+  slots: Record<string, number>;
+  calls: SwissCallT[];
+};

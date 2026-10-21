@@ -31,11 +31,14 @@ def test_player_name_strips_only_a_known_team_prefix():
 
 
 def test_void_reason_in_plain_words():
-    pick = SimpleNamespace(status="VOID")
-    early, series = SimpleNamespace(params={"early": True}), SimpleNamespace(params={})
+    pick = SimpleNamespace(status="VOID", settled_revision=1)
+    early = SimpleNamespace(kind="first_blood", params={"early": True})
+    series = SimpleNamespace(kind="series_winner", params={})
     void = lambda reason: SimpleNamespace(void=True, reason=reason)
     assert void_reason(pick, early, SimpleNamespace(void=False, reason=None)) == "Placed after first blood or 3:00"
     assert void_reason(pick, series, None) == "Placed after the start"
     assert void_reason(pick, early, void("Exact tie (void rule)")) == "Tie"
     assert void_reason(pick, series, void("Game 3 was not played")) == "Game 3 not played"
     assert void_reason(SimpleNamespace(status="WON"), series, None) is None
+    moved = SimpleNamespace(status="VOID", settled_revision=0)
+    assert void_reason(moved, SimpleNamespace(kind="swiss_record", params={}), None).startswith("Moved to the free")

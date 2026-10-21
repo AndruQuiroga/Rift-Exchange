@@ -1,49 +1,59 @@
 "use client";
 
 import Link from "next/link";
+import { useMemo } from "react";
 import useSWR from "swr";
 import { rc } from "@/lib/format";
 import { dash, swissChance } from "@/lib/swiss";
-import type { MarketT, Pick } from "@/lib/types";
+import type { MarketT, SwissCardT } from "@/lib/types";
 import { TeamMark } from "./bits";
 
 const ORDER = ["3-0", "3-1", "3-2", "2-3", "1-3", "0-3"];
 
-/** Swiss Board picks, every state: open and settled. */
-export function useSwissPicks() {
-  const { data } = useSWR<{ picks: Pick[] }>("/me/picks");
-  return (data?.picks ?? []).filter((p) => p.swiss_record != null);
+/** Your free record card: calls, locked prices and rewards. */
+export function useSwissCard() {
+  return useSWR<SwissCardT>("/swiss/card");
 }
 
-/** After the board locks: each call against the team's record so far, and whether it can still land. */
+/** team id -> the record you called for it, to tag teams on the Swiss board. */
+export function useSwissCalls(markets: MarketT[] | undefined): Map<string, string> {
+  const { data } = useSwissCard();
+  return useMemo(() => {
+    const out = new Map<string, string>();
+    for (const c of data?.calls ?? []) {
+      const team = markets?.find((m) => m.id === c.market_id)?.team;
+      if (team) out.set(team.id, c.record);
+    }
+    return out;
+  }, [data, markets]);
+}
+
+/** After the card locks: each call against the team's record so far, whether it can still land, and what it paid. */
 export function SwissProgress({ board }: { board: MarketT[] }) {
-  const picks = useSwissPicks();
-  if (!picks.length) {
-    return <div className="empty" style={{ marginTop: 14 }}><h3>No Swiss Board picks</h3><p>The board locked before you placed any teams.</p></div>;
+  const { data } = useSwissCard();
+  const calls = data?.calls ?? [];
+  if (!calls.length) {
+    return <div className="empty" style={{ marginTop: 14 }}><h3>No record calls</h3><p>The card locked before you made any calls.</p></div>;
   }
-  const rows = picks
-    .map((p) => {
-      const m = board.find((x) => x.id === p.market_id);
-      const called = m?.outcomes.find((o) => o.id === p.outcome_id)?.code ?? p.outcome_label.replace("–", "-");
-      return { p, m, called, chance: swissChance(called, p.swiss_record ?? "0-0") };
-    })
-    .sort((a, b) => ORDER.indexOf(a.called) - ORDER.indexOf(b.called));
+  const rows = calls
+    .map((c) => ({ c, m: board.find((x) => x.id === c.market_id), chance: swissChance(c.record, c.swiss_record) }))
+    .sort((a, b) => ORDER.indexOf(a.c.record) - ORDER.indexOf(b.c.record));
   return (
-    <section className="section" aria-label="Your Swiss Board" style={{ marginTop: 14 }}>
+    <section className="section" aria-label="Your record calls" style={{ marginTop: 14 }}>
       <div className="swiss-progress">
-        {rows.map(({ p, m, called, chance }) => (
-          <div className="sp-row" key={p.id}>
+        {rows.map(({ c, m, chance }) => (
+          <div className="sp-row" key={c.market_id}>
             <span className="sp-team">
               <TeamMark team={m?.team ?? null} />
-              <b>{m?.team?.code ?? p.market_title}</b>
+              <b>{m?.team?.code ?? "—"}</b>
             </span>
             <span className="sp-rec num">
-              <span className="muted">called</span> {dash(called)}
-              <span className="muted"> · now</span> {dash(p.swiss_record ?? "0-0")}
+              <span className="muted">called</span> {dash(c.record)}
+              <span className="muted"> · now</span> {dash(c.swiss_record)}
             </span>
             <span className={`sp-state ${chance.tone}`}>
               {chance.text}
-              {p.status !== "OPEN" && p.return_rc ? <span className="num"> · {rc(p.return_rc)} RC</span> : null}
+              {c.status === "OPEN" ? <span className="num muted"> · up to {rc(c.exact_rc)} RC</span> : c.reward_rc ? <span className="num"> · +{rc(c.reward_rc)} RC</span> : null}
             </span>
           </div>
         ))}
@@ -52,22 +62,22 @@ export function SwissProgress({ board }: { board: MarketT[] }) {
   );
 }
 
-/** One line for Today once the board is locked: the live board, and how many exact calls are still alive. */
+/** One line for Today once the card locks: how many exact calls are still alive. */
 export function SwissSummary() {
-  const picks = useSwissPicks();
-  const alive = picks.filter((p) => {
-    const called = p.outcome_label.replace("–", "-");
-    return swissChance(called, p.swiss_record ?? "0-0").text === "Exact still possible";
-  }).length;
+  const { data } = useSwissCard();
+  const calls = data?.calls ?? [];
+  if (!calls.length) return null;
+  const alive = calls.filter((c) => swissChance(c.record, c.swiss_record).text === "Exact still possible").length;
+  const won = calls.reduce((s, c) => s + c.reward_rc, 0);
   return (
     <Link className="banner quiet section" href="/swiss" style={{ marginTop: 14 }}>
       <span>
-        <span className="t" style={{ display: "block" }}>Swiss live board</span>
+        <span className="t" style={{ display: "block" }}>Your record calls</span>
         <span className="s num">
-          Every round by record{picks.length ? ` · ${alive} of ${picks.length} exact calls still possible` : " · pick winners on the board"}
+          {alive} of {calls.length} exact calls still possible{won ? ` · +${rc(won)} RC so far` : ""}
         </span>
       </span>
-      <span className="go">Open →</span>
+      <span className="go">View →</span>
     </Link>
   );
 }

@@ -13,7 +13,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from rift import auth, draft, ledger, markets, props
+from rift import auth, draft, ledger, markets, props, swiss_card
 from rift.api import views
 from rift.config import Settings, get_settings
 from rift.db import db_now, session_factory
@@ -110,14 +110,14 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     class RedeemBody(BaseModel):
         code: str
-        handle: str
-        display_name: str = ""
+        name: str = ""
+        handle: str = ""  # older clients sent a separate handle; it now serves as the name
 
     @app.post("/api/v1/auth/redeem")
     def redeem(body: RedeemBody, response: Response, session: Db):
         season = season_of(session)
         try:
-            user, token = auth.redeem_invite(session, season, body.code, body.handle, body.display_name,
+            user, token = auth.redeem_invite(session, season, body.code, body.name or body.handle,
                                              db_now(session), settings.session_days)
         except auth.AuthError as e:
             raise ApiError(400, e.code, e.message) from e
@@ -271,19 +271,51 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         game_index: int = Field(ge=1, le=5)
         champion: str = Field(min_length=1, max_length=40)
         scope: str = Field(pattern="^(picked|A|B|banned|first)$")
-        role: str | None = Field(default=None, pattern="^(top|jungle|mid|bottom|support)$")  # scope A/B only
 
     @app.post("/api/v1/events/{event_id}/draft")
     def draft_market(event_id: uuid.UUID, body: DraftMarketBody, session: Db, user: CurrentUser):
         """Create (once, for everyone) the market behind a tapped champion and return it priced."""
+        if body.scope != "picked":
+            # Draft calls are trimmed to "picked by either team"; markets made earlier still settle.
+            raise ApiError(409, "NOT_OFFERED", "Only 'picked by either team' draft calls are offered.")
         fixture = _fixture(session, event_id)
         try:
             market = draft.ensure_market(session, season_of(session), fixture, body.game_index, body.champion,
-                                         body.scope, settings, db_now(session), role=body.role)
+                                         body.scope, settings, db_now(session))
         except draft.DraftError as e:
             raise ApiError(409, e.code, e.message) from e
         outcomes = list(session.execute(select(Outcome).where(Outcome.market_id == market.id)).scalars())
         return views.market_view(market, outcomes)
+
+    # ------------------------------------------------------------ Swiss record card (free calls)
+
+    class CallBody(BaseModel):
+        outcome_id: uuid.UUID
+
+    def _card_error(e: swiss_card.CardError) -> ApiError:
+        return ApiError(404 if e.code == "NOT_FOUND" else 409, e.code, e.message)
+
+    @app.get("/api/v1/swiss/card")
+    def get_card(session: Db, user: CurrentUser):
+        return swiss_card.card(session, season_of(session), user.id, db_now(session))
+
+    @app.put("/api/v1/swiss/card/{market_id}")
+    def put_call(market_id: uuid.UUID, body: CallBody, session: Db, user: CurrentUser):
+        season = season_of(session)
+        try:
+            swiss_card.set_call(session, season, user.id, market_id, body.outcome_id, db_now(session))
+        except swiss_card.CardError as e:
+            raise _card_error(e) from e
+        return swiss_card.card(session, season, user.id, db_now(session))
+
+    @app.delete("/api/v1/swiss/card/{market_id}")
+    def delete_call(market_id: uuid.UUID, session: Db, user: CurrentUser):
+        season = season_of(session)
+        try:
+            swiss_card.clear_call(session, season, user.id, market_id, db_now(session))
+        except swiss_card.CardError as e:
+            raise _card_error(e) from e
+        return swiss_card.card(session, season, user.id, db_now(session))
 
     class TicketBody(BaseModel):
         quote_id: uuid.UUID

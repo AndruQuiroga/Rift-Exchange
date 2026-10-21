@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from rift import grants, ingest, markets, props, ratings, settlement, timeline
+from rift import grants, ingest, markets, props, ratings, settlement, swiss_card, timeline
 from rift.adapters.leaguepedia import LeaguepediaSource, make_source
 from rift.adapters.lolesports import LolesportsClient
 from rift.config import Settings, get_settings
@@ -70,6 +70,7 @@ class Worker:
             self._run("lineups", lambda s, now: ingest.sync_lineups(s, self._season(s), self.client, now))
         self._run("early", lambda s, now: props.tighten_early(s, now))
         self._run("lock", lambda s, now: markets.lock_due(s, now))
+        self._run("card", lambda s, now: swiss_card.convert_staked(s, self._season(s), now))
         self._run("settle", self._settle)
         self._run("grants", self._grants)
 
