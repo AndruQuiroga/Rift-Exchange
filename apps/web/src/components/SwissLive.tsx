@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { kickoff, oddsSpoken } from "@/lib/format";
 import { usePlaced } from "@/lib/hooks";
@@ -21,18 +21,77 @@ export function SwissLive({ calls, day }: { calls: Map<string, string>; day?: st
   const board = useMemo(() => swissBoard(data?.events ?? []), [data]);
   const scroller = useRef<HTMLDivElement>(null);
   const current = board.current;
+  const [active, setActive] = useState(current);
+  // When every round fits (wide desktop), there is nothing to page through.
+  const [fits, setFits] = useState(false);
+
+  const columnAt = (i: number) => scroller.current?.querySelector<HTMLElement>(`[data-col="${i}"]`) ?? null;
+  // Centre a round: on phones it becomes the active column with its neighbours peeking in.
+  const goTo = useCallback((i: number, smooth = true) => {
+    const el = scroller.current;
+    const target = Math.max(0, Math.min(SWISS_COLUMNS.length - 1, i));
+    const col = columnAt(target);
+    if (!el || !col) return;
+    setActive(target); // the tab follows the tap straight away, not after the scroll settles
+    el.scrollTo({ left: col.offsetLeft - el.offsetLeft - (el.clientWidth - col.offsetWidth) / 2, behavior: smooth ? "smooth" : "auto" });
+  }, []);
 
   // Open on the round being played, not on Round 1.
   useEffect(() => {
-    const col = scroller.current?.querySelector<HTMLElement>(`[data-col="${current}"]`);
-    if (col && scroller.current) scroller.current.scrollLeft = col.offsetLeft - scroller.current.offsetLeft;
-  }, [current, data]);
+    goTo(current, false);
+    setActive(current);
+  }, [current, data, goTo]);
+
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    const measure = () => setFits(el.scrollWidth <= el.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [data]);
+
+  // The active round is whichever column sits nearest the middle after a swipe.
+  function onScroll() {
+    const el = scroller.current;
+    if (!el) return;
+    const mid = el.scrollLeft + el.clientWidth / 2;
+    let best = 0;
+    let dist = Infinity;
+    SWISS_COLUMNS.forEach((_, i) => {
+      const col = columnAt(i);
+      if (!col) return;
+      const d = Math.abs(col.offsetLeft - el.offsetLeft + col.offsetWidth / 2 - mid);
+      if (d < dist) [best, dist] = [i, d];
+    });
+    setActive(best);
+  }
 
   if (!data) return <div className="skeleton" style={{ height: 420 }} />;
   return (
-    <div className="swiss-board" ref={scroller} role="group" aria-label="Swiss stage board">
+    <div>
+      {fits ? null : (
+        <div className="sb-nav" role="group" aria-label="Rounds">
+          <button type="button" className="icon-btn" aria-label="Previous round" disabled={active === 0} onClick={() => goTo(active - 1)}>
+            ‹
+          </button>
+          <div className="sb-tabs">
+            {SWISS_COLUMNS.map((col, i) => (
+              <button key={col.title} type="button" aria-current={i === active ? "step" : undefined} onClick={() => goTo(i)}>
+                {col.title.replace("Round ", "R")}
+                {i === current ? <span className="dot" aria-label="now" /> : null}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="icon-btn" aria-label="Next round" disabled={active === SWISS_COLUMNS.length - 1} onClick={() => goTo(active + 1)}>
+            ›
+          </button>
+        </div>
+      )}
+    <div className="swiss-board" ref={scroller} onScroll={onScroll} role="group" aria-label="Swiss stage board">
       {SWISS_COLUMNS.map((col, i) => (
-        <div className="sb-col" key={col.title} data-col={i}>
+        <div className={`sb-col${i === active && !fits ? " active" : ""}`} key={col.title} data-col={i}>
           <div className="sb-col-head">
             <span className="display">{col.title}</span>
             {i === current ? <span className="now">Now</span> : null}
@@ -48,6 +107,7 @@ export function SwissLive({ calls, day }: { calls: Map<string, string>; day?: st
           </div>
         </div>
       ))}
+    </div>
     </div>
   );
 }

@@ -76,7 +76,7 @@ export default function TodayPage() {
         <section className="section" aria-label="Swiss stage">
           <div className="section-head">
             <h2>Swiss stage</h2>
-            <span className="muted" style={{ fontSize: 13 }}>Tap a team to pick the winner · Picks → for draft and more</span>
+            <span className="muted" style={{ fontSize: 13 }}>Tap a team to pick · swipe for rounds</span>
           </div>
           <SwissLive calls={calls} day={day} />
         </section>
