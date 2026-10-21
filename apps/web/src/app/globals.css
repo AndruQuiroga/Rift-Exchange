@@ -395,7 +395,7 @@ img { display: block; }
   display: flex; align-items: center; justify-content: space-between; gap: var(--s2); min-height: 56px; min-width: 0;
   padding: 6px 12px 6px 8px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); text-align: left;
 }
-.side:hover:not(:disabled) { border-color: var(--divider-strong); background: var(--surface-3); }
+.side:hover:not(:disabled):not([aria-pressed="true"]) { border-color: var(--divider-strong); background: var(--surface-3); }
 .side.right { flex-direction: row-reverse; text-align: right; padding: 6px 8px 6px 12px; }
 .side .who { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .side.right .who { flex-direction: row-reverse; }
@@ -435,7 +435,7 @@ img { display: block; }
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; min-height: 66px;
   border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider);
 }
-.sl:hover:not(:disabled) { border-color: var(--divider-strong); background: var(--surface-3); }
+.sl:hover:not(:disabled):not([aria-pressed="true"]) { border-color: var(--divider-strong); background: var(--surface-3); }
 .sl .t { font-size: 12px; font-weight: 700; color: var(--muted); }
 .sl .s { font-family: var(--font-display); font-size: 22px; font-weight: 800; line-height: 1; }
 .sl .p { font-size: 13px; font-weight: 800; }
@@ -504,7 +504,7 @@ img { display: block; }
   display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 0; padding: 8px 4px;
   border-radius: 8px; border: 1px solid var(--divider); background: var(--surface-2);
 }
-.ctile:hover:not(:disabled) { border-color: var(--divider-strong); }
+.ctile:hover:not(:disabled):not([aria-pressed="true"]) { border-color: var(--divider-strong); }
 .ctile[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
 .ctile:disabled { opacity: 0.5; }
 .ctile .nm { font-size: 12px; font-weight: 600; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -595,6 +595,9 @@ img { display: block; }
 /* Slip: picks grouped by match; with a bulk stake mode on, each line shows its amount until tapped. */
 .slip-group + .slip-group { margin-top: var(--s3); }
 .slip-group-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 4px 2px 6px; }
+.line-presets { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 6px; min-width: 0; }
+.line-presets button { min-height: 40px; padding: 0 2px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); font-weight: 700; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.line-presets button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .stake-chip { flex: 1; min-height: 44px; text-align: left; padding: 0 12px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); font-weight: 700; }
 
 /* My Picks: one heading per match, futures last. */
@@ -659,7 +662,7 @@ img { display: block; }
 }
 .swiss-board::-webkit-scrollbar { display: none; }
 .sb-col { scroll-snap-align: center; display: grid; grid-template-rows: auto 1fr; gap: var(--s2); min-width: 0; transition: opacity 160ms ease; }
-.swiss-board:has(.sb-col.active) .sb-col:not(.active) { opacity: 0.45; }
+.swiss-board:has(.sb-col.active) .sb-col:not(.active) { opacity: 0.6; }
 /* Wider screens: fixed columns; when they all fit, the whole board shows and the round bar hides. */
 @media (min-width: 640px) {
   .swiss-board { grid-auto-columns: 196px; padding: 0 0 var(--s2); margin: 0; scroll-snap-type: x proximity; }
@@ -728,7 +731,9 @@ button.sb-side[aria-pressed="true"] { background: var(--accent); color: var(--ac
   position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 6px 10px;
   border-radius: 10px; background: var(--surface); border: 1px solid var(--divider); color: var(--text); font-weight: 800;
 }
-.pk:hover:not(:disabled) { border-color: var(--divider-strong); background: var(--surface-2); }
+/* :not([aria-pressed]) everywhere below: a tapped button stays :hover on touch screens, and hover must never
+   repaint the selected (lime, dark-ink) state. */
+.pk:hover:not(:disabled):not([aria-pressed="true"]) { border-color: var(--divider-strong); background: var(--surface-2); }
 .pk .pk-px { display: inline-flex; align-items: center; gap: 5px; font-size: 15px; }
 .pk[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .pk.held:not([aria-pressed="true"]) { border: 1.5px solid var(--win); }
@@ -825,10 +830,10 @@ a.sb-tile:hover { border-color: var(--divider-strong); }
   position: relative; min-height: 220px; padding: 16px 14px 14px; gap: 8px; border-radius: 16px;
   background: var(--team, var(--surface-2)); border: 3px solid transparent; color: #fff;
 }
-.pk.win-card:hover:not(:disabled) { background: var(--team, var(--surface-2)); border-color: rgba(255, 255, 255, 0.35); }
+.pk.win-card:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--team, var(--surface-2)); border-color: rgba(255, 255, 255, 0.35); }
 .pk.win-card .mark.lg { background: rgba(0, 0, 0, 0.28); }
 .win-card .win-code { font-size: 44px; line-height: 0.9; margin-top: 2px; }
-.win-card .win-name, .win-card[aria-pressed="true"] .win-name { color: rgba(255, 255, 255, 0.82); white-space: normal; }
+.win-card .win-name, .win-card[aria-pressed="true"] .win-name { color: #fff; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45); white-space: normal; }
 .win-card .pk-px { margin-top: auto; font-family: var(--font-display); font-size: 40px; line-height: 1; }
 .pk.win-card[aria-pressed="true"] {
   background: var(--team, var(--surface-2)); color: #fff; border-color: var(--accent);
