@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
-import { countdown, odds as fmtOdds, oddsSpoken } from "@/lib/format";
+import { countdown, oddsSpoken } from "@/lib/format";
 import { useNow, usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
@@ -11,13 +11,11 @@ import { RetryNotice } from "./bits";
 import { Odds } from "./Odds";
 
 type Scope = "picked" | "A" | "B" | "banned" | "first";
-type Side = "A" | "B";
 type GridChampion = {
   champion: string;
   label: string;
   role: string | null;
   odds: Partial<Record<Scope, string | null>>;
-  roles?: Partial<Record<Side, Record<string, string>>>;
 };
 type Grid = {
   game_index: number;
@@ -30,11 +28,11 @@ type Grid = {
 };
 
 const ROLES = [
-  { id: "top", label: "Top", short: "TOP" },
-  { id: "jungle", label: "Jungle", short: "JGL" },
-  { id: "mid", label: "Mid", short: "MID" },
-  { id: "bottom", label: "Bot", short: "BOT" },
-  { id: "support", label: "Support", short: "SUP" },
+  { id: "top", label: "Top" },
+  { id: "jungle", label: "Jungle" },
+  { id: "mid", label: "Mid" },
+  { id: "bottom", label: "Bot" },
+  { id: "support", label: "Support" },
 ];
 const KIND_SCOPE: Record<string, Scope> = { champion_banned: "banned", champion_first_pick: "first" };
 
@@ -66,95 +64,122 @@ export function ChampIcon({ id, label, small }: { id: string; label: string; sma
   );
 }
 
-const keyOf = (game: number, champ: string, scope: Scope, role?: string) => `${game}:${champ}:${scope}${role ? `:${role}` : ""}`;
+const keyOf = (game: number, champ: string, scope: Scope) => `${game}:${champ}:${scope}`;
 
-/** Tap any champion for a price; the market behind it is created once, for everyone, on first tap. */
-export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?: number }) {
+/** The draft grid for one game, and tapping a champion: its market is created once, for everyone, on first tap. */
+function useDraft(event: EventT, game: number) {
   const slip = useSlip();
-  const now = useNow();
-  const [pickedGame, setGame] = useState(1);
-  const game = fixedGame ?? pickedGame;
-  const [mode, setMode] = useState<"grid" | "select">("grid");
-  const [scope, setScope] = useState<Scope>("picked");
-  const [slot, setSlot] = useState<{ side: Side; role: string }>({ side: "A", role: "top" });
-  const [role, setRole] = useState("all");
-  const [query, setQuery] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<{ text: string; retry: GridChampion } | null>(null);
-  const [focusAt, setFocusAt] = useState(0);
   const held = usePlaced();
-  const [created, setCreated] = useState<Record<string, { outcomeId: string; label: string; odds: string | null }>>({});
+  const { mutate } = useSWRConfig();
   const { data: grid } = useSWR<Grid>(`/events/${event.id}/draft?game=${game}`);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; retry: () => void } | null>(null);
+  const [created, setCreated] = useState<Record<string, string>>({});
+  const label = `${event.team_a?.code ?? "TBD"} vs ${event.team_b?.code ?? "TBD"}`;
 
   // Markets made earlier (by anyone) come back with the event, so selection survives a reload.
   const known = useMemo(() => {
-    const map: Record<string, { outcomeId: string; label: string; odds: string | null }> = {};
+    const map: Record<string, string> = {};
     for (const m of event.markets ?? []) {
-      if (!m.kind.startsWith("champion_") || typeof m.params.game_index !== "number") continue;
+      if (!m.kind.startsWith("champion_") || typeof m.params.game_index !== "number" || m.params.role) continue;
       const yes = m.outcomes.find((o) => o.code === "YES");
-      const scope: Scope = KIND_SCOPE[m.kind] ?? ((m.params.side as Side | undefined) ?? "picked");
-      if (yes) map[keyOf(m.params.game_index, String(m.params.champion), scope, m.params.role as string | undefined)] = { outcomeId: yes.id, label: String(m.params.champion), odds: yes.odds };
+      const scope: Scope = KIND_SCOPE[m.kind] ?? ((m.params.side as Scope | undefined) ?? "picked");
+      if (yes) map[keyOf(m.params.game_index, String(m.params.champion), scope)] = yes.id;
     }
     return { ...map, ...created };
   }, [event.markets, created]);
 
-  const label = `${event.team_a?.code ?? "TBD"} vs ${event.team_b?.code ?? "TBD"}`;
-  const code = (s: Side) => (s === "A" ? event.team_a?.code : event.team_b?.code) ?? s;
-  const scopes = grid?.scopes ?? (["picked", "A", "B"] as Scope[]);
-  const canSelect = (grid?.champions ?? []).some((c) => c.roles && (c.roles.A || c.roles.B));
-  const q = query.trim().toLowerCase();
-  const priceOf = (c: GridChampion) => (mode === "select" ? c.roles?.[slot.side]?.[slot.role] ?? null : c.odds[scope] ?? null);
-  const shown = (grid?.champions ?? []).filter(
-    (c) => (mode === "select" || role === "all" || c.role === role) && (!q || c.label.toLowerCase().includes(q)) && priceOf(c),
-  );
-  const lock = grid?.close_at ? countdown(grid.close_at, now) : null;
-  const byLabel = Object.fromEntries((grid?.champions ?? []).map((c) => [c.champion, c.label]));
-
-  // What sits in each champ select slot: the selected role pick on the slip for that side and role.
-  const filled = (side: Side, r: string) =>
-    Object.entries(known).find(([k, v]) => k.startsWith(`${game}:`) && k.endsWith(`:${side}:${r}`) && slip.isSelected(v.outcomeId));
-  // A champion can only be in one slot of a game: champion -> the other slot that holds it ("GEN mid").
-  const takenBy = new Map<string, string>();
-  if (mode === "select") {
-    for (const sd of ["A", "B"] as const) {
-      for (const x of ROLES) {
-        const f = filled(sd, x.id);
-        if (f && !(sd === slot.side && x.id === slot.role)) takenBy.set(f[1].label, `${code(sd)} ${x.short}`);
-      }
-    }
-  }
-
-  async function tap(c: GridChampion) {
-    if (takenBy.has(c.champion)) return;
-    const s: Scope = mode === "select" ? slot.side : scope;
-    const r = mode === "select" ? slot.role : undefined;
-    const key = keyOf(game, c.champion, s, r);
+  async function tap(c: GridChampion, scope: Scope) {
+    const key = keyOf(game, c.champion, scope);
     const existing = known[key];
-    if (existing && slip.isSelected(existing.outcomeId)) return slip.remove(existing.outcomeId);
+    if (existing && slip.isSelected(existing)) {
+      slip.undo(existing); // still in its undo window
+      slip.remove(existing);
+      return;
+    }
     setBusy(key);
     setError(null);
     try {
-      const body = { game_index: game, champion: c.champion, scope: s, ...(r ? { role: r } : {}) };
-      const market = await api<MarketT>(`/events/${event.id}/draft`, { method: "POST", json: body });
+      const market = await api<MarketT>(`/events/${event.id}/draft`, { method: "POST", json: { game_index: game, champion: c.champion, scope } });
       const yes = market.outcomes.find((o) => o.code === "YES");
       if (!yes) return;
-      if (mode === "select") {
-        const prev = filled(slot.side, slot.role);
-        if (prev) slip.remove(prev[1].outcomeId); // one champion per slot
-      }
-      setCreated((p) => ({ ...p, [key]: { outcomeId: yes.id, label: c.champion, odds: yes.odds } }));
+      setCreated((p) => ({ ...p, [key]: yes.id }));
       slip.toggle(market, yes, label);
-      if (mode === "select") {
-        const order = (["A", "B"] as const).flatMap((sd) => ROLES.map((x) => ({ side: sd, role: x.id })));
-        const next = order.find((o) => !(o.side === slot.side && o.role === slot.role) && !filled(o.side, o.role));
-        if (next) setSlot(next);
-      }
+      mutate(`/events/${event.id}`); // the featured cards and the full grid both read it
     } catch (e) {
-      setError({ text: e instanceof ApiError ? e.message : `Couldn't get a price for ${c.label}.`, retry: c });
+      setError({ text: e instanceof ApiError ? e.message : `Couldn't get a price for ${c.label}.`, retry: () => tap(c, scope) });
     } finally {
       setBusy(null);
     }
   }
+  const state = (c: GridChampion, scope: Scope) => {
+    const id = known[keyOf(game, c.champion, scope)];
+    return { selected: id ? slip.isSelected(id) : false, placed: !!id && held.has(id), busy: busy === keyOf(game, c.champion, scope) };
+  };
+  const notice = error ? <RetryNotice text={error.text} onRetry={error.retry} /> : null;
+  return { grid, tap, state, notice };
+}
+
+/** A few champions worth a yes/no call: the ones closest to a coin flip, not the near-certain picks. */
+function featuredOf(grid: Grid | undefined, n: number): GridChampion[] {
+  const priced = (grid?.champions ?? []).filter((c) => c.odds.picked).map((c) => ({ c, o: Number(c.odds.picked) }));
+  const lively = priced.filter((x) => x.o >= 1.5 && x.o <= 4.5).sort((a, b) => Math.abs(a.o - 2.2) - Math.abs(b.o - 2.2));
+  const pool = lively.length >= n ? lively : priced.sort((a, b) => a.o - b.o);
+  return pool.slice(0, n).map((x) => x.c);
+}
+
+/** One-tap draft calls for the match page: "Is this champion picked in Game N?" */
+export function FeaturedDraft({ event, game }: { event: EventT; game: number }) {
+  const { grid, tap, state, notice } = useDraft(event, game);
+  if (!grid?.open) return null;
+  const picks = featuredOf(grid, 3);
+  if (!picks.length) return null;
+  return (
+    <>
+      {picks.map((c) => {
+        const s = state(c, "picked");
+        return (
+          <button
+            key={c.champion}
+            type="button"
+            className="fcard"
+            aria-pressed={s.selected}
+            data-placed={s.placed || undefined}
+            aria-busy={s.busy || undefined}
+            disabled={s.busy}
+            onClick={() => tap(c, "picked")}
+            aria-label={`${c.label} picked in Game ${game}: yes, ${oddsSpoken(c.odds.picked ?? null)}`}
+          >
+            <ChampIcon id={c.champion} label={c.label} />
+            <span className="q">
+              <span className="t">{c.label} picked?</span>
+              <span className="s">Game {game} draft · either team</span>
+            </span>
+            <span className="px num">{s.busy ? <span className="spinner" aria-hidden="true" /> : <>Yes <Odds value={c.odds.picked ?? null} /></>}</span>
+          </button>
+        );
+      })}
+      {notice}
+    </>
+  );
+}
+
+/** Every champion for one game. "Picked by either team" is the call; the rarer ones sit behind one toggle. */
+export function ChampionGrid({ event, game }: { event: EventT; game: number }) {
+  const now = useNow();
+  const { grid, tap, state, notice } = useDraft(event, game);
+  const [scope, setScope] = useState<Scope>("picked");
+  const [more, setMore] = useState(false);
+  const [role, setRole] = useState("all");
+  const [query, setQuery] = useState("");
+  const [focusAt, setFocusAt] = useState(0);
+
+  const code = (s: "A" | "B") => (s === "A" ? event.team_a?.code : event.team_b?.code) ?? s;
+  const others = (grid?.scopes ?? []).filter((s) => s !== "picked");
+  const q = query.trim().toLowerCase();
+  const shown = (grid?.champions ?? []).filter((c) => (role === "all" || c.role === role) && (!q || c.label.toLowerCase().includes(q)) && c.odds[scope]);
+  const lock = grid?.close_at ? countdown(grid.close_at, now) : null;
+  const scopeLabel = (s: Scope) => (s === "picked" ? "Picked" : s === "banned" ? "Banned" : s === "first" ? "First pick" : `By ${code(s)}`);
 
   // One tab stop for the whole grid; arrow keys, Home and End move between tiles.
   function gridKeys(e: React.KeyboardEvent<HTMLDivElement>) {
@@ -169,86 +194,48 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
     tiles[next].focus();
   }
 
-  const scopeLabel = (s: Scope) =>
-    s === "picked" ? "Picked" : s === "banned" ? "Banned" : s === "first" ? "First pick" : `By ${code(s)}`;
-
   return (
     <div>
-      {event.best_of > 1 && fixedGame === undefined ? (
-        <div className="chips" role="group" aria-label="Game" style={{ marginTop: 12 }}>
-          {Array.from({ length: event.best_of }, (_, i) => i + 1).map((g) => (
-            <button key={g} className="chip" aria-pressed={g === game} onClick={() => setGame(g)}>
-              Game {g}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {canSelect ? (
-        <div className="segmented" role="group" aria-label="Mode" style={{ marginTop: 12 }}>
-          <button aria-pressed={mode === "grid"} onClick={() => setMode("grid")}>Any champion</button>
-          <button aria-pressed={mode === "select"} onClick={() => setMode("select")}>Champ select</button>
-        </div>
-      ) : null}
-
-      {mode === "grid" ? (
-        <div className="chips" role="group" aria-label="What to call" style={{ marginTop: 10 }}>
-          {scopes.map((s) => (
-            <button key={s} className="chip" aria-pressed={scope === s} onClick={() => setScope(s)}>
-              {scopeLabel(s)}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="slots">
-          {(["A", "B"] as const).map((side) => (
-            <div key={side}>
-              <div className="eyebrow" style={{ marginBottom: 6 }}>{code(side)}</div>
-              {ROLES.map((r) => {
-                const f = filled(side, r.id);
-                const active = slot.side === side && slot.role === r.id;
-                return (
-                  <button key={r.id} className={`slot${f ? " filled" : ""}`} aria-pressed={active} onClick={() => setSlot({ side, role: r.id })}>
-                    <span className="r">{r.short}</span>
-                    <span className="c">{f ? byLabel[f[1].label] ?? f[1].label : "Empty"}</span>
-                    {f ? <span className="px num">{fmtOdds(f[1].odds)}</span> : null}
-                  </button>
-                );
-              })}
-            </div>
-          ))}
-        </div>
-      )}
-
       {grid && !grid.open ? (
         <div className="window-note">
           {game === 1 ? "Draft picks for this series are closed." : `Game ${game} opens when Game ${game - 1} ends — about 8 minutes before its draft.`}
         </div>
       ) : (
-        <div className="muted" style={{ fontSize: 13, marginTop: 10 }}>
-          {mode === "select"
-            ? `Tap a slot, then a champion: "${code(slot.side)} play it ${slot.role}". Each filled slot is its own pick.`
-            : lock
-              ? `Game ${game} picks lock in ${lock}${game === 1 ? ", or as soon as the match goes live" : ""}.`
-              : null}
-        </div>
+        <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>
+          {scope === "picked" ? `Tap a champion you think gets picked in Game ${game}, by either team.` : `${scopeLabel(scope)} in Game ${game}.`}
+          {lock ? ` Locks in ${lock}.` : ""}
+        </p>
       )}
+
+      {others.length ? (
+        more ? (
+          <div className="chips" role="group" aria-label="What to call" style={{ marginTop: 10 }}>
+            {(["picked", ...others] as Scope[]).map((s) => (
+              <button key={s} className="chip" aria-pressed={scope === s} onClick={() => setScope(s)}>
+                {scopeLabel(s)}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <button type="button" className="link-btn" onClick={() => setMore(true)}>
+            More draft calls: by team, bans, first pick
+          </button>
+        )
+      ) : null}
 
       <label className="searchbox">
         <span className="sr-only">Search champions</span>
         <input placeholder={`Search ${grid?.champions.length ?? ""} champions`} value={query} onChange={(e) => setQuery(e.target.value)} />
       </label>
-      {mode === "grid" ? (
-        <div className="chips" style={{ marginTop: 8 }}>
-          {[{ id: "all", label: "All" }, ...ROLES].map((r) => (
-            <button key={r.id} className="chip" aria-pressed={role === r.id} onClick={() => setRole(r.id)}>
-              {r.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="chips" style={{ marginTop: 8 }}>
+        {[{ id: "all", label: "All" }, ...ROLES].map((r) => (
+          <button key={r.id} className="chip" aria-pressed={role === r.id} onClick={() => setRole(r.id)}>
+            {r.label}
+          </button>
+        ))}
+      </div>
 
-      {error ? <RetryNotice text={error.text} onRetry={() => tap(error.retry)} /> : null}
+      {notice}
 
       {!grid ? (
         <div className="skeleton" style={{ marginTop: 12, height: 200 }} />
@@ -257,30 +244,24 @@ export function ChampionGrid({ event, game: fixedGame }: { event: EventT; game?:
       ) : (
         <div className="cgrid" role="group" aria-label="Champions · arrow keys move between them" onKeyDown={gridKeys}>
           {shown.map((c, i) => {
-            const s: Scope = mode === "select" ? slot.side : scope;
-            const key = keyOf(game, c.champion, s, mode === "select" ? slot.role : undefined);
-            const k = known[key];
-            const px = priceOf(c);
-            const taken = takenBy.get(c.champion);
-            const loading = busy === key;
+            const s = state(c, scope);
+            const px = c.odds[scope] ?? null;
             return (
               <button
                 key={c.champion}
-                className={`ctile${loading ? " busy" : ""}`}
-                aria-pressed={k ? slip.isSelected(k.outcomeId) : false}
-                data-placed={(k && held.has(k.outcomeId)) || undefined}
-                aria-busy={loading || undefined}
-                disabled={!grid.open || loading || !!taken}
+                className={`ctile${s.busy ? " busy" : ""}`}
+                aria-pressed={s.selected}
+                data-placed={s.placed || undefined}
+                aria-busy={s.busy || undefined}
+                disabled={!grid.open || s.busy}
                 tabIndex={i === Math.min(focusAt, shown.length - 1) ? 0 : -1}
                 onFocus={() => setFocusAt(i)}
-                onClick={() => tap(c)}
-                aria-label={taken
-                  ? `${c.label}, already in ${taken}`
-                  : `${c.label}, ${mode === "select" ? `${code(slot.side)} ${slot.role}` : scopeLabel(scope)}, Game ${game}, ${oddsSpoken(px)}`}
+                onClick={() => tap(c, scope)}
+                aria-label={`${c.label}, ${scopeLabel(scope)}, Game ${game}, ${oddsSpoken(px)}`}
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>
-                <span className="px num">{taken ? `In ${taken}` : loading ? <span className="spinner" aria-hidden="true" /> : <Odds value={px} />}</span>
+                <span className="px num">{s.busy ? <span className="spinner" aria-hidden="true" /> : <Odds value={px} />}</span>
               </button>
             );
           })}

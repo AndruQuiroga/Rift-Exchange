@@ -6,7 +6,8 @@ import { useState } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
 import { Choice } from "@/components/Choice";
-import { ChampionGrid } from "@/components/ChampionGrid";
+import { ChampionGrid, FeaturedDraft } from "@/components/ChampionGrid";
+import { MorePicks, type PickTab } from "@/components/MorePicks";
 import { eventLabel, Matchup, SideButton } from "@/components/EventCard";
 import { IconBack } from "@/components/icons";
 import { FriendsPicks } from "@/components/FriendsPicks";
@@ -34,21 +35,6 @@ function Rules({ markets, summary }: { markets: (MarketT | undefined)[]; summary
         ))}
       </details>
     </div>
-  );
-}
-
-function Builder({ title, sub, children, open }: { title: string; sub: string; children: React.ReactNode; open?: boolean }) {
-  return (
-    <details className="builder" open={open}>
-      <summary>
-        <span>
-          <span className="t" style={{ display: "block" }}>{title}</span>
-          <span className="s">{sub}</span>
-        </span>
-        <span className="chev" aria-hidden="true">›</span>
-      </summary>
-      <div className="body">{children}</div>
-    </details>
   );
 }
 
@@ -112,33 +98,64 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
         </section>
       ) : null}
-      {/* Only the builders that take picks right now; the rest are one line saying when they open. */}
-      <div style={{ marginTop: 8 }}>
-        {pregame ? (
-          <Builder title="Draft" sub={`Any champion in Game ${game.index} · picked, or by team`}>
-            <ChampionGrid event={event} game={game.index} />
-          </Builder>
-        ) : null}
-        {objectives.some((m) => m.state === "OPEN") ? (
-          <Builder title="Objectives" sub="First blood, tower, dragon · Baron, soul">
-            <Objectives event={event} game={game.index} />
-            <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
-          </Builder>
-        ) : null}
-        {early === "OPEN" ? (
-          <>
-            <Builder title="Lane duels" sub="Kills, CS at 15:00, damage · until 3:00 or first blood" open>
-              <LaneDuels event={event} game={game.index} />
-            </Builder>
-            <Builder title="Kill line" sub="Total kills · until 3:00 or first blood">
-              <KillLine event={event} game={game.index} />
-            </Builder>
-          </>
-        ) : null}
-        {later ? <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{later}</p> : null}
-      </div>
+      {/* A few one-tap calls, then everything else in one sheet: only what takes picks right now. */}
+      <QuickCalls event={event} game={game.index} pregame={pregame} objectives={objectives} />
+      <MorePicks
+        title={`Game ${game.index} picks`}
+        tabs={gameTabs(event, game.index, { pregame, objectives, early: early === "OPEN" })}
+      />
+      {later ? <p className="muted" style={{ fontSize: 13, marginTop: 10 }}>{later}</p> : null}
     </>
   );
+}
+
+/** The featured yes/no calls under a game's winner: draft picks before play, first blood once objectives open. */
+function QuickCalls({ event, game, pregame, objectives }: { event: EventT; game: number; pregame: boolean; objectives: MarketT[] }) {
+  const firstBlood = objectives.find((m) => m.kind === "first_blood" && m.state === "OPEN");
+  if (!pregame && !firstBlood) return null;
+  const label = eventLabel(event);
+  return (
+    <section className="quickcalls" aria-label="Quick calls">
+      {pregame ? <FeaturedDraft event={event} game={game} /> : null}
+      {firstBlood ? (
+        <div className="fcard static">
+          <span className="q">
+            <span className="t">First blood</span>
+            <span className="s">Game {game}</span>
+          </span>
+          <span className="opts">
+            {firstBlood.outcomes.map((o) => (
+              <Choice key={o.id} market={firstBlood} outcome={o} label={label} className="mini">
+                {o.code === "A" ? event.team_a?.code : o.code === "B" ? event.team_b?.code : o.label} <b className="num"><Odds value={o.odds} /></b>
+              </Choice>
+            ))}
+          </span>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function gameTabs(event: EventT, game: number, at: { pregame: boolean; objectives: MarketT[]; early: boolean }): PickTab[] {
+  const tabs: PickTab[] = [];
+  if (at.pregame) tabs.push({ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={game} /> });
+  if (at.objectives.some((m) => m.state === "OPEN")) {
+    tabs.push({
+      id: "objectives",
+      label: "Objectives",
+      body: (
+        <>
+          <Objectives event={event} game={game} />
+          <Rules markets={at.objectives} summary="Settles from the game's live data; void if the game isn't played." />
+        </>
+      ),
+    });
+  }
+  if (at.early) {
+    tabs.push({ id: "duels", label: "Lane duels", live: true, body: <LaneDuels event={event} game={game} /> });
+    tabs.push({ id: "kills", label: "Kill line", body: <KillLine event={event} game={game} /> });
+  }
+  return tabs;
 }
 
 export default function EventPage() {
@@ -274,23 +291,17 @@ export default function EventPage() {
           ) : event.team_a && event.team_b ? (
             <>
               {(event.games ?? [])[0] ? <GamePanel event={event} game={(event.games ?? [])[0]} now={now} /> : (
-                <div style={{ marginTop: 8 }}>
-                  <Builder title="Draft" sub="Any champion · picked, or by team">
-                    <ChampionGrid event={event} game={1} />
-                  </Builder>
-                </div>
+                <MorePicks title="Draft picks" tabs={[{ id: "draft", label: "Draft", body: <ChampionGrid event={event} game={1} /> }]} />
               )}
             </>
           ) : null}
 
           {props.length ? (
-            <div style={{ marginTop: 8 }}>
-              <Builder title="Game props" sub={`Kills and other in-game lines · ${props.length} open`}>
-                {props.map((m) => (
-                  <MarketBlock key={m.id} market={m} eventLabel={label} />
-                ))}
-              </Builder>
-            </div>
+            <MorePicks
+              title="Series props"
+              hint={`Kills and other lines across the series · ${props.length} open`}
+              tabs={[{ id: "props", label: "Props", body: props.map((m) => <MarketBlock key={m.id} market={m} eventLabel={label} />) }]}
+            />
           ) : null}
         </>
       )}

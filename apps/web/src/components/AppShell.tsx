@@ -9,6 +9,7 @@ import { useLiveUpdates, useMe, useSeason } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconArrow, IconExplore, IconLeague, IconPicks, IconProfile, IconToday } from "./icons";
 import { GameAlertWatcher } from "./GameAlerts";
+import { QuickPicks } from "./QuickPicks";
 import { SlipPanel } from "./SlipPanel";
 
 const NAV = [
@@ -49,6 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="shell">
       <GameAlertWatcher />
+      <QuickPicks />
       <aside className="siderail">
         <Brand />
         <nav aria-label="Main">
