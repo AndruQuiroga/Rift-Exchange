@@ -41,6 +41,18 @@ ROLE_LABEL = {"top": "top", "jungle": "jungle", "mid": "mid", "bottom": "bot lan
 TEAM_PRIOR_GAMES = 6  # pseudo-games of the global rate added to each team's own record
 MIN_DRAFT_RECORDS = 10  # games with Leaguepedia bans / pick order before those scopes are priced
 MAX_P = 0.95
+# D-033: a champion call pays a toned-down price, and returns half the stake if the champion is banned instead.
+BAN_REFUND = "0.5"
+PICK_TONE = 0.75  # share of the fair profit a pick pays (on top of the usual margin)
+
+
+def pick_quote(p: float | None, p_ban: float | None) -> float | None:
+    """The probability a pick call is quoted at: fair odds with half back on a ban, then toned down."""
+    if p is None:
+        return None
+    fair = (1 - float(BAN_REFUND) * (p_ban or 0.0)) / p
+    toned = 1 + (fair - 1) * PICK_TONE
+    return min(1 / toned, MAX_P)
 
 
 class DraftError(Exception):
@@ -186,6 +198,16 @@ def probabilities(rates: Rates, champ: str, fixture: Fixture, gone: list[str]) -
     return out
 
 
+PICK_SCOPES = ("picked", "A", "B")
+
+
+def ban_probability(rates: Rates, champ: str, probs: dict) -> float:
+    """P(banned) for the refund in a pick's price: the ban scope's rate when offered, else the raw share."""
+    if probs.get("banned") is not None:
+        return probs["banned"]
+    return min(rates.banned.get(champ, 0.0), MAX_P)
+
+
 def _odds(p: float | None, settings: Settings) -> str | None:
     if p is None:
         return None
@@ -213,11 +235,13 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
         if not probs:
             continue
         roles = probs.get("roles", {})
+        ban_p = ban_probability(rates, champ, probs)
         champs.append({
             "champion": champ, "label": champion_label(champ), "role": rates.role.get(champ),
             "picked": (champion_key(champ) in drafted) if drafted else None,
-            "odds": {k: _odds(probs.get(k), settings) for k in SCOPES},
-            "roles": {side: {r: _odds(p, settings) for r, p in sorted(roles.get(side, {}).items(),
+            "odds": {k: _odds(pick_quote(probs.get(k), ban_p) if k in PICK_SCOPES else probs.get(k), settings)
+                     for k in SCOPES},
+            "roles": {side: {r: _odds(pick_quote(p, ban_p), settings) for r, p in sorted(roles.get(side, {}).items(),
                                                                        key=lambda kv: ROLES.index(kv[0]))}
                       for side in ("A", "B")},
         })
@@ -248,6 +272,8 @@ def ensure_market(session: Session, season: Season, fixture: Fixture, game_index
     champ = rates.name(champ) or champ
     probs = probabilities(rates, champ, fixture, burned(session, fixture, game_index))
     p = probs.get("roles", {}).get(scope, {}).get(role) if role else probs.get(scope)
+    if scope in PICK_SCOPES:
+        p = pick_quote(p, ban_probability(rates, champ, probs))
     if p is None:
         raise DraftError("NOT_OFFERED", "That champion is not offered for this game.")
     label, g = champion_label(champ), game_index
@@ -278,9 +304,11 @@ def ensure_market(session: Session, season: Season, fixture: Fixture, game_index
             if role:
                 params["role"] = role
         where = f" in the {ROLE_LABEL[role]} role" if role else ""
-        rules = (f"Yes if {label} is picked by {who}{where} in Game {g}. Fearless Draft: a champion played earlier "
-                 f"in the series can't be picked again. Settles from the game's verified draft; void if Game {g} "
-                 "is not played.")
+        params["ban_refund"] = BAN_REFUND
+        rules = (f"Yes if {label} is picked by {who}{where} in Game {g}. If {label} is banned instead, half your "
+                 f"stake comes back (from the published draft record, Leaguepedia). Fearless Draft: a champion "
+                 f"played earlier in the series can't be picked again. Settles from the game's verified draft; "
+                 f"void if Game {g} is not played.")
     rules = f"{rules} Closes before the Game {g} draft."
     spec = MarketSpec(template, kind, "GAME", "DRAFT", title, rules, window.close_at, model, "EXPERIMENTAL",
                       [OutcomeSpec("YES", "Yes", p), OutcomeSpec("NO", "No", 1 - p)], params)

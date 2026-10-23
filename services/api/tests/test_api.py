@@ -3,13 +3,13 @@ from datetime import timedelta
 import pytest
 from conftest import make_market, outcome_id
 from fastapi.testclient import TestClient
-from sqlalchemy import update
+from sqlalchemy import select, update
 from test_timeline import CHAMPS
 
 from rift.api.app import create_app
 from rift.auth import create_invite
 from rift.config import Settings
-from rift.models import Fixture, Game, Market, Outcome, Season, SignInCode
+from rift.models import Fixture, Game, Market, OutboxEvent, Outcome, Season, SignInCode
 
 H = {"x-rift-client": "web"}
 
@@ -228,3 +228,38 @@ def test_offered_duel_stat_reaches_the_duel_window(api, world):
     r = kai.post(url, json={"game_index": 1, "role": "mid", "stat": "assists"}, headers=H)
     assert r.status_code == 422
     assert r.json()["error"] == {**r.json()["error"], "code": "INVALID_REQUEST", "details": {"fields": ["stat"]}}
+
+
+def test_rivals_table_and_reactions_after_lock(api, factory, world):
+    """D-034: the match table hides friends' open picks (A-010); reactions only on a friend's locked pick."""
+    app, codes = api
+    kai, mika = signup(app, codes[0], "kai"), signup(app, codes[1], "mika")
+    atlas, nova = outcome_id(factory, world["market"], "A"), outcome_id(factory, world["market"], "B")
+    for client, outcome, stake, key in ((kai, atlas, 400, "k1"), (mika, nova, 200, "m1")):
+        q = client.post("/api/v1/quotes", json={"items": [{"outcome_id": str(outcome), "stake_rc": stake}]},
+                        headers=H).json()
+        r = client.post("/api/v1/tickets", headers={**H, "Idempotency-Key": key},
+                        json={"quote_id": q["quote_id"], "confirm_odds_versions": {str(outcome): 1}})
+        assert r.status_code == 201, r.text
+    event = str(world["fixture"])
+    before = mika.get(f"/api/v1/events/{event}/league").json()
+    assert [r["user"]["handle"] for r in before["table"]] == ["mika"]  # kai's open pick stays hidden
+    kai_pick = kai.get("/api/v1/me/picks").json()["picks"][0]["id"]
+    r = mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "sweating"}, headers=H)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_LOCKED"
+
+    with factory() as s, s.begin():
+        s.execute(update(Market).values(state="LOCKED"))
+    after = mika.get(f"/api/v1/events/{event}/league").json()
+    rows = {r["user"]["handle"]: r for r in after["table"]}
+    assert set(rows) == {"kai", "mika"} and rows["kai"]["riding"] == 400 and rows["mika"]["you"]
+    r = mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "sweating"}, headers=H)
+    again = mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "sweating"}, headers=H)
+    assert r.status_code == 200 and len(again.json()["reactions"]) == 1  # once per phrase
+    reaction = again.json()["reactions"][0]
+    assert (reaction["from"]["handle"], reaction["to"]["handle"], reaction["text"]) == ("mika", "kai", "You're sweating")
+    assert kai.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "gg"}, headers=H).json()["error"]["code"] == "OWN_PICK"
+    assert mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "lol"}, headers=H).status_code == 422
+    with factory() as s:
+        ev = s.execute(select(OutboxEvent).where(OutboxEvent.type == "reaction.created")).scalar_one()
+        assert ev.payload["text"] == "You're sweating" and ev.payload["from"]

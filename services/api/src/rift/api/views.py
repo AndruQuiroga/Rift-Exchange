@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from rift.calls import Call, calls
 from rift.config import get_settings
 from rift.display import relabel, team_name
-from rift.domain.money import partial_return, winning_return
+from rift.domain.money import partial_return, refund_return, winning_return
 from rift.markets import game_index
 from rift.models import (
     Fixture,
@@ -20,6 +20,7 @@ from rift.models import (
     Market,
     MarketResult,
     Outcome,
+    Reaction,
     Season,
     Selection,
     SwissCall,
@@ -399,6 +400,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "potential_return_rc": winning_return(s.stake_rc, s.odds),
             "partial_return_rc": partial_return(s.stake_rc, s.odds, s.rules_snapshot["params"]["consolation"])
             if s.rules_snapshot.get("params", {}).get("consolation") else None,
+            "kind": m.kind,
             "market_title": relabel(s.rules_snapshot.get("title"), named),
             "outcome_label": relabel(s.rules_snapshot.get("outcome"), named),
             "market_state": m.state, "market_state_reason": m.state_reason, "settled_revision": s.settled_revision,
@@ -419,9 +421,11 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
 def _pick_call(call: Call | None, code: str | None) -> dict | None:
     if call is None:
         return None
-    result = "VOID" if call.void else "WON" if code in call.codes else "LOST"
+    result = ("VOID" if call.void else "WON" if code in call.codes else "PARTIAL" if code in call.partial
+              else "LOST")
     return {"result": result, "final": call.final, "reason": call.reason,
-            "pays_at": call.pays_at.isoformat() if call.pays_at else None}
+            "pays_at": call.pays_at.isoformat() if call.pays_at else None,
+            "pending_refund": call.pending_refund and result == "LOST"}
 
 
 def _settle_delay() -> int:
@@ -491,3 +495,72 @@ def friends_pending(db: Session, season: Season, fixture_id: uuid.UUID, exclude_
     return sorted(({"user": {"handle": users[uid].handle, "display_name": users[uid].display_name},
                     "picks": n, "reveals_at": first.isoformat()} for uid, n, first in rows),
                   key=lambda r: r["user"]["display_name"])
+
+
+# ------------------------------------------------------------------ rivals (D-034)
+
+PHRASES = {"called_it": "Called it", "sweating": "You're sweating", "bold_call": "Bold call", "gg": "GG"}
+
+
+def reactions_view(db: Session, fixture_id: uuid.UUID, limit: int = 40) -> list[dict]:
+    rows = list(db.execute(select(Reaction).where(Reaction.fixture_id == fixture_id)
+                           .order_by(Reaction.id.desc()).limit(limit)).scalars())
+    if not rows:
+        return []
+    users = {u.id: u for u in db.execute(select(User).where(
+        User.id.in_({r.from_user_id for r in rows} | {r.to_user_id for r in rows}))).scalars()}
+    sels = {s.id: s for s in db.execute(select(Selection).where(
+        Selection.id.in_({r.selection_id for r in rows}))).scalars()}
+    person = lambda u: {"handle": u.handle, "display_name": u.display_name}
+    return [{"id": r.id, "from": person(users[r.from_user_id]), "to": person(users[r.to_user_id]),
+             "phrase": r.phrase, "text": PHRASES.get(r.phrase, r.phrase), "selection_id": str(r.selection_id),
+             "pick": relabel(sels[r.selection_id].rules_snapshot.get("outcome"), []),
+             "market": sels[r.selection_id].rules_snapshot.get("title"), "at": r.created_at.isoformat()}
+            for r in rows]
+
+
+def match_table(db: Session, season: Season, fixture_id: uuid.UUID, viewer_id: uuid.UUID) -> list[dict]:
+    """Everyone's standing on one match right now: settled results plus what the data has already decided.
+    Friends' picks count only once their market locks (A-010); your own always do."""
+    q = (select(Selection).join(Market, Market.id == Selection.market_id)
+         .where(Market.season_id == season.id, Market.fixture_id == fixture_id,
+                (Selection.user_id == viewer_id) | Market.state.notin_(("OPEN", "SUSPENDED"))))
+    selections = list(db.execute(q).scalars())
+    if not selections:
+        return []
+    rows = selection_rows(db, selections)
+    users = {u.id: u for u in db.execute(select(User).where(
+        User.id.in_({s.user_id for s in selections}))).scalars()}
+    table: dict[uuid.UUID, dict] = {}
+    for sel, row in zip(selections, rows, strict=True):
+        t = table.setdefault(sel.user_id, {"staked": 0, "back": 0, "decided": 0, "riding": 0, "won": 0, "lost": 0,
+                                           "partial": 0, "picks": 0})
+        t["staked"] += sel.stake_rc
+        t["picks"] += 1
+        result = sel.status if sel.status != "OPEN" else (row["call"] or {}).get("result")
+        if result is None:
+            t["riding"] += sel.stake_rc
+            continue
+        t["decided"] += sel.stake_rc
+        terms = sel.rules_snapshot.get("params", {})
+        if sel.status != "OPEN":
+            back = sel.return_rc
+        elif result == "WON":
+            back = row["potential_return_rc"]
+        elif result == "VOID":
+            back = sel.stake_rc
+        elif result == "PARTIAL":
+            back = (refund_return(sel.stake_rc, terms["ban_refund"]) if terms.get("ban_refund")
+                    else row["partial_return_rc"] or 0)
+        else:
+            back = 0
+        t["back"] += back
+        key = {"WON": "won", "LOST": "lost", "PARTIAL": "partial"}.get(result)
+        if key:
+            t[key] += 1
+    out = [{"user": {"handle": users[uid].handle, "display_name": users[uid].display_name},
+            "you": uid == viewer_id, **t, "net": t["back"] - t["decided"]} for uid, t in table.items()]
+    out.sort(key=lambda r: (-r["net"], -r["staked"]))
+    for i, r in enumerate(out):
+        r["rank"] = i + 1
+    return out

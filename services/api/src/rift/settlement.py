@@ -133,8 +133,16 @@ def grade_market(session: Session, market: Market) -> Grade:
         if role is not None and any(not p.get("role") for g in scoped for p in g.stats["players"]
                                     if p.get("team_id") == team_id):
             return Grade("HOLD", reason="Awaiting verified player roles", evidence=ev)
-        return Grade("RESULT", ["YES" if champ in picks else "NO"], "Draft confirmed",
-                     {**ev, "games": [g.provider_id for g in scoped]})
+        ev = {**ev, "games": [g.provider_id for g in scoped]}
+        if champ in picks or not market.params.get("ban_refund"):
+            return Grade("RESULT", ["YES" if champ in picks else "NO"], "Draft confirmed", ev)
+        # Not picked: half back if it was banned instead (D-033). Bans come from Leaguepedia, after the game.
+        drafts = [g.bans or {} for g in scoped]
+        if any("blue" not in d or "red" not in d for d in drafts):
+            return Grade("HOLD", reason="Not picked; awaiting verified bans for the half-back rule", evidence=ev)
+        banned = any(champ in {champion_key(c) for c in d["blue"] + d["red"]} for d in drafts)
+        return Grade("RESULT", ["NO"], "Banned instead: half back" if banned else "Draft confirmed", ev,
+                     partial_codes=["YES"] if banned else [])
 
     if kind in ("champion_banned", "champion_first_pick"):
         # Bans and pick order come from Leaguepedia (rift.ingest.sync_drafts); HOLD until stored. The worker
@@ -294,10 +302,13 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         code = outcome_codes[sel.outcome_id]
         late = accepted[sel.ticket_id] >= effective_cutoff or props.priced_before_a_kill(
             sel.rules_snapshot.get("params", {}), game, accepted[sel.ticket_id])
+        terms = sel.rules_snapshot.get("params", {})
         result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
                   else "LOST")
-        new_return = settlement_return(sel.stake_rc, sel.odds, result,
-                                       consolation=sel.rules_snapshot.get("params", {}).get("consolation"))
+        if result == "PARTIAL" and not (terms.get("consolation") or terms.get("ban_refund")):
+            result = "LOST"  # accepted before the market offered a partial return: its own terms stand
+        new_return = settlement_return(sel.stake_rc, sel.odds, result, consolation=terms.get("consolation"),
+                                       refund=terms.get("ban_refund"))
         wallet = locked[wallet_by_user[sel.user_id].id]
         if sel.settled_revision > 0 and sel.status == result:
             pass  # unchanged outcome for this selection; record the revision without moving credits
@@ -310,11 +321,14 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
                 memo = sel.rules_snapshot.get("title", "")
                 ledger.credit(session, wallet, kind="VOID_REFUND" if result == "VOID" else "PAYOUT",
                               amount_rc=new_return, key=f"settle:{sel.id}:{revision}", ref_type="selection",
-                              ref_id=str(sel.id), memo=f"{memo} (right side)" if result == "PARTIAL" else memo)
+                              ref_id=str(sel.id), memo=(f"{memo} (banned: half back)" if terms.get("ban_refund")
+                                                        else f"{memo} (right side)") if result == "PARTIAL" else memo)
         session.add(Settlement(selection_id=sel.id, revision=revision, result=result, return_rc=new_return))
         sel.status, sel.return_rc, sel.settled_revision, sel.settled_at = result, new_return, revision, now
         session.add(OutboxEvent(type="selection.settled", entity_id=str(sel.id), user_id=sel.user_id,
-                                payload={"result": result, "revision": revision}))
+                                payload={"result": result, "revision": revision, "return_rc": new_return,
+                                         "stake_rc": sel.stake_rc, "title": sel.rules_snapshot.get("title"),
+                                         "outcome": sel.rules_snapshot.get("outcome")}))
 
     if callers:
         swiss_card.settle_calls(session, market, revision, winning, partial, void,

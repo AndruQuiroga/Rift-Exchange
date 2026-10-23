@@ -411,6 +411,21 @@ class AuditEvent(Base):
     created_at: Mapped[datetime] = _created()
 
 
+class Reaction(Base):
+    """A friend's fixed-phrase reaction to someone else's pick, once its market has locked (D-034)."""
+
+    __tablename__ = "reactions"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    season_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("seasons.id"))
+    fixture_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("fixtures.id"), index=True)
+    selection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("selections.id"), index=True)
+    from_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    to_user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
+    phrase: Mapped[str] = mapped_column(String(24))
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (UniqueConstraint("selection_id", "from_user_id", "phrase", name="uq_reaction_once"),)
+
+
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)

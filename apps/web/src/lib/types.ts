@@ -26,10 +26,19 @@ export type MarketT = {
   team?: Team | null;
 };
 
-export type MarketCall = { winning_codes: string[]; void: boolean; reason: string; final: boolean; pays_at: string | null };
+export type MarketCall = {
+  winning_codes: string[]; void: boolean; reason: string; final: boolean; pays_at: string | null;
+  /** Codes paid in part: a champion call whose champion was banned gets half back (D-033). */
+  partial_codes?: string[];
+  pending_refund?: boolean;
+};
 
 /** Where an open pick stands on the latest data, before it pays. */
-export type PickCall = { result: "WON" | "LOST" | "VOID"; final: boolean; reason: string; pays_at: string | null };
+export type PickCall = {
+  result: "WON" | "LOST" | "VOID" | "PARTIAL"; final: boolean; reason: string; pays_at: string | null;
+  /** Not picked, and bans aren't known yet: it may still be half back. */
+  pending_refund?: boolean;
+};
 
 export type EventT = {
   id: string;
@@ -114,6 +123,8 @@ export type Pick = {
   potential_return_rc: number;
   /** Swiss record picks: what a right-side, wrong-record finish returns. */
   partial_return_rc: number | null;
+  /** The market kind (champion_picked, lane_duel...). */
+  kind?: string;
   market_title: string;
   outcome_label: string;
   market_state: MarketState;
@@ -133,9 +144,22 @@ export type Pick = {
 };
 
 /** Friends on one match: picks revealed once their market locks, before that only a count (A-010). */
+export type Person = { handle: string; display_name: string };
+
+/** One player's standing on a match right now: settled plus already-decided picks (D-034). */
+export type TableRow = {
+  user: Person; you: boolean; rank: number; picks: number;
+  staked: number; back: number; decided: number; riding: number; net: number;
+  won: number; lost: number; partial: number;
+};
+
+export type ReactionT = { id: number; from: Person; to: Person; phrase: string; text: string; selection_id: string; pick: string; market: string; at: string };
+
 export type FriendsOnMatch = {
   picks: Pick[];
-  pending: { user: { handle: string; display_name: string }; picks: number; reveals_at: string }[];
+  pending: { user: Person; picks: number; reveals_at: string }[];
+  table?: TableRow[];
+  reactions?: ReactionT[];
 };
 
 export type Standing = {

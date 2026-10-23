@@ -36,6 +36,13 @@ export function useLiveUpdates(enabled: boolean) {
         mutate((key) => typeof key === "string" && key !== "/season/current");
       }, 400);
     };
+    // Also re-broadcast each event on window ("rift:sse"), so toasts can react without a second connection.
+    const relay = (e: MessageEvent) => {
+      refresh();
+      try {
+        window.dispatchEvent(new CustomEvent("rift:sse", { detail: JSON.parse(e.data) }));
+      } catch {}
+    };
     for (const type of [
       "wallet.changed",
       "ticket.accepted",
@@ -44,8 +51,9 @@ export function useLiveUpdates(enabled: boolean) {
       "selection.settled",
       "leaderboard.changed",
       "event.updated",
+      "reaction.created",
     ]) {
-      es.addEventListener(type, refresh);
+      es.addEventListener(type, relay as EventListener);
     }
     return () => {
       es.close();

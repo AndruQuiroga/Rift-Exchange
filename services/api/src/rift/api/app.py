@@ -26,6 +26,7 @@ from rift.models import (
     OutboxEvent,
     Outcome,
     ProviderSync,
+    Reaction,
     Season,
     Selection,
     Ticket,
@@ -422,7 +423,37 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         """Friends' picks on this match, each shown once its market has locked; before that only a count."""
         season = season_of(session)
         return {"picks": views.activity(session, season, limit=200, fixture_id=event_id, exclude_user_id=user.id),
-                "pending": views.friends_pending(session, season, event_id, user.id)}
+                "pending": views.friends_pending(session, season, event_id, user.id),
+                "table": views.match_table(session, season, event_id, user.id),
+                "reactions": views.reactions_view(session, event_id)}
+
+    class ReactionBody(BaseModel):
+        phrase: str = Field(pattern=f"^({'|'.join(views.PHRASES)})$")
+
+    @app.post("/api/v1/picks/{selection_id}/reactions")
+    def react(selection_id: uuid.UUID, body: ReactionBody, session: Db, user: CurrentUser):
+        """A fixed phrase on a friend's pick, once its market has locked (A-010, D-034). Once per phrase."""
+        season = season_of(session)
+        wallet_of(session, season, user)
+        sel = session.get(Selection, selection_id)
+        market = session.get(Market, sel.market_id) if sel else None
+        if sel is None or market is None or market.season_id != season.id:
+            raise ApiError(404, "NOT_FOUND", "That pick doesn't exist.")
+        if sel.user_id == user.id:
+            raise ApiError(409, "OWN_PICK", "React to a friend's pick, not your own.")
+        if market.state in ("OPEN", "SUSPENDED"):
+            raise ApiError(409, "NOT_LOCKED", "Picks are private until their market locks.")
+        exists = session.execute(select(Reaction.id).where(
+            Reaction.selection_id == sel.id, Reaction.from_user_id == user.id, Reaction.phrase == body.phrase)).first()
+        if exists is None:
+            session.add(Reaction(season_id=season.id, fixture_id=market.fixture_id, selection_id=sel.id,
+                                 from_user_id=user.id, to_user_id=sel.user_id, phrase=body.phrase))
+            session.add(OutboxEvent(type="reaction.created", entity_id=str(sel.id), user_id=sel.user_id, payload={
+                "from": user.display_name, "text": views.PHRASES[body.phrase],
+                "pick": sel.rules_snapshot.get("outcome"), "market": sel.rules_snapshot.get("title"),
+                "event_id": str(market.fixture_id) if market.fixture_id else None}))
+            session.flush()
+        return {"reactions": views.reactions_view(session, market.fixture_id) if market.fixture_id else []}
 
     # ------------------------------------------------------------ stream
 
@@ -449,7 +480,8 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
                     cursor = ev.id
                     if ev.user_id is not None and ev.user_id != user_id:
                         continue
-                    data = json.dumps({"type": ev.type, "entity_id": ev.entity_id})
+                    # Payloads are user-scoped or public by construction; the client uses them for toasts only.
+                    data = json.dumps({"type": ev.type, "entity_id": ev.entity_id, "payload": ev.payload or {}})
                     yield f"id: {ev.id}\nevent: {ev.type}\ndata: {data}\n\n"
                 yield ": keepalive\n\n"
                 await asyncio.sleep(2)

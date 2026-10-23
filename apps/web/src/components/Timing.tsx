@@ -50,8 +50,11 @@ export function PayoutNote({ payAt, final }: { payAt: string | null; final: bool
 
 /** An open pick whose result is already known: "Winning · pays in 3:12" with a little reveal. */
 export function CallStatus({ call }: { call: PickCall }) {
+  if (call.pending_refund) {
+    return <span className="status hold called" title={call.reason}><span className="dot" />Not picked · checking bans</span>;
+  }
   const tone = call.result === "WON" ? "won" : call.result === "LOST" ? "lost" : "void";
-  const word = call.result === "WON" ? "Winning" : call.result === "LOST" ? "Losing" : "Void";
+  const word = call.result === "WON" ? "Winning" : call.result === "LOST" ? "Losing" : call.result === "PARTIAL" ? "Half back" : "Void";
   return (
     <span className={`status ${tone} called`} title={call.reason}>
       <span className="dot" />

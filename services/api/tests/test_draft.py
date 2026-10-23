@@ -64,7 +64,8 @@ def test_tapping_a_champion_creates_one_shared_market(factory, history):
         season, fx = s.get(Season, history["season"]), _fixture(s, history)
         first = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0)
         again = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0)
-        assert first.id == again.id and first.params == {"champion": "Ahri", "game_index": 1, "side": "A"}
+        assert first.id == again.id
+        assert first.params == {"champion": "Ahri", "game_index": 1, "side": "A", "ban_refund": "0.5"}
         assert first.close_at == fx.scheduled_at  # Game 1 locks with the series
         with pytest.raises(draft.DraftError) as e:
             draft.ensure_market(s, season, fx, 2, "Ahri", "picked", SETTINGS, T0)
@@ -89,6 +90,7 @@ def test_by_team_pick_settles_on_that_team_only(factory, history):
         mine = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0).id
         theirs = draft.ensure_market(s, season, fx, 1, "Ahri", "B", SETTINGS, T0).id
         s.add(Game(fixture_id=fx.id, provider_id="g1", game_index=1, state="completed", stats_complete=True,
+                   bans={"source": "leaguepedia", "blue": ["Jax"], "red": ["Yone"], "first_pick": None},
                    stats={"players": players(history["team_a"], history["team_b"])}))
     with factory() as s:
         assert grade_market(s, s.get(Market, mine)).winning_codes == ["YES"]
@@ -143,10 +145,10 @@ def test_role_picks_shrink_team_record_toward_global_role_rate(factory, history)
         season, fx = s.get(Season, history["season"]), _fixture(s, history)
         by = {c["champion"]: c for c in draft.grid(s, season, fx, 1, SETTINGS, T0)["champions"]}
         # Atlas played Ahri mid in 2 of its 4 games; Nova has no games, so it gets half the global role rate.
-        assert by["Ahri"]["roles"] == {"A": {"mid": "2.86"}, "B": {"mid": "4.00"}}
-        assert by["Vi"]["roles"]["A"] == {"jungle": "1.43"}
+        assert by["Ahri"]["roles"] == {"A": {"mid": "2.39"}, "B": {"mid": "3.25"}}  # toned down (D-033)
+        assert by["Vi"]["roles"]["A"] == {"jungle": "1.32"}
         market = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0, role="mid")
-        assert market.params == {"champion": "Ahri", "game_index": 1, "side": "A", "role": "mid"}
+        assert market.params == {"champion": "Ahri", "game_index": 1, "side": "A", "role": "mid", "ban_refund": "0.5"}
         assert market.title == "ATL play Ahri mid in Game 1"
         for scope, role, code in (("A", "top", "NOT_OFFERED"), ("picked", "mid", "BAD_ROLE"),
                                   ("banned", None, "NOT_OFFERED")):
@@ -162,6 +164,7 @@ def test_role_pick_settles_on_role_and_team(factory, history):
         anywhere = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0).id
         # Atlas pick Ahri but play her top.
         s.add(Game(fixture_id=fx.id, provider_id="g1", game_index=1, state="completed", stats_complete=True,
+                   bans={"source": "leaguepedia", "blue": ["Jax"], "red": ["Yone"], "first_pick": None},
                    stats={"players": players(history["team_a"], history["team_b"],
                                              a=["Ahri", "Vi", "Aatrox", "Jinx", "Nautilus"])}))
     with factory() as s:
@@ -221,7 +224,7 @@ def test_draft_api_shape(api, history):  # noqa: F811
     g = client.get(f"/api/v1/events/{event}/draft?game=1").json()
     assert g["scopes"] == ["picked", "A", "B"]
     ahri = next(c for c in g["champions"] if c["champion"] == "Ahri")
-    assert set(ahri["odds"]) == {"picked", "A", "B", "banned", "first"} and ahri["roles"]["A"] == {"mid": "2.86"}
+    assert set(ahri["odds"]) == {"picked", "A", "B", "banned", "first"} and ahri["roles"]["A"] == {"mid": "2.39"}
     r = client.post(f"/api/v1/events/{event}/draft", headers=H,
                     json={"game_index": 1, "champion": "Ahri", "scope": "picked"})
     assert r.status_code == 200, r.text
@@ -293,3 +296,41 @@ def test_a_call_made_with_the_old_late_cutoff_is_clamped_and_late_picks_void(fac
         apply_grade(s, mid, grade_market(s, m), start + timedelta(hours=2))
         sel = s.execute(select(Selection).where(Selection.market_id == mid)).scalar_one()
         assert sel.status == "VOID" and sel.return_rc == 500
+
+
+def test_pick_calls_pay_less_and_half_back_when_the_champion_is_banned(factory, history):
+    """D-033: toned-down prices; a call whose champion is banned instead gets half its stake back."""
+    with factory() as s:
+        season, fx = s.get(Season, history["season"]), _fixture(s, history)
+        g = draft.grid(s, season, fx, 1, SETTINGS, T0)
+        rates = draft.tournament_rates(s, season)
+        raw = draft._odds(draft.probabilities(rates, "Ahri", fx, [])["picked"], SETTINGS)
+        ahri = next(c for c in g["champions"] if c["champion"] == "Ahri")
+        assert float(ahri["odds"]["picked"]) < float(raw)
+    join(factory, history, "alice")
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, history["season"]), _fixture(s, history)
+        ids = {c: draft.ensure_market(s, season, fx, 1, c, "picked", SETTINGS, T0).id for c in ("Ahri", "Rumble", "Azir")}
+        old = make_market(s, season, fx, "champion_picked", [("YES", "Yes", "4.00"), ("NO", "No", "1.20")],
+                          params={"champion": "Rumble", "game_index": 1}, scope="GAME", key="old-rumble").id
+    yes = {c: outcome_id(factory, m, "YES") for c, m in {**ids, "old": old}.items()}
+    place(factory, history, "alice", [(yes[c], 100) for c in yes], "k-draft")
+    with factory() as s, s.begin():
+        s.add(Game(fixture_id=history["fixture"], provider_id="g1", game_index=1, state="completed",
+                   stats_complete=True, stats={"players": players(history["team_a"], history["team_b"])}))
+    with factory() as s:
+        assert grade_market(s, s.get(Market, ids["Ahri"])).winning_codes == ["YES"]  # picked: bans not needed
+        assert grade_market(s, s.get(Market, ids["Rumble"])).status == "HOLD"  # not picked: waits for bans
+    with factory() as s, s.begin():
+        s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one().bans = {
+            "source": "leaguepedia", "blue": ["Rumble", "Jax"], "red": ["Azir2", "Yone"], "first_pick": None}
+    with factory() as s, s.begin():
+        for m in (*ids.values(), old):
+            apply_grade(s, m, grade_market(s, s.get(Market, m)), T0 + timedelta(hours=3))
+    with factory() as s:
+        by = {s.get(Market, sel.market_id).template_key: sel for sel in s.execute(select(Selection)).scalars()}
+        rumble = next(v for k, v in by.items() if k.startswith("champion_pick:") and ":Rumble:" in k)
+        azir = next(v for k, v in by.items() if ":Azir:" in k)
+        assert (rumble.status, rumble.return_rc) == ("PARTIAL", 50)  # banned: half back
+        assert (azir.status, azir.return_rc) == ("LOST", 0)  # neither picked nor banned
+        assert by["old-rumble"].status == "LOST"  # accepted before the half-back rule: its own terms stand
