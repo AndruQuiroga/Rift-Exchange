@@ -69,9 +69,11 @@ Deploy validated images built from these changes using the usual command plus
 `-LeaguepediaMode live`. The helper checks that both secrets exist before
 pausing the application, merges `leaguepedia-live.yml`, and runs
 `python -m rift.operations check-leaguepedia` as a private release job before
-bootstrap. A failed login, Cargo error, or empty/unparseable game probe blocks
-the release. Subsequent releases preserve the last successful mode; explicitly
-use `-LeaguepediaMode mock` to disable it.
+bootstrap. When `-LeaguepediaMode live` is passed (switching it on), a failed login, Cargo
+error, or empty/unparseable game probe blocks the release. Subsequent releases preserve the
+last successful mode and run the same probe as a warning only: Leaguepedia being briefly down
+or rate-limited delays draft and ban data, which already wait for it, but no longer pauses the
+site. Explicitly use `-LeaguepediaMode mock` to disable live mode.
 
 The probe confirms login and a query against the game/ban tables. It does not
 prove current tournament coverage or safe grading. Inspect representative
