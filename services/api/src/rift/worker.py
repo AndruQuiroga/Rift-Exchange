@@ -82,11 +82,13 @@ class Worker:
         return s.execute(select(Season).where(Season.code == self.settings.season_code)).scalar_one()
 
     def busy(self, within: timedelta = timedelta(hours=2)) -> bool:
-        """A series is live, or one is scheduled within `within` and not yet completed."""
+        """A series is live or just finished, or one is scheduled within `within` and not yet completed. A just
+        finished series keeps the fast schedule sync through its settle delay, so a corrected score reopens it
+        before anything pays."""
         now = self.clock()
         with self.factory() as s:
             return bool(s.execute(select(func.count()).select_from(Fixture).where(
-                (Fixture.status == "LIVE")
+                (Fixture.status == "LIVE") | (Fixture.completed_at >= now - timedelta(minutes=30))
                 | ((Fixture.scheduled_at <= now + within)
                    & (Fixture.scheduled_at >= now - timedelta(hours=8)) & (Fixture.status != "COMPLETED"))
             )).scalar())

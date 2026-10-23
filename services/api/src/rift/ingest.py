@@ -67,6 +67,11 @@ def _apply_match(session: Session, season: Season, m: ScheduleMatch, now: dateti
     status = STATUS.get(m.state, "SCHEDULED")
     if fixture.status == "LIVE" and status == "SCHEDULED":
         status = "LIVE"  # getLive saw it start before the schedule caught up; never re-open a live series
+    need = m.best_of // 2 + 1
+    if status == "LIVE" and max(a_wins, b_wins) == need and min(a_wins, b_wins) < need:
+        # The feed can list a decided series as in progress for a long while after its last game. The game
+        # wins already settle it; settlement still waits for them to hold steady before paying.
+        status = "COMPLETED"
     before =(fixture.status, fixture.team_a_wins, fixture.team_b_wins, fixture.team_a_id, fixture.team_b_id,
               fixture.scheduled_at)
     fixture.stage, fixture.best_of = m.block_name, m.best_of
@@ -76,10 +81,11 @@ def _apply_match(session: Session, season: Season, m: ScheduleMatch, now: dateti
     fixture.local_date = m.start_time.astimezone(tz).date()
     fixture.status, fixture.team_a_wins, fixture.team_b_wins = status, a_wins, b_wins
     if status == "COMPLETED":
-        need = m.best_of // 2 + 1
         winner = 0 if a_wins == need else 1 if b_wins == need else None
         fixture.winner_team_id = teams[winner].id if winner is not None and teams[winner] else None
         fixture.completed_at = fixture.completed_at or now
+    elif status == "LIVE":
+        fixture.winner_team_id = fixture.completed_at = None  # a corrected score reopened the series
     after = (fixture.status, fixture.team_a_wins, fixture.team_b_wins, fixture.team_a_id, fixture.team_b_id,
              fixture.scheduled_at)
     if after != before:
