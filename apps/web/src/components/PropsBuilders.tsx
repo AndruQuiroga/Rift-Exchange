@@ -46,7 +46,7 @@ type DuelGrid = WindowState & {
 };
 type LineGrid = WindowState & { champions?: Partial<Record<Side, Record<string, { champion?: string }>>>; typical: string | null; lines: { line: string; over: string; under: string }[] };
 
-const ROLE_SHORT: Record<string, string> = { top: "TOP", jungle: "JGL", mid: "MID", bottom: "BOT", support: "SUP" };
+const ROLE_LONG: Record<string, string> = { top: "TOP LANE", jungle: "JUNGLE", mid: "MID LANE", bottom: "BOT LANE", support: "SUPPORT" };
 
 /** Tap a side, get (or create, once for everyone) the market behind it, and toggle it on the slip. */
 function useOnDemand(event: EventT) {
@@ -118,7 +118,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
       <p className="muted" style={{ fontSize: 13 }}>
         {stat === "gold15" ? "Which laner has more gold at 15:00. A gap under 700 gold is a tie and void." : `${data.stats.find((s) => s.id === stat)?.label} in Game ${game}`}
       </p>
-      <div className="duels">
+      <div className="duel-grid">
         {data.duels.map((d) => {
           const side = (s: Side) => {
             const key = `${game}:${phase}:${d.role}:${stat}:${s}`;
@@ -127,8 +127,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
             const mine = placed((m) => m.kind === "lane_duel" && m.params.game_index === game && m.params.role === d.role && m.params.stat === stat && inPhase(m, phase), s);
             return (
               <button
-                className={`side${s === "B" ? " right" : ""}`}
-                style={{ minHeight: 48 }}
+                className="duel-side"
                 aria-pressed={selected(key)}
                 data-placed={mine || undefined}
                 disabled={!open || !px || isBusy(key)}
@@ -136,23 +135,21 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
                 aria-label={`${p.name}${p.champion ? ` on ${p.champion}` : ""}, ${oddsSpoken(px ?? null)}`}
               >
-                <span className="duel-who">
-                  {p.champion ? <ChampIcon id={p.champion} label={p.champion} small /> : <span className="cicon sm pending" aria-hidden="true">?</span>}
-                  <span className="duel-name">
-                    <span className="code">{p.name}</span>
-                    <small>{p.champion ?? (phase === "BLIND" ? "Any champion" : phase === "DRAFT" ? "Drafting…" : "Champion pending")}</small>
-                  </span>
-                </span>
-                <Price odds={px ?? null} busy={isBusy(key)} style={{ fontSize: 15 }} />
+                {p.champion ? <ChampIcon id={p.champion} label={p.champion} /> : <span className="cicon pending" aria-hidden="true">{phase === "DRAFT" ? "…" : "?"}</span>}
+                <span className="ds-name">{p.name}</span>
+                <small className="ds-champ">{p.champion ?? (phase === "BLIND" ? "Any champion" : phase === "DRAFT" ? "Drafting…" : "Champion pending")}</small>
+                <Price odds={px ?? null} busy={isBusy(key)} />
                 {mine ? <span className="pk-tag">Placed</span> : null}
               </button>
             );
           };
           return (
-            <div className="duel-row" key={d.role}>
-              {side("A")}
-              <span className="duel-role">{ROLE_SHORT[d.role]}</span>
-              {side("B")}
+            <div className="duel-card" key={d.role}>
+              <div className="dcard-head"><span>{ROLE_LONG[d.role]}</span><span className="muted">{event.team_a?.code} vs {event.team_b?.code}</span></div>
+              <div className="dcard-sides">
+                {side("A")}
+                {side("B")}
+              </div>
             </div>
           );
         })}

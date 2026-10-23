@@ -15,7 +15,7 @@ export function useFriendsOnMatch(eventId: string | null | undefined) {
     for (const p of data?.picks ?? []) map.set(p.outcome_id, [...(map.get(p.outcome_id) ?? []), p]);
     return map;
   }, [data]);
-  return { picks: data?.picks ?? [], pending: data?.pending ?? [], byOutcome };
+  return { loaded: !!data, picks: data?.picks ?? [], pending: data?.pending ?? [], table: data?.table, reactions: data?.reactions, byOutcome };
 }
 
 export const initials = (name: string) =>

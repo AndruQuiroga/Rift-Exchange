@@ -102,7 +102,10 @@ export function MarketBlock({ market, eventLabel, compact }: { market: MarketT; 
 
 export function PickStatus({ pick }: { pick: Pick }) {
   if (pick.status === "WON") return <span className="status won"><span className="dot" />Won</span>;
-  if (pick.status === "PARTIAL") return <span className="status won"><span className="dot" />Right side</span>;
+  if (pick.status === "PARTIAL") {
+    const ban = pick.kind === "champion_picked"; // D-033: banned instead, half back
+    return <span className={`status ${ban ? "void" : "won"}`}><span className="dot" />{ban ? "Half back" : "Right side"}</span>;
+  }
   if (pick.status === "LOST") return <span className="status lost"><span className="dot" />Lost</span>;
   if (pick.status === "VOID") return <span className="status void"><span className="dot" />Void</span>;
   if (pick.call) return <CallStatus call={pick.call} />;

@@ -10,7 +10,7 @@ for the settle delay (D-014/D-030). Two kinds of call, neither of which writes a
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -29,10 +29,13 @@ class Call:
     reason: str
     final: bool
     pays_at: datetime | None = None
+    partial: list[str] = field(default_factory=list)  # codes paid in part (a banned champion call: half back)
+    pending_refund: bool = False  # not picked, and bans aren't known yet: it may still be half back
 
     def view(self) -> dict:
-        return {"winning_codes": self.codes, "void": self.void, "reason": self.reason,
-                "final": self.final, "pays_at": self.pays_at.isoformat() if self.pays_at else None}
+        return {"winning_codes": self.codes, "void": self.void, "reason": self.reason, "final": self.final,
+                "pays_at": self.pays_at.isoformat() if self.pays_at else None, "partial_codes": self.partial,
+                "pending_refund": self.pending_refund}
 
 
 def calls(session: Session, markets: list[Market], settle_delay_s: int) -> dict[uuid.UUID, Call]:
@@ -57,7 +60,8 @@ def calls(session: Session, markets: list[Market], settle_delay_s: int) -> dict[
         if grade.status in ("RESULT", "VOID"):
             stamp = stamps[m.fixture_id]
             out[m.id] = Call(sorted(grade.winning_codes), grade.status == "VOID", grade.reason, True,
-                             stamp + timedelta(seconds=settle_delay_s) if stamp else None)
+                             stamp + timedelta(seconds=settle_delay_s) if stamp else None,
+                             partial=sorted(grade.partial_codes))
             continue
         game = games[m.fixture_id].get(m.params.get("game_index", 1))
         call = live_call(m, fixtures[m.fixture_id], game) if game is not None else None
@@ -90,7 +94,12 @@ def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
         picked = {champion_key(x["champion"]) for x in participants.values() if x.get("champion")
                   and (team_id is None or team_of.get(x.get("side")) == team_id)
                   and (role is None or x.get("role") == role)}
-        return called(["YES" if champion_key(p["champion"]) in picked else "NO"], "Draft seen when the game loaded")
+        if champion_key(p["champion"]) in picked:
+            return called(["YES"], "Draft seen when the game loaded")
+        if p.get("ban_refund"):
+            return Call(["NO"], False, "Not picked; half back if it was banned (bans confirm after the game)", False,
+                        pending_refund=True)
+        return called(["NO"], "Draft seen when the game loaded")
     if kind in ("first_blood", "first_tower", "first_dragon", "five_kills"):
         first = firsts.get({"first_blood": "blood", "first_tower": "tower", "first_dragon": "dragon",
                             "five_kills": "five_kills"}[kind])

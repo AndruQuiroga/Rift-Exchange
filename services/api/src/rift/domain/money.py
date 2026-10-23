@@ -29,10 +29,23 @@ def partial_return(stake_rc: int, odds: Decimal, consolation: Decimal | str) -> 
     return int((Decimal(stake_rc) * odds * share).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
-def settlement_return(stake_rc: int, odds: Decimal, result: str, consolation: Decimal | str | None = None) -> int:
+def refund_return(stake_rc: int, share: Decimal | str) -> int:
+    """A share of the stake back, ROUND_HALF_UP (a champion call whose champion was banned: half back, D-033)."""
+    if stake_rc <= 0:
+        raise ValueError("stake must be positive")
+    share = Decimal(share)
+    if not Decimal(0) < share < Decimal(1):
+        raise ValueError(f"refund share must be between 0 and 1, got {share}")
+    return int((Decimal(stake_rc) * share).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+
+
+def settlement_return(stake_rc: int, odds: Decimal, result: str, consolation: Decimal | str | None = None,
+                      refund: Decimal | str | None = None) -> int:
     if result == "WON":
         return winning_return(stake_rc, odds)
     if result == "PARTIAL":
+        if refund is not None:
+            return refund_return(stake_rc, refund)
         if consolation is None:
             raise ValueError("a PARTIAL result needs the market's consolation share")
         return partial_return(stake_rc, odds, consolation)

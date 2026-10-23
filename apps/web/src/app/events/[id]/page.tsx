@@ -2,21 +2,22 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
 import { ChampionRow } from "@/components/ChampionGrid";
 import { eventLabel, Matchup } from "@/components/EventCard";
-import { FriendsPicks } from "@/components/FriendsPicks";
 import { NotifyButton } from "@/components/GameAlerts";
 import { ChoiceRow, H2HHead, H2HRow, LockedRow, WinnerCards } from "@/components/H2H";
 import { IconBack, IconLock } from "@/components/icons";
-import { LiveCard } from "@/components/LiveCard";
+import { DecidedChips, DecidingLive, Feed, LiveHero, ModeToggle, OpenNowBar, openNow, useLive, useLiveMode, YourGame } from "@/components/MatchLive";
+import { PostGame } from "@/components/PostGame";
 import { KillLine, LaneDuels } from "@/components/PropsBuilders";
 import { DeciderToasts, ResultsSoFar } from "@/components/Results";
+import { RivalsPanel, RivalToasts } from "@/components/Rivals";
 import { LockTimer } from "@/components/Timing";
 import { countdown, kickoff, longDate } from "@/lib/format";
-import { useNow } from "@/lib/hooks";
+import { useNow, usePlaced } from "@/lib/hooks";
 import type { EventT, GameT, MarketT } from "@/lib/types";
 
 /** One plain sentence on how these settle; each market's full rules one tap away. */
@@ -63,7 +64,21 @@ const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
 const RACES = ["five_kills", "gold_lead_15", "first_dragon"];
 
 /** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
-function GamePanel({ event, game }: { event: EventT; game: GameT }) {
+/** OPEN (with its countdown) or LOCKED: every section says whether you can pick right now. */
+function Open({ at, label }: { at?: string | null; label?: string }) {
+  return (
+    <span className="state-badges">
+      <span className="state-open"><span className="dot" aria-hidden="true" />OPEN</span>
+      {label ? <span className="muted">{label}</span> : at ? <LockTimer at={at} compact /> : null}
+    </span>
+  );
+}
+const Locked = ({ label }: { label?: string }) => (
+  <span className="state-badges"><span className="state-locked"><IconLock width={10} height={10} aria-hidden="true" />LOCKED</span>{label ? <span className="muted">{label}</span> : null}</span>
+);
+
+/** Everything about one game, head to head. live: only what is open right now (Play mode in a live match). */
+function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; live?: boolean }) {
   const markets = event.markets ?? [];
   const ofGame = (m: MarketT) => m.params.game_index === game.index;
   // A best-of-one has no separate game winner: the series winner is the game winner.
@@ -95,21 +110,25 @@ function GamePanel({ event, game }: { event: EventT; game: GameT }) {
   const races = RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
   const firstClose = (ms: MarketT[]) => ms.map((m) => m.close_at).sort()[0];
+  const winnerOpen = winner?.state === "OPEN";
+  // Draft calls and blind duels show their own exact state (lock banner, Blind / Drafting); these only decide
+  // what a live Play view keeps on screen.
+  const draftOpen = early === "UPCOMING" && game.window !== "DONE";
+  const lanesOpen = early === "OPEN" || (early === "UPCOMING" && game.window === "OPEN");
+  if (live && !winnerOpen && !draftOpen && !objectives.length && !lanesOpen) return null;
 
   return (
     <>
-      <ResultsSoFar event={event} game={game.index} />
-      {winner ? (
+      {live ? null : <ResultsSoFar event={event} game={game.index} />}
+      {winner && (!live || winnerOpen) ? (
         <section className="mp-section first">
           <div className="mp-head">
             <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
-            <span className="muted">
-              {winner.state !== "OPEN"
-                ? windowText(game, event)
-                : winner.params.through_draft && early !== "OPEN"
-                  ? "Open until 3:00 of the game"
-                  : <LockTimer at={winner.close_at} />}
-            </span>
+            {winner.state !== "OPEN"
+              ? <Locked label={windowText(game, event)} />
+              : winner.params.through_draft && early !== "OPEN"
+                ? <Open label="until 3:00 of the game" />
+                : <Open at={winner.close_at} />}
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
@@ -118,14 +137,16 @@ function GamePanel({ event, game }: { event: EventT; game: GameT }) {
 
       <H2HHead event={event} />
 
-      <Section title="Who gets picked?" sub={`Game ${game.index} · either team`}>
-        <ChampionRow event={event} game={game.index} />
-      </Section>
+      {!live || draftOpen ? (
+        <Section title="Who gets picked?" sub={`Game ${game.index} · banned: half back`}>
+          <ChampionRow event={event} game={game.index} />
+        </Section>
+      ) : null}
 
       {objectives.length ? (
         <Section
           title="Objectives"
-          sub={objectives.some((m) => m.params.through_draft) && early !== "OPEN" ? "Open until 3:00 of the game" : <LockTimer at={firstClose(objectives)} />}
+          sub={objectives.some((m) => m.params.through_draft) && early !== "OPEN" ? <Open label="until 3:00 of the game" /> : <Open at={firstClose(objectives)} />}
         >
           {objectives.map((m) =>
             m.outcomes.every((o) => o.code === "A" || o.code === "B") ? (
@@ -136,16 +157,17 @@ function GamePanel({ event, game }: { event: EventT; game: GameT }) {
           )}
           <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
         </Section>
-      ) : game.window !== "DONE" ? (
+      ) : game.window !== "DONE" && !live ? (
         // Not priced yet (they need enough Worlds games with live data): greyed out so the page shows them.
-        <Section title="Objectives" sub="Not open yet">
+        <Section title="Objectives" sub={<Locked label="not priced yet" />}>
           <LockedRow label="First blood" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
           <LockedRow label="First tower" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
           <LockedRow label="Baron before 25:00" left="Yes" right="No" />
         </Section>
       ) : null}
 
-      <Section title="Lanes & kills" sub={early === "OPEN" ? "After draft · until 3:00" : early === "UPCOMING" ? "Blind before the draft" : undefined}>
+      {live && !lanesOpen ? null : (
+      <Section title="Lanes & kills" sub={early === "OPEN" ? <Open label="after draft · until 3:00" /> : early === "UPCOMING" ? "Blind before the draft, then after it" : <Locked />}>
         {game.window === "DONE" || early === "CLOSED" ? (
           <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
         ) : (
@@ -172,6 +194,7 @@ function GamePanel({ event, game }: { event: EventT; game: GameT }) {
           </>
         )}
       </Section>
+      )}
     </>
   );
 }
@@ -228,6 +251,10 @@ export default function EventPage() {
   const now = useNow();
   const [tab, setTab] = useState<number | null>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
+  const { data: live } = useLive(event ?? ({ status: "SCHEDULED" } as EventT));
+  const [mode, setMode] = useLiveMode();
+  const hidden = useHideScore();
+  const placed = usePlaced();
 
   if (error) {
     return (
@@ -272,28 +299,12 @@ export default function EventPage() {
     }
   }
 
-  return (
+  const isLive = event.status === "LIVE";
+  const isFinal = event.status === "COMPLETED";
+  const liveView = isLive && !!priced;
+  const opened = openNow(event, now);
+  const panels = (
     <>
-      <div className="mp-top">
-        <Link href="/" className="link" style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44 }}>
-          <IconBack width={16} height={16} /> Today
-        </Link>
-        <span className="muted num" style={{ fontSize: 12 }}>
-          {event.status === "LIVE" ? (openGame ? `Live · Game ${openGame.index} open` : "Live") : event.status === "COMPLETED" ? "Final" : cd ? null : "Locked"}
-        </span>
-      </div>
-      <div className="eyebrow" style={{ marginTop: 4 }}>
-        {event.stage} · Bo{event.best_of} · {longDate(event.local_date)} · <span className="num">{kickoff(event.scheduled_at)}</span>
-      </div>
-      {!priced || event.status !== "SCHEDULED" ? (
-        <section className="scoreboard" aria-label="Match" style={{ marginTop: 10 }}>
-          <Matchup event={event} large />
-        </section>
-      ) : null}
-
-      <LiveCard event={event} />
-      <DeciderToasts event={event} />
-
       {gameList.length ? (
         <div className="gametabs" role="group" aria-label="Series and games">
           <button className="gametab" aria-pressed={current === 0} onClick={() => setTab(0)}>
@@ -308,23 +319,100 @@ export default function EventPage() {
           ))}
         </div>
       ) : null}
-
       <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      {!priced ? (
-        <div className="empty" style={{ marginTop: 12 }}>
-          <h3>No prices yet</h3>
-          <p>Prices open automatically once both teams are known and the model has a price.</p>
-        </div>
-      ) : shownGame ? (
-        <GamePanel event={event} game={shownGame} />
-      ) : (
-        <SeriesPanel event={event} />
-      )}
+        {!priced ? (
+          <div className="empty" style={{ marginTop: 12 }}>
+            <h3>No prices yet</h3>
+            <p>Prices open automatically once both teams are known and the model has a price.</p>
+          </div>
+        ) : shownGame ? (
+          <GamePanel event={event} game={shownGame} live={liveView} />
+        ) : (
+          <SeriesPanel event={event} />
+        )}
       </div>
-      <FriendsPicks event={event} />
-      <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
-        Every pick is a single with its own price. Nothing is multiplied together.
-      </p>
     </>
   );
+
+  return (
+    <div className={`match-layout${liveView || isFinal ? " is-live" : ""}`}>
+      <div className="m-hero">
+        <div className="mp-top">
+          <Link href="/" className="link" style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44 }}>
+            <IconBack width={16} height={16} /> Today
+          </Link>
+          {liveView ? (
+            <ModeToggle mode={mode} setMode={setMode} openCount={opened.count} />
+          ) : (
+            <span className="muted num" style={{ fontSize: 12 }}>
+              {isFinal ? "Final" : event.status === "LIVE" ? "Live" : cd ? null : "Locked"}
+            </span>
+          )}
+        </div>
+        <div className="eyebrow" style={{ marginTop: 4 }}>
+          {event.stage} · Bo{event.best_of} · {longDate(event.local_date)} · <span className="num">{kickoff(event.scheduled_at)}</span>
+        </div>
+        {isFinal ? (
+          <PostGame event={event} />
+        ) : isLive ? (
+          <LiveHero event={event} live={live} hidden={hidden.on && !hidden.peek} onReveal={hidden.reveal} />
+        ) : !priced ? (
+          <section className="scoreboard" aria-label="Match" style={{ marginTop: 10 }}>
+            <Matchup event={event} large />
+          </section>
+        ) : null}
+        {isLive ? (
+          <div className="hero-row">
+            <YourGame live={live} />
+            <button type="button" className="link-btn" aria-pressed={hidden.on} onClick={hidden.toggle}>{hidden.on ? "Score hidden" : "Hide score"}</button>
+          </div>
+        ) : null}
+      </div>
+
+      <aside className="m-rivals"><RivalsPanel event={event} /></aside>
+
+      <div className="m-markets">
+        {liveView && mode === "watch" ? (
+          <>
+            <OpenNowBar event={event} onPlay={() => setMode("play")} />
+            <Feed event={event} live={live} placed={placed} />
+          </>
+        ) : (
+          <>
+            {liveView ? <OpenNowBar event={event} /> : null}
+            {liveView ? <DecidingLive event={event} live={live} /> : null}
+            {panels}
+            {liveView ? <DecidedChips event={event} game={shownGame ?? null} placed={placed} /> : null}
+          </>
+        )}
+        <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
+          Every pick is a single with its own price. Nothing is multiplied together.
+        </p>
+      </div>
+      <DeciderToasts event={event} />
+      <RivalToasts event={event} />
+    </div>
+  );
+}
+
+/** "Hide score" for anyone watching on delay: remembered on this device, off by default. */
+function useHideScore() {
+  const [on, setOn] = useState(false);
+  const [peek, setPeek] = useState(false);
+  useEffect(() => {
+    try {
+      setOn(localStorage.getItem("rift.hideLiveScore") === "1");
+    } catch {}
+  }, []);
+  return {
+    on, peek,
+    reveal: () => setPeek(true),
+    toggle: () => {
+      setOn(!on);
+      setPeek(false);
+      try {
+        localStorage.setItem("rift.hideLiveScore", on ? "0" : "1");
+      } catch {}
+    },
+  };
 }
