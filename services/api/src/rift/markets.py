@@ -136,9 +136,11 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
             [OutcomeSpec("A", team_name(a.code, a.name), q), OutcomeSpec("B", team_name(b.code, b.name), 1 - q)],
             {"game_index": idx, "through_draft": False}))
     if stats.timeline is not None:
-        from rift.props import objective_specs
+        from rift.props import early_team_specs, objective_specs
 
         specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, late, when))
+        # Team races, blind: before the draft like duels and kill lines (D-031), closing with the draft calls.
+        specs.extend(early_team_specs(fixture, idx, a, b, q, stats.timeline, close_at, blind=True))
     return specs
 
 

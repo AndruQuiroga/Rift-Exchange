@@ -134,7 +134,10 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
   }
   const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const early = game.early ?? "UPCOMING";
-  const races = RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
+  // Team races work like duels and kill lines: blind markets before the draft, early-window ones after it.
+  const racesFor = (blind: boolean) => RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m) && !!m.params.blind === blind && m.state === "OPEN"))
+    .filter((m): m is MarketT => !!m);
+  const races = racesFor(game.lanes === "BLIND");
   const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
   const firstClose = (ms: MarketT[]) => ms.map((m) => m.close_at).sort()[0];
   const winnerOpen = winner?.state === "OPEN";
@@ -203,13 +206,14 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
           <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
         ) : (
           <>
-            {early === "OPEN" ? (
-              races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m)} />)
+            <div className="mp-sub">Team races</div>
+            {(lanes === "BLIND" || lanes === "LIVE") && races.length ? (
+              races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m).replace(/ (blind)$/, "")} />)
             ) : (
               <>
-                {/* Team races need the live game: greyed until it loads. */}
-                <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-                  <IconLock width={13} height={13} aria-hidden="true" /> Team races open when the game loads, until 3:00.
+                <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
+                  <IconLock width={13} height={13} aria-hidden="true" />
+                  {lanes === "DRAFT" ? "No picks during the draft. They reopen with the game, until 3:00." : "Not priced yet."}
                 </p>
                 {["First to 5 kills", "Gold lead at 15:00", "First dragon"].map((l) => (
                   <LockedRow key={l} label={l} left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
@@ -220,7 +224,7 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
             <KillLine event={event} game={game.index} />
             <div className="mp-sub">Lane duels · gold at 15:00</div>
             <LaneDuels event={event} game={game.index} />
-            {early === "OPEN" ? <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." /> : null}
+            {races.length ? <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." /> : null}
             {early === "UPCOMING" ? <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} /> : null}
           </>
         )}
