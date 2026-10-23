@@ -23,9 +23,12 @@ export function PostGame({ event }: { event: EventT }) {
   const now = useNow(1000);
   const { data } = useSWR<{ picks: Pick[] }>("/me/picks");
   const { table } = useFriendsOnMatch(event.id);
-  const { data: day } = useSWR<{ events: EventT[] }>(`/events?date=${event.local_date}`);
+  const { data: all } = useSWR<{ events: EventT[] }>("/events");
   const mine = (data?.picks ?? []).filter((p) => p.event?.id === event.id);
-  const next = (day?.events ?? []).find((e) => e.status === "SCHEDULED" && Date.parse(e.scheduled_at) > Date.parse(event.scheduled_at));
+  // The next match that isn't over, whenever it is: one already live (its draft under way) comes first.
+  const next = (all?.events ?? [])
+    .filter((e) => e.id !== event.id && (e.status === "LIVE" || e.status === "SCHEDULED") && e.team_a && e.team_b)
+    .sort((x, y) => (x.status === "LIVE" ? 0 : 1) - (y.status === "LIVE" ? 0 : 1) || Date.parse(x.scheduled_at) - Date.parse(y.scheduled_at))[0];
   const winner = event.winner === "A" ? event.team_a : event.winner === "B" ? event.team_b : null;
   const loser = event.winner === "A" ? event.team_b : event.winner === "B" ? event.team_a : null;
 
@@ -103,8 +106,8 @@ export function PostGame({ event }: { event: EventT }) {
 
       {next ? (
         <Link className="pg-next" href={`/events/${next.id}`}>
-          <span>Next up: {next.team_a?.code ?? "TBD"} vs {next.team_b?.code ?? "TBD"}</span>
-          <span>picks open →</span>
+          <span>{next.status === "LIVE" ? "Live now" : "Next up"}: {next.team_a?.code} vs {next.team_b?.code}</span>
+          <span>{next.status === "LIVE" ? "watch →" : `${new Date(next.scheduled_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} →`}</span>
         </Link>
       ) : null}
     </section>

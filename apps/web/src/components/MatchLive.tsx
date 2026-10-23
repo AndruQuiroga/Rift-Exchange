@@ -7,7 +7,7 @@ import { useNow } from "@/lib/hooks";
 import { teamColor } from "@/lib/teams";
 import type { EventT, GameT, LiveEvent, LiveT, MarketT, Pick } from "@/lib/types";
 import { TeamMark } from "./bits";
-import { clockText, LockTimer, PayoutNote } from "./Timing";
+import { clockText, LockTimer, MarketClose, PayoutNote } from "./Timing";
 
 const clock = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 const EVENT_LABEL: Record<LiveEvent["type"], string> = {
@@ -46,7 +46,7 @@ export function openNow(event: EventT, now: number): { count: number; closes: st
     what.add("lane duels");
     what.add("kill lines");
   }
-  const closes = open.map((m) => m.close_at).sort()[0] ?? null;
+  const closes = open.filter((m) => m.close_known !== false).map((m) => m.close_at).sort()[0] ?? null;
   return { count: open.length + (lanes ? 1 : 0), closes, what: [...what] };
 }
 
@@ -161,7 +161,7 @@ export function OpenNowBar({ event, onPlay }: { event: EventT; onPlay?: () => vo
     <>
       <span className="ob-dot" />
       <span><b>OPEN NOW</b><span className="ob-what"> · {o.what.join(", ")}</span></span>
-      {o.closes ? <LockTimer at={o.closes} label="Closes in" /> : <span className="ob-what">until 3:00</span>}
+      {o.closes ? <LockTimer at={o.closes} label="Closes in" /> : <MarketClose at={null} known={false} />}
     </>
   );
   return onPlay

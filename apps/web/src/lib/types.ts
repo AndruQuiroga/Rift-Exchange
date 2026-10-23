@@ -14,6 +14,8 @@ export type MarketT = {
   state: MarketState;
   state_reason: string | null;
   close_at: string;
+  /** false while its close follows a game that hasn't loaded: close_at is only a backstop (3:00 of game time). */
+  close_known?: boolean;
   confidence: string;
   model: string;
   params: Record<string, unknown>;
@@ -141,6 +143,7 @@ export type Pick = {
   call?: PickCall | null;
   close_at?: string;
   closes_with_game?: boolean;
+  close_known?: boolean;
 };
 
 /** Friends on one match: picks revealed once their market locks, before that only a count (A-010). */
