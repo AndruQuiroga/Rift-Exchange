@@ -119,3 +119,9 @@
   .lh-latest-in { animation: reveal 420ms ease-out; }
   .lh-dot:last-of-type { animation: glow 1.4s ease-out 1; }
 }
+
+/* Before the match starts there are no rivals: one column, as before. */
+@media (min-width: 1440px) {
+  .match-layout.no-rivals { grid-template-columns: minmax(0, 1fr); grid-template-areas: "hero" "markets"; }
+  .main-inner:has(.match-layout.no-rivals) { max-width: 760px; }
+}

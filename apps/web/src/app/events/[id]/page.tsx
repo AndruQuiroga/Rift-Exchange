@@ -369,7 +369,8 @@ export default function EventPage() {
   );
 
   return (
-    <div className={`match-layout${liveView || isFinal ? " is-live" : ""}`}>
+    // Rivals appear once the match starts; before that the page is the markets alone, full width.
+    <div className={`match-layout${liveView || isFinal ? " is-live" : ""}${event.status === "SCHEDULED" ? " no-rivals" : ""}`}>
       <div className="m-hero">
         <div className="mp-top">
           <Link href="/" className="link" style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44 }}>
@@ -399,7 +400,7 @@ export default function EventPage() {
         ) : null}
       </div>
 
-      <aside className="m-rivals"><RivalsPanel event={event} /></aside>
+      {event.status === "SCHEDULED" ? null : <aside className="m-rivals"><RivalsPanel event={event} /></aside>}
 
       <div className="m-markets">
         {gameTabs}
