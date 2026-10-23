@@ -25,6 +25,7 @@ from rift.models import (
     Game,
     HistoricalResult,
     Market,
+    MarketResult,
     Outcome,
     Season,
     Selection,
@@ -339,6 +340,53 @@ def test_two_nil_never_opens_game_three_and_voids_a_stray_one(factory):
     ms = _markets(factory)
     assert ms["game_winner:m1:3"].state == "VOID"
     assert ms["game_winner:m1:2"].state == "SETTLED" and ms["series_score:m1"].state == "SETTLED"
+
+
+def test_a_decided_series_shows_final_at_once_and_pays_once_the_score_holds(factory):
+    """IG-GEN (2026-10-23): the feed kept a won Bo1 "inProgress" well after the game; results waited on it."""
+    feed = FakeFeed()
+    now = [START - timedelta(hours=6)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    _seed_rated_teams(factory)
+    _go_live(feed, worker, now)
+    feed.finish_game(1, "A", KILLS, ended=START + timedelta(minutes=35))
+    feed.finish_game(2, "A", KILLS, ended=START + timedelta(minutes=75))
+    feed.games[2].state = "unneeded"  # the match itself is still listed in progress
+
+    now[0] = START + timedelta(minutes=76)
+    worker.cycle()
+    with factory() as s:
+        fixture = s.execute(select(Fixture)).scalar_one()
+        atlas = s.execute(select(Team).where(Team.code == "ATL")).scalar_one()
+        assert (fixture.status, fixture.winner_team_id) == ("COMPLETED", atlas.id)
+    assert _markets(factory)["series_winner:m1"].state == "LOCKED"  # shown final, not paid yet
+
+    now[0] = START + timedelta(minutes=90)
+    worker.cycle()
+    winner = _markets(factory)["series_winner:m1"]
+    assert winner.state == "SETTLED"
+    with factory() as s:
+        assert s.execute(select(MarketResult.winning_codes).where(MarketResult.market_id == winner.id)).scalar() == ["A"]
+
+
+def test_a_corrected_score_reopens_an_early_final(factory):
+    feed = FakeFeed()
+    now = [START - timedelta(hours=6)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    _seed_rated_teams(factory)
+    _go_live(feed, worker, now)
+    feed.score = (2, 0)
+    now[0] = START + timedelta(minutes=76)
+    worker.cycle()
+    feed.score = (1, 0)  # the feed takes a game back before the settle delay runs out
+    now[0] = START + timedelta(minutes=78)
+    worker.cycle()
+    with factory() as s:
+        fixture = s.execute(select(Fixture)).scalar_one()
+        assert (fixture.status, fixture.winner_team_id, fixture.completed_at) == ("LIVE", None, None)
+    now[0] = START + timedelta(minutes=95)
+    worker.cycle()
+    assert _markets(factory)["series_winner:m1"].state != "SETTLED"
 
 
 def test_next_game_opens_from_a_final_frame_only_when_reachable_whoever_won():

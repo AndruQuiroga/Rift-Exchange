@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # Market behaviour
     quote_ttl_seconds: int = 20
-    settle_delay_seconds: int = 600  # data must be unchanged this long before grading
+    settle_delay_seconds: int = 300  # data must be unchanged this long before grading
     hold_void_after_hours: int = 48  # unresolved markets void after this
     max_decimal_odds: str = "100.00"
     min_probability: str = "0.01"
