@@ -50,6 +50,7 @@ class FakeFeed:
         self.live_ids: set[str] = set()
         self.scripted: dict[str, ScriptedGame] = {}  # livestats frames, keyed by game id
         self.clock = lambda: START
+        self.flipped = False  # the schedule lists Nova first, as the feed may once a game loads
 
     def live(self):
         return self.live_ids
@@ -57,8 +58,8 @@ class FakeFeed:
     def schedule_since(self, league_id, since, max_pages=12):
         a, b = self.score
         live = self.state != "unstarted"
-        return [ScheduleMatch("m1", "worlds", START, self.state, "Swiss", 3,
-                              [tref("Atlas", "ATL", a if live else None), tref("Nova", "NOV", b if live else None)])]
+        teams = [tref("Atlas", "ATL", a if live else None), tref("Nova", "NOV", b if live else None)]
+        return [ScheduleMatch("m1", "worlds", START, self.state, "Swiss", 3, teams[::-1] if self.flipped else teams)]
 
     def leagues(self):
         return {}
@@ -197,6 +198,28 @@ def test_early_start_locks_before_the_schedule_catches_up(factory):
         assert s.execute(select(Fixture.status)).scalar_one() == "LIVE"
         assert _locked_unless_through_draft(s.execute(select(Market)).scalars())
     assert worker.poll_interval() == 15
+
+
+def test_schedule_listing_teams_in_the_other_order_keeps_the_fixture_orientation(factory):
+    """IG-GEN (2026-10-23): the feed swapped its team order at game start and every A/B market read backwards."""
+    feed = FakeFeed()
+    now = [START - timedelta(hours=6)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    _seed_rated_teams(factory)
+    worker.cycle()
+    with factory() as s:
+        winner = s.execute(select(Market).where(Market.kind == "series_winner")).scalar_one()
+        a_label = s.execute(select(Outcome.label).where(Outcome.market_id == winner.id, Outcome.code == "A")).scalar()
+    assert a_label == "Atlas"
+
+    now[0] = START + timedelta(minutes=40)
+    feed.state, feed.score, feed.flipped = "inProgress", (1, 0), True  # Atlas leads 1-0, listed second
+    worker.cycle()
+    with factory() as s:
+        fixture = s.execute(select(Fixture)).scalar_one()
+        atlas = s.execute(select(Team).where(Team.code == "ATL")).scalar_one()
+        assert fixture.team_a_id == atlas.id
+        assert (fixture.team_a_wins, fixture.team_b_wins) == (1, 0)
 
 
 def _seed_rated_teams(factory):
