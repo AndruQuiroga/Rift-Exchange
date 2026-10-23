@@ -49,10 +49,23 @@ def outcome_view(o: Outcome) -> dict:
             "probability": float(o.probability) if o.probability is not None else None}
 
 
-def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None = None, call: Call | None = None) -> dict:
+def provisional_closes(db: Session, markets: list[Market]) -> set[uuid.UUID]:
+    """Markets whose close follows their game (3:00 of game time) while that game hasn't loaded yet: their
+    close_at is only a backstop, so the client says "3:00 into the game" instead of counting down to it."""
+    timed = [m for m in markets if m.fixture_id and (m.params.get("through_draft") or m.params.get("early"))]
+    if not timed:
+        return set()
+    started = {(g.fixture_id, g.game_index) for g in db.execute(select(Game).where(
+        Game.fixture_id.in_({m.fixture_id for m in timed}), Game.started_at.is_not(None))).scalars()}
+    return {m.id for m in timed if (m.fixture_id, m.params.get("game_index", 1)) not in started}
+
+
+def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None = None, call: Call | None = None,
+                close_known: bool = True) -> dict:
     return {
         "id": str(m.id), "kind": m.kind, "scope": m.scope, "category": m.category, "title": m.title,
         "rules": m.rules_text, "state": m.state, "state_reason": m.state_reason, "close_at": m.close_at.isoformat(),
+        "close_known": close_known,
         "confidence": m.confidence, "model": m.model_key, "params": m.params,
         "outcomes": [outcome_view(o) for o in sorted(outcomes, key=lambda o: o.sort)],
         "result": ({"void": result.void, "winning_codes": result.winning_codes, "reason": result.reason,
@@ -116,6 +129,7 @@ def events(db: Session, season: Season, date: str | None, stage: str | None,
         if fixtures else []
     outcomes = _outcomes_by_market(db, [m.id for m in markets])
     results = _latest_results(db, [m.id for m in markets])
+    provisional = provisional_closes(db, markets)
     by_fixture: dict[uuid.UUID, list[Market]] = defaultdict(list)
     for m in markets:
         by_fixture[m.fixture_id].append(m)
@@ -128,7 +142,8 @@ def events(db: Session, season: Season, date: str | None, stage: str | None,
                     "categories": sorted({m.category for m in fm if m.state == "OPEN"}),
                     "early_open": _early_open(db, f, now),
                     "close_at": featured.close_at.isoformat() if featured else None,
-                    "featured": market_view(featured, outcomes[featured.id], results.get(featured.id))
+                    "featured": market_view(featured, outcomes[featured.id], results.get(featured.id),
+                                            close_known=featured.id not in provisional)
                     if featured else None})
     return out
 
@@ -142,9 +157,11 @@ def event_detail(db: Session, fixture: Fixture, now: datetime) -> dict:
     order = {"WINNER": 0, "DRAFT": 1, "PROPS": 2}
     markets.sort(key=lambda m: (order.get(m.category, 9), m.created_at))
     called = calls(db, markets, _settle_delay())
+    provisional = provisional_closes(db, markets)
     return {**fixture_view(fixture, teams),
             "games": games_view(fixture, _games(db, fixture), markets, now),
-            "markets": [market_view(m, outcomes[m.id], results.get(m.id), called.get(m.id)) for m in markets]}
+            "markets": [market_view(m, outcomes[m.id], results.get(m.id), called.get(m.id),
+                                    close_known=m.id not in provisional) for m in markets]}
 
 
 def _games(db: Session, fixture: Fixture) -> list[Game]:
@@ -387,6 +404,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
     tickets = {t.id: t for t in db.execute(select(Ticket).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).scalars()} if selections else {}
     called = calls(db, [markets[s.market_id] for s in selections if s.status == "OPEN"], _settle_delay())
+    provisional = provisional_closes(db, list(markets.values()))
     codes = {o.id: o.code for o in db.execute(select(Outcome).where(
         Outcome.id.in_({s.outcome_id for s in selections}))).scalars()} if selections else {}
     out = []
@@ -412,6 +430,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             # How this pick stands on the latest data, before it pays (D-032).
             "call": _pick_call(called.get(m.id), codes.get(s.outcome_id)) if s.status == "OPEN" else None,
             "close_at": m.close_at.isoformat(),
+            "close_known": m.id not in provisional,
             # Its close follows the game (3:00 of game time) rather than a fixed time until the game loads.
             "closes_with_game": bool(m.params.get("through_draft") or m.params.get("early")),
         })

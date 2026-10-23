@@ -263,3 +263,17 @@ def test_rivals_table_and_reactions_after_lock(api, factory, world):
     with factory() as s:
         ev = s.execute(select(OutboxEvent).where(OutboxEvent.type == "reaction.created")).scalar_one()
         assert ev.payload["text"] == "You're sweating" and ev.payload["from"]
+
+
+def test_a_close_that_follows_the_game_is_not_a_countdown_until_it_loads(api, factory, world):
+    """Through-draft markets close at 3:00 of game time; before the game loads close_at is only a backstop."""
+    app, codes = api
+    kai = signup(app, codes[0], "kai")
+    with factory() as s, s.begin():
+        s.get(Market, world["market"]).params = {"through_draft": True}
+    event = str(world["fixture"])
+    assert kai.get(f"/api/v1/events/{event}").json()["markets"][0]["close_known"] is False
+    with factory() as s, s.begin():
+        s.add(Game(fixture_id=world["fixture"], provider_id="g1", game_index=1, state="inProgress",
+                   started_at=s.get(Fixture, world["fixture"]).scheduled_at))
+    assert kai.get(f"/api/v1/events/{event}").json()["markets"][0]["close_known"] is True

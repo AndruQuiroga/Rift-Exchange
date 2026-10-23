@@ -126,8 +126,8 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
             <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
             {winner.state !== "OPEN"
               ? <Locked label={windowText(game, event)} />
-              : winner.params.through_draft && early !== "OPEN"
-                ? <Open label="until 3:00 of the game" />
+              : winner.close_known === false
+                ? <Open label="closes 3:00 into the game" />
                 : <Open at={winner.close_at} />}
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
@@ -146,7 +146,7 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       {objectives.length ? (
         <Section
           title="Objectives"
-          sub={objectives.some((m) => m.params.through_draft) && early !== "OPEN" ? <Open label="until 3:00 of the game" /> : <Open at={firstClose(objectives)} />}
+          sub={objectives.some((m) => m.close_known === false) ? <Open label="closes 3:00 into the game" /> : <Open at={firstClose(objectives)} />}
         >
           {objectives.map((m) =>
             m.outcomes.every((o) => o.code === "A" || o.code === "B") ? (

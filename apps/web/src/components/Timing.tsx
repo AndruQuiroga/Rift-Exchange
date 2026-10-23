@@ -37,6 +37,12 @@ export function LockTimer({ at, label = "Locks in", compact }: { at: string | nu
   );
 }
 
+/** A market's close: the countdown once it is real, "3:00 into the game" while its game hasn't loaded. */
+export function MarketClose({ at, known, label = "Locks in", compact }: { at: string | null | undefined; known?: boolean; label?: string; compact?: boolean }) {
+  if (known === false) return <span className={`timer${compact ? " compact" : ""}`}>Closes <b>3:00 into the game</b></span>;
+  return <LockTimer at={at} label={label} compact={compact} />;
+}
+
 /** When a known result pays: "pays in 3:12", "paying now", or after the game for a live call. */
 export function PayoutNote({ payAt, final }: { payAt: string | null; final: boolean }) {
   const now = useNow(1000);
