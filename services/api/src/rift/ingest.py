@@ -171,7 +171,12 @@ def sync_fixture_details(session: Session, fixture: Fixture, client: LolesportsC
 
     for game in games.values():
         if game.state == "completed" and not game.stats_complete:
-            stats = client.final_stats(game.provider_id, now)
+            try:
+                stats = client.final_stats(game.provider_id, now)
+            except httpx.HTTPError as exc:
+                # One game's feed trouble must not roll back every fixture's details this cycle; retry next time.
+                log.warning("game %s: final stats unavailable (%s)", game.provider_id, type(exc).__name__)
+                continue
             if stats and stats.state == "finished" and len(stats.players) == 10:
                 side_team = {"blue": game.blue_team_id, "red": game.red_team_id}
                 game.patch = stats.patch

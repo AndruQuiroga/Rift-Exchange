@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from sqlalchemy import select
 from test_timeline import ScriptedGame
 
@@ -18,6 +19,7 @@ from rift.adapters.lolesports import (
     parse_frames,
     team_key,
 )
+from rift.calls import calls
 from rift.config import Settings
 from rift.domain.money import winning_return
 from rift.models import (
@@ -52,6 +54,7 @@ class FakeFeed:
         self.scripted: dict[str, ScriptedGame] = {}  # livestats frames, keyed by game id
         self.clock = lambda: START
         self.flipped = False  # the schedule lists Nova first, as the feed may once a game loads
+        self.stats_lag = False
 
     def live(self):
         return self.live_ids
@@ -70,6 +73,9 @@ class FakeFeed:
         return MatchDetail("m1", [("e-a", "Atlas", a), ("e-b", "Nova", b)], self.games)
 
     def final_stats(self, game_id, now):
+        if self.stats_lag:  # the feed hasn't reached the game's end yet (broadcast delay)
+            request = httpx.Request("GET", f"https://feed/window/{game_id}")
+            raise httpx.HTTPStatusError("400", request=request, response=httpx.Response(400, request=request))
         return self.stats.get(game_id)
 
     def frames(self, game_id, starting_time=None):
@@ -360,6 +366,11 @@ def test_a_decided_series_shows_final_at_once_and_pays_once_the_score_holds(fact
         atlas = s.execute(select(Team).where(Team.code == "ATL")).scalar_one()
         assert (fixture.status, fixture.winner_team_id) == ("COMPLETED", atlas.id)
     assert _markets(factory)["series_winner:m1"].state == "LOCKED"  # shown final, not paid yet
+    with factory() as s:
+        winner = s.execute(select(Market).where(Market.template_key == "series_winner:m1")).scalar_one()
+        call = calls(s, [winner], 600)[winner.id]
+        fixture = s.execute(select(Fixture)).scalar_one()
+        assert call.final and call.codes == ["A"] and call.pays_at == fixture.data_changed_at + timedelta(minutes=10)
 
     now[0] = START + timedelta(minutes=90)
     worker.cycle()
@@ -459,3 +470,25 @@ def test_backfill_scans_finished_games_the_live_tracker_never_saw(factory):
     with factory() as s:
         g = s.execute(select(Game).where(Game.provider_id == "g-old")).scalar_one()
         assert g.timeline_complete and g.started_at == played and g.timeline["at_15"]
+
+
+def test_a_lagging_final_stats_feed_does_not_hold_back_the_game_result(factory):
+    """2026-10-23: a 400 from the final-stats probe failed the whole details job, so a finished game wasn't
+    marked completed until the feed caught up."""
+    feed = FakeFeed()
+    now = [START - timedelta(hours=6)]
+    worker = make_worker(factory, feed, lambda: now[0])
+    _seed_rated_teams(factory)
+    _go_live(feed, worker, now)
+    feed.finish_game(1, "A", KILLS, ended=START + timedelta(minutes=35))
+    feed.stats_lag = True
+    now[0] = START + timedelta(minutes=36)
+    worker.cycle()
+    with factory() as s:
+        g1 = s.execute(select(Game).where(Game.game_index == 1)).scalar_one()
+        assert g1.state == "completed" and not g1.stats_complete
+    feed.stats_lag = False
+    now[0] = START + timedelta(minutes=37)
+    worker.cycle()
+    with factory() as s:
+        assert s.execute(select(Game).where(Game.game_index == 1)).scalar_one().stats_complete

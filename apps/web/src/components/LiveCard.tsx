@@ -35,21 +35,29 @@ function useHideScore(): [boolean, (v: boolean) => void] {
 
 /** Read-only while a series is live: the game state and how each of your picks on it is doing. */
 export function LiveCard({ event }: { event: EventT }) {
-  const { data: live } = useSWR<LiveT>(`/events/${event.id}/live`, { refreshInterval: 15000 });
+  const { data: live } = useSWR<LiveT>(`/events/${event.id}/live`, {
+    refreshInterval: (latest) => (latest?.status === "COMPLETED" ? 60000 : 5000),
+  });
   const [hide, setHide] = useHideScore();
   const [peek, setPeek] = useState(false);
-  if (!live || live.status !== "LIVE") return null;
+  if (!live || (live.status !== "LIVE" && live.status !== "COMPLETED")) return null;
+  const final = live.status === "COMPLETED";
+  if (final && !live.my_picks.length) return null; // the scoreboard above already says Final
   const code = (t: "A" | "B" | null) => (t === "A" ? event.team_a?.code : t === "B" ? event.team_b?.code : "—");
   const lead = live.gold ? live.gold[0] - live.gold[1] : 0;
   const share = live.gold ? Math.min(Math.abs(lead) / 10000, 1) * 50 : 0;
   const masked = hide && !peek;
 
   return (
-    <section className="card livecard" aria-label="Live">
+    <section className={`card livecard${final ? " final" : ""}`} aria-label={final ? "Final" : "Live"}>
       <div className="card-head">
         <h2>
-          <span className="status live" style={{ marginRight: 8 }}><span className="dot" />Live</span>
-          {live.game_index ? `Game ${live.game_index}` : "Between games"}
+          {final ? (
+            <span className="status" style={{ marginRight: 8 }}>Final</span>
+          ) : (
+            <span className="status live" style={{ marginRight: 8 }}><span className="dot" />Live</span>
+          )}
+          {final ? `${event.team_a?.code} ${event.score[0]}–${event.score[1]} ${event.team_b?.code}` : live.game_index ? `Game ${live.game_index}` : "Between games"}
         </h2>
         <span className="sub num">
           {live.game_clock_s !== null && !masked ? clock(live.game_clock_s) : ""}
@@ -113,7 +121,11 @@ export function LiveCard({ event }: { event: EventT }) {
           ))}
         </div>
       ) : null}
-      <p className="fineprint" style={{ textAlign: "left" }}>Nothing can be placed on a game in progress.</p>
+      <p className="fineprint" style={{ textAlign: "left" }}>
+        {final
+          ? "Results show as soon as they're known; credits move once the data has held steady for 5 minutes."
+          : "Lane duels and kill lines stay open until 3:00 of each game. Results show as they happen; payouts follow once the data holds steady."}
+      </p>
     </section>
   );
 }

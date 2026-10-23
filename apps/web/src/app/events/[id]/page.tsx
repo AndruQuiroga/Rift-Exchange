@@ -13,6 +13,8 @@ import { ChoiceRow, H2HHead, H2HRow, LockedRow, WinnerCards } from "@/components
 import { IconBack, IconLock } from "@/components/icons";
 import { LiveCard } from "@/components/LiveCard";
 import { KillLine, LaneDuels } from "@/components/PropsBuilders";
+import { DeciderToasts, ResultsSoFar } from "@/components/Results";
+import { LockTimer } from "@/components/Timing";
 import { countdown, kickoff, longDate } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import type { EventT, GameT, MarketT } from "@/lib/types";
@@ -44,7 +46,7 @@ function windowText(g: GameT, event: EventT): string {
   return g.state === "inProgress" ? "Live" : "Locked";
 }
 
-function Section({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+function Section({ title, sub, children }: { title: string; sub?: ReactNode; children: ReactNode }) {
   return (
     <section className="mp-section">
       <div className="mp-head">
@@ -61,7 +63,7 @@ const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
 const RACES = ["five_kills", "gold_lead_15", "first_dragon"];
 
 /** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
-function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: number }) {
+function GamePanel({ event, game }: { event: EventT; game: GameT }) {
   const markets = event.markets ?? [];
   const ofGame = (m: MarketT) => m.params.game_index === game.index;
   // A best-of-one has no separate game winner: the series winner is the game winner.
@@ -73,7 +75,8 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Winner and draft picks open between games. Lane duels and kill lines open after draft, until 3:00.
+          Winner, draft picks and blind duels and kill lines open between games and close before the draft. After the
+          draft, duels and kill lines reopen with champions until 3:00.
         </p>
         <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
       </div>
@@ -87,14 +90,15 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
       </div>
     );
   }
-  const pregame = game.window === "OPEN" || (game.index === 1 && game.window === "UPCOMING");
   const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const early = game.early ?? "UPCOMING";
   const races = RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
   const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
+  const firstClose = (ms: MarketT[]) => ms.map((m) => m.close_at).sort()[0];
 
   return (
     <>
+      <ResultsSoFar event={event} game={game.index} />
       {winner ? (
         <section className="mp-section first">
           <div className="mp-head">
@@ -104,7 +108,7 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
                 ? windowText(game, event)
                 : winner.params.through_draft && early !== "OPEN"
                   ? "Open until 3:00 of the game"
-                  : `Locks in ${countdown(winner.close_at, now)}`}
+                  : <LockTimer at={winner.close_at} />}
             </span>
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
@@ -114,14 +118,15 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
 
       <H2HHead event={event} />
 
-      {pregame ? (
-        <Section title="Who gets picked?" sub={`Game ${game.index} · either team`}>
-          <ChampionRow event={event} game={game.index} />
-        </Section>
-      ) : null}
+      <Section title="Who gets picked?" sub={`Game ${game.index} · either team`}>
+        <ChampionRow event={event} game={game.index} />
+      </Section>
 
       {objectives.length ? (
-        <Section title="Objectives" sub={`Game ${game.index}`}>
+        <Section
+          title="Objectives"
+          sub={objectives.some((m) => m.params.through_draft) && early !== "OPEN" ? "Open until 3:00 of the game" : <LockTimer at={firstClose(objectives)} />}
+        >
           {objectives.map((m) =>
             m.outcomes.every((o) => o.code === "A" || o.code === "B") ? (
               <H2HRow key={m.id} event={event} market={m} label={name(m)} />
@@ -140,33 +145,31 @@ function GamePanel({ event, game, now }: { event: EventT; game: GameT; now: numb
         </Section>
       ) : null}
 
-      <Section title="Lanes & kills" sub={early === "OPEN" ? "Open until 3:00" : undefined}>
-        {early === "OPEN" ? (
+      <Section title="Lanes & kills" sub={early === "OPEN" ? "After draft · until 3:00" : early === "UPCOMING" ? "Blind before the draft" : undefined}>
+        {game.window === "DONE" || early === "CLOSED" ? (
+          <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
+        ) : (
           <>
-            {races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m)} />)}
+            {early === "OPEN" ? (
+              races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m)} />)
+            ) : (
+              <>
+                {/* Team races need the live game: greyed until it loads. */}
+                <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+                  <IconLock width={13} height={13} aria-hidden="true" /> Team races open when the game loads, until 3:00.
+                </p>
+                {["First to 5 kills", "Gold lead at 15:00", "First dragon"].map((l) => (
+                  <LockedRow key={l} label={l} left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
+                ))}
+              </>
+            )}
             <div className="mp-sub">Kill line</div>
             <KillLine event={event} game={game.index} />
             <div className="mp-sub">Lane duels · gold at 15:00</div>
             <LaneDuels event={event} game={game.index} />
-            <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." />
+            {early === "OPEN" ? <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." /> : null}
+            {early === "UPCOMING" ? <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} /> : null}
           </>
-        ) : early === "UPCOMING" && game.window !== "DONE" ? (
-          <>
-            {/* Greyed out until the game loads, so the page shows what is coming. */}
-            <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-              <IconLock width={13} height={13} aria-hidden="true" /> Opens when the game loads, until 3:00.
-            </p>
-            {["First to 5 kills", "Gold lead at 15:00", "First dragon"].map((l) => (
-              <LockedRow key={l} label={l} left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
-            ))}
-            <div className="mp-sub">Kill line</div>
-            <LockedRow label="Total kills" left="Under" right="Over" />
-            <div className="mp-sub">Lane duels · gold at 15:00</div>
-            <LaneDuels event={event} game={game.index} />
-            <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
-          </>
-        ) : (
-          <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
         )}
       </Section>
     </>
@@ -218,7 +221,10 @@ function SeriesPanel({ event }: { event: EventT }) {
 
 export default function EventPage() {
   const { id } = useParams<{ id: string }>();
-  const { data: event, error } = useSWR<EventT>(`/events/${id}`);
+  // Live: poll as well as listen, so results and calls land within seconds of the data.
+  const { data: event, error } = useSWR<EventT>(`/events/${id}`, {
+    refreshInterval: (latest) => (latest?.status === "LIVE" ? 10000 : 0),
+  });
   const now = useNow();
   const [tab, setTab] = useState<number | null>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
@@ -286,6 +292,7 @@ export default function EventPage() {
       ) : null}
 
       <LiveCard event={event} />
+      <DeciderToasts event={event} />
 
       {gameList.length ? (
         <div className="gametabs" role="group" aria-label="Series and games">
@@ -309,7 +316,7 @@ export default function EventPage() {
           <p>Prices open automatically once both teams are known and the model has a price.</p>
         </div>
       ) : shownGame ? (
-        <GamePanel event={event} game={shownGame} now={now} />
+        <GamePanel event={event} game={shownGame} />
       ) : (
         <SeriesPanel event={event} />
       )}

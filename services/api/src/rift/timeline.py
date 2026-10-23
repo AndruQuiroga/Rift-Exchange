@@ -22,6 +22,7 @@ from rift.models import Game
 log = logging.getLogger(__name__)
 
 LIVE_LAG = timedelta(seconds=30)  # the feed trails real time; asking for "now" returns nothing yet
+LAG_STEP_S, LAG_EASE_S, MAX_LIVE_LAG_S = 20, 5, 300  # back off on a 400, ease back on success, never past 5:00
 STEP = timedelta(minutes=1)  # post-game scan step; each change found is then bisected down to the frame
 EXACT = timedelta(seconds=2)  # frames are many per second, so a bracket this tight is the frame itself
 REQUEST_BUDGET = 25  # feed requests per game per worker cycle, so a scan never holds a transaction long
@@ -206,11 +207,22 @@ def _advance(game: Game, tl: dict, feed: _Budget, now: datetime) -> None:
 
 
 def _live(game: Game, tl: dict, feed: _Budget, now: datetime, t0: datetime) -> None:
-    probe = now - LIVE_LAG
     state = tl["live_state"]
+    lag = state.get("lag_s", LIVE_LAG.total_seconds())
+    probe = now - timedelta(seconds=lag)
     if state.get("prev_at") and probe <= parse_time(state["prev_at"]):
         return
-    w = feed.frames(probe)
+    try:
+        w = feed.frames(probe)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 400:
+            raise
+        # Broadcast delay varies, and the feed answers 400 for a time it hasn't reached yet. Ask further back
+        # next poll instead of repeating a request that keeps failing.
+        state["lag_s"] = min(lag + LAG_STEP_S, MAX_LIVE_LAG_S)
+        return
+    if lag > LIVE_LAG.total_seconds():  # creep back toward real time while it keeps answering
+        state["lag_s"] = max(lag - LAG_EASE_S, LIVE_LAG.total_seconds())
     frames = w.frames if w else []
     if frames:
         observe(frames, state)

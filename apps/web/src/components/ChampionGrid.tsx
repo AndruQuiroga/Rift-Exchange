@@ -8,9 +8,10 @@ import { useNow, usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
-import { IconCheck } from "./icons";
+import { IconCheck, IconLock } from "./icons";
 import { Sheet } from "./MorePicks";
 import { Odds } from "./Odds";
+import { LockTimer } from "./Timing";
 
 // "Picked by either team" is the one draft call offered; existing picks on other draft markets still settle.
 type Scope = "picked";
@@ -19,6 +20,8 @@ type GridChampion = {
   label: string;
   role: string | null;
   odds: Partial<Record<Scope, string | null>>;
+  /** Once the game has loaded: whether it was actually picked (D-032). */
+  picked?: boolean | null;
 };
 type Grid = {
   game_index: number;
@@ -27,6 +30,7 @@ type Grid = {
   games_observed: number;
   burned: { champion: string; label: string }[];
   champions: GridChampion[];
+  drafted?: { champion: string; label: string; role: string | null }[];
 };
 
 const ROLES = [
@@ -130,10 +134,16 @@ export function ChampionRow({ event, game }: { event: EventT; game: number }) {
   const track = useRef<HTMLDivElement>(null);
   const close = useCallback(() => setAll(false), []);
   if (!grid) return <div className="skeleton" style={{ height: 196 }} />;
-  if (!grid.open) return <p className="muted" style={{ fontSize: 13 }}>{game === 1 ? "Draft picks for this series are closed." : `Game ${game} draft picks open when Game ${game - 1} ends.`}</p>;
+  const locked = !grid.open;
+  const known = grid.champions.some((c) => c.picked != null);
+  if (locked && game > 1 && !grid.close_at && !known) {
+    return <p className="muted" style={{ fontSize: 13 }}>Game {game} draft picks open when Game {game - 1} ends.</p>;
+  }
   const priced = grid.champions.filter((c) => c.odds.picked && (role === "all" || c.role === role));
   const mine = priced.filter((c) => state(c, "picked").selected || state(c, "picked").placed);
-  const rest = priced.filter((c) => !mine.includes(c)).sort((x, y) => Number(x.odds.picked) - Number(y.odds.picked));
+  // Locked with the draft known: your calls, then what was actually picked, then the rest.
+  const hit = (c: GridChampion) => (c.picked ? 0 : 1);
+  const rest = priced.filter((c) => !mine.includes(c)).sort((x, y) => (known ? hit(x) - hit(y) : 0) || Number(x.odds.picked) - Number(y.odds.picked));
   const cards = [...mine, ...rest];
 
   // Step one card at a time; the counter follows whichever card sits at the start after a swipe.
@@ -156,6 +166,17 @@ export function ChampionRow({ event, game }: { event: EventT; game: number }) {
 
   return (
     <>
+      {locked ? (
+        <div className="lock-banner" role="status">
+          <IconLock width={14} height={14} aria-hidden="true" />
+          <span>
+            <b>Draft locked.</b>{" "}
+            {known ? "The draft is in: picked champions are marked." : "Picks closed before the draft started. Your calls stand."}
+          </span>
+        </div>
+      ) : (
+        <div className="champ-lock"><LockTimer at={grid.close_at} label="Draft picks lock in" /></div>
+      )}
       <div className="chips champ-roles" role="group" aria-label="Role">
         {[{ id: "all", label: "All" }, ...ROLES].map((r) => (
           <button key={r.id} className="chip" aria-pressed={role === r.id} onClick={() => pickRole(r.id)}>
@@ -165,20 +186,21 @@ export function ChampionRow({ event, game }: { event: EventT; game: number }) {
       </div>
       <div className="champ-carousel">
         <button type="button" className="champ-arrow" aria-label="Previous champions" disabled={at <= 0} onClick={() => step(-1)}>‹</button>
-        <div className="champ-row" ref={track} onScroll={onScroll} role="group" aria-label={`Champions picked in Game ${game}`}>
+        <div className={`champ-row${locked ? " locked" : ""}`} ref={track} onScroll={onScroll} role="group" aria-label={`Champions picked in Game ${game}`}>
           {cards.map((c) => {
             const s = state(c, "picked");
+            const verdict = c.picked === true ? "hit" : c.picked === false ? "miss" : "";
             return (
               <button
                 key={c.champion}
                 type="button"
-                className="champ-card"
+                className={`champ-card${verdict ? ` ${verdict}` : ""}`}
                 aria-pressed={s.selected}
                 data-held={s.placed || undefined}
                 aria-busy={s.busy || undefined}
-                disabled={s.busy}
+                disabled={s.busy || locked}
                 onClick={() => tap(c, "picked")}
-                aria-label={`${c.label} picked in Game ${game}, ${oddsSpoken(c.odds.picked ?? null)}${s.selected ? ", in slip" : ""}${s.placed ? ", already placed" : ""}`}
+                aria-label={`${c.label} picked in Game ${game}, ${locked ? (c.picked === true ? "picked" : c.picked === false ? "not picked" : "locked") : oddsSpoken(c.odds.picked ?? null)}${s.selected ? ", in slip" : ""}${s.placed ? ", already placed" : ""}`}
               >
                 <ChampIcon id={c.champion} label={c.label} />
                 <span className="nm">{c.label}</span>
@@ -186,6 +208,7 @@ export function ChampionRow({ event, game }: { event: EventT; game: number }) {
                   {s.busy ? <span className="spinner" aria-hidden="true" /> : s.selected ? <><IconCheck width={13} height={13} aria-hidden="true" /> <Odds value={c.odds.picked ?? null} /></> : <Odds value={c.odds.picked ?? null} />}
                 </span>
                 {s.placed && !s.selected ? <span className="pk-tag">Placed</span> : null}
+                {verdict ? <span className={`verdict ${verdict}`}>{verdict === "hit" ? "Picked" : "Not picked"}</span> : null}
               </button>
             );
           })}

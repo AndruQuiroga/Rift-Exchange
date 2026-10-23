@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Barlow_Condensed, Inter } from "next/font/google";
 import { Providers } from "./providers";
 import "./globals.css";
+import "./match-day.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const display = Barlow_Condensed({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-display-face", display: "swap" });

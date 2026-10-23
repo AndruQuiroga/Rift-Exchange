@@ -6,6 +6,7 @@ import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { IconCheck, IconLock } from "./icons";
 import { Odds } from "./Odds";
+import { CallStatus } from "./Timing";
 
 export function TeamMark({ team, large }: { team: Team | null; large?: boolean }) {
   const src = team?.image_url?.replace(/^http:/, "https:");
@@ -104,6 +105,7 @@ export function PickStatus({ pick }: { pick: Pick }) {
   if (pick.status === "PARTIAL") return <span className="status won"><span className="dot" />Right side</span>;
   if (pick.status === "LOST") return <span className="status lost"><span className="dot" />Lost</span>;
   if (pick.status === "VOID") return <span className="status void"><span className="dot" />Void</span>;
+  if (pick.call) return <CallStatus call={pick.call} />;
   if (pick.market_state === "HOLD") return <span className="status hold"><span className="dot" />Awaiting data</span>;
   if (pick.market_state === "OPEN") return <span className="status open"><span className="dot" />Open</span>;
   return <span className="status"><IconLock width={12} height={12} />Locked</span>;

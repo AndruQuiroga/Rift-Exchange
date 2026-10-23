@@ -75,7 +75,12 @@ def test_place_retry_and_privacy(api, factory, world):
     # Friends can't see an open market's picks...
     assert mika.get("/api/v1/league/activity").json()["activity"] == []
     event_id = events[0]["id"]
-    assert mika.get(f"/api/v1/events/{event_id}/league").json()["picks"] == []
+    hidden = mika.get(f"/api/v1/events/{event_id}/league").json()
+    assert hidden["picks"] == []
+    # ...only that kai has one, and when it reveals: no side, stake or market.
+    assert [(r["user"]["handle"], r["picks"]) for r in hidden["pending"]] == [("kai", 1)]
+    assert set(hidden["pending"][0]) == {"user", "picks", "reveals_at"}
+    assert kai.get(f"/api/v1/events/{event_id}/league").json()["pending"] == []  # never your own
     with factory() as s, s.begin():
         s.execute(update(Market).values(state="LOCKED"))
     # ...until it locks.
@@ -83,6 +88,7 @@ def test_place_retry_and_privacy(api, factory, world):
     assert act[0]["user"]["handle"] == "kai" and act[0]["stake_rc"] == 400
     on_match = mika.get(f"/api/v1/events/{event_id}/league").json()["picks"]
     assert [p["user"]["handle"] for p in on_match] == ["kai"]
+    assert mika.get(f"/api/v1/events/{event_id}/league").json()["pending"] == []
     assert kai.get(f"/api/v1/events/{event_id}/league").json()["picks"] == []  # never your own
     standings = mika.get("/api/v1/league/standings").json()["standings"]
     assert {r["user"]["handle"] for r in standings} == {"kai", "mika"}
@@ -218,7 +224,7 @@ def test_offered_duel_stat_reaches_the_duel_window(api, world):
     kai = signup(app, codes[0], "kai")
     url = f"/api/v1/events/{world['fixture']}/duels"
     r = kai.post(url, json={"game_index": 1, "role": "mid", "stat": "gold15"}, headers=H)
-    assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_OPEN"  # no game loaded yet
+    assert r.status_code == 409 and r.json()["error"]["code"] in ("NOT_OPEN", "NO_LINEUP")  # past validation
     r = kai.post(url, json={"game_index": 1, "role": "mid", "stat": "assists"}, headers=H)
     assert r.status_code == 422
     assert r.json()["error"] == {**r.json()["error"], "code": "INVALID_REQUEST", "details": {"fields": ["stat"]}}

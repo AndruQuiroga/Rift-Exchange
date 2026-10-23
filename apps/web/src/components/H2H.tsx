@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import { oddsSpoken, potentialReturn, rc } from "@/lib/format";
+import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamColor, teamName } from "@/lib/teams";
@@ -10,6 +11,21 @@ import { TeamMark } from "./bits";
 import { eventLabel } from "./EventCard";
 import { IconCheck, IconLock } from "./icons";
 import { Odds } from "./Odds";
+import { PayoutNote } from "./Timing";
+
+/** Friends who hold this outcome (shown once its market locks): a stack of initials. */
+export function FriendDots({ eventId, outcomeId }: { eventId: string; outcomeId: string }) {
+  const { byOutcome } = useFriendsOnMatch(eventId);
+  const picks = byOutcome.get(outcomeId) ?? [];
+  if (!picks.length) return null;
+  const names = [...new Set(picks.map((p) => p.user?.display_name ?? "A friend"))];
+  return (
+    <span className="fdots" title={names.join(", ")} aria-label={`Also picked by ${names.join(", ")}`}>
+      {names.slice(0, 3).map((n) => <span key={n} className="fdot">{initials(n)}</span>)}
+      {names.length > 3 ? <span className="fdot more">+{names.length - 3}</span> : null}
+    </span>
+  );
+}
 
 /**
  * Every price on the match page is this one button, with the same four looks: idle; in your slip
@@ -26,11 +42,13 @@ export function PickButton({ event, market, outcome, className = "", label, chil
   const selected = slip.isSelected(outcome.id);
   const held = placed.has(outcome.id);
   const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
+  // Known before it pays (D-032): the winning side lights up the moment the data shows it.
+  const called = !market.result && market.call && !market.call.void && market.call.winning_codes.includes(outcome.code);
   const open = market.state === "OPEN" && outcome.odds !== null;
   return (
     <button
       type="button"
-      className={`pk ${className}${won ? " won" : ""}${held ? " held" : ""}`}
+      className={`pk ${className}${won ? " won" : ""}${called ? " called" : ""}${held ? " held" : ""}`}
       aria-pressed={selected}
       style={style}
       disabled={!open && !selected}
@@ -43,6 +61,8 @@ export function PickButton({ event, market, outcome, className = "", label, chil
         {won ? "Won" : <Odds value={outcome.odds} />}
       </span>
       {held && !selected ? <span className="pk-tag">Placed</span> : null}
+      {called ? <span className="pk-tag result">{market.call?.final ? "Result" : "Live"}</span> : null}
+      <FriendDots eventId={event.id} outcomeId={outcome.id} />
     </button>
   );
 }
@@ -61,10 +81,26 @@ export function PickNote({ market }: { market: MarketT }) {
     );
   }
   const held = market.outcomes.filter((o) => placed.has(o.id));
-  if (!held.length) return null;
+  const call = market.result ? null : market.call;
+  const shown = call ? market.outcomes.filter((o) => call.winning_codes.includes(o.code)).map((o) => o.label).join(", ") : "";
+  if (!held.length) {
+    return call ? (
+      <p className="pk-note num reveal">
+        {call.void ? "Void" : `Result: ${shown}`} · <PayoutNote payAt={call.pays_at} final={call.final} />
+      </p>
+    ) : null;
+  }
+  const winning = !!call && !call.void && held.some((o) => call.winning_codes.includes(o.code));
   return (
-    <p className="pk-note placed num">
+    <p className={`pk-note placed num${call ? " reveal" : ""}`}>
       Placed · {held.map((o) => `${o.label} ${rc(placed.get(o.id) ?? 0)} RC`).join(" · ")}
+      {call ? (
+        <>
+          {" · "}
+          <b className={call.void ? "" : winning ? "win" : "loss"}>{call.void ? "Void" : winning ? "Winning" : "Losing"}</b>
+          {winning || call.void ? <>, <PayoutNote payAt={call.pays_at} final={call.final} /></> : null}
+        </>
+      ) : null}
     </p>
   );
 }

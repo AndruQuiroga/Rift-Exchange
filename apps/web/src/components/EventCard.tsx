@@ -8,6 +8,7 @@ import { useSlip } from "@/lib/slip";
 import { teamName } from "@/lib/teams";
 import { EventStatus, TeamMark } from "./bits";
 import { IconCheck } from "./icons";
+import { LockTimer } from "./Timing";
 
 export function eventLabel(e: EventT) {
   return `${e.team_a?.code ?? "TBD"} vs ${e.team_b?.code ?? "TBD"}`;
@@ -91,6 +92,8 @@ export function EventCard({ event, now }: { event: EventT; now: number }) {
         </span>
         {mine ? (
           <span className="mypick"><IconCheck width={12} height={12} aria-hidden="true" /> {mine.placed ? "Placed" : "In slip"}: {mine.code === "A" ? event.team_a?.code : event.team_b?.code}</span>
+        ) : event.status === "SCHEDULED" && market?.state === "OPEN" && Date.parse(market.close_at) - now < 3600_000 ? (
+          <LockTimer at={market.close_at} label="Locks in" />
         ) : (
           <EventStatus status={event.status} closeAt={event.scheduled_at} countdownText={cd} />
         )}

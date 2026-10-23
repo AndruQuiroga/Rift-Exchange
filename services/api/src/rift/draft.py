@@ -202,6 +202,11 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
     gone = burned(session, fixture, game_index)
     seen = set(rates.picked) | set(rates.banned) | set(rates.first)
     order = sorted(seen, key=lambda c: (-rates.picked.get(c, 0.0), -rates.banned.get(c, 0.0), c))
+    # Once the game has loaded its draft is known: mark every champion picked or not (D-032 live calls).
+    game = session.execute(select(Game).where(Game.fixture_id == fixture.id, Game.game_index == game_index)
+                           ).scalar_one_or_none()
+    participants = ((game.timeline or {}).get("participants") or {}) if game else {}
+    drafted = {champion_key(p["champion"]) for p in participants.values() if p.get("champion")}
     champs = []
     for champ in order:
         probs = probabilities(rates, champ, fixture, gone)
@@ -210,6 +215,7 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
         roles = probs.get("roles", {})
         champs.append({
             "champion": champ, "label": champion_label(champ), "role": rates.role.get(champ),
+            "picked": (champion_key(champ) in drafted) if drafted else None,
             "odds": {k: _odds(probs.get(k), settings) for k in SCOPES},
             "roles": {side: {r: _odds(p, settings) for r, p in sorted(roles.get(side, {}).items(),
                                                                        key=lambda kv: ROLES.index(kv[0]))}
@@ -222,6 +228,8 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
         "games_observed": rates.games,
         "scopes": offered_scopes(rates),
         "burned": [{"champion": c, "label": champion_label(c)} for c in gone],
+        "drafted": [{"champion": p["champion"], "label": champion_label(p["champion"]), "role": p.get("role")}
+                    for p in participants.values() if p.get("champion")],
         "champions": champs,
     }
 

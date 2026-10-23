@@ -8,6 +8,8 @@ from decimal import Decimal
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from rift.calls import Call, calls
+from rift.config import get_settings
 from rift.display import relabel, team_name
 from rift.domain.money import partial_return, winning_return
 from rift.markets import game_index
@@ -46,7 +48,7 @@ def outcome_view(o: Outcome) -> dict:
             "probability": float(o.probability) if o.probability is not None else None}
 
 
-def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None = None) -> dict:
+def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None = None, call: Call | None = None) -> dict:
     return {
         "id": str(m.id), "kind": m.kind, "scope": m.scope, "category": m.category, "title": m.title,
         "rules": m.rules_text, "state": m.state, "state_reason": m.state_reason, "close_at": m.close_at.isoformat(),
@@ -54,6 +56,8 @@ def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None 
         "outcomes": [outcome_view(o) for o in sorted(outcomes, key=lambda o: o.sort)],
         "result": ({"void": result.void, "winning_codes": result.winning_codes, "reason": result.reason,
                     "revision": result.revision} if result else None),
+        # The result as soon as the data shows it, before it pays (D-032); None once settled.
+        "call": call.view() if call and not result else None,
     }
 
 
@@ -136,9 +140,10 @@ def event_detail(db: Session, fixture: Fixture, now: datetime) -> dict:
     results = _latest_results(db, [m.id for m in markets])
     order = {"WINNER": 0, "DRAFT": 1, "PROPS": 2}
     markets.sort(key=lambda m: (order.get(m.category, 9), m.created_at))
+    called = calls(db, markets, _settle_delay())
     return {**fixture_view(fixture, teams),
             "games": games_view(fixture, _games(db, fixture), markets, now),
-            "markets": [market_view(m, outcomes[m.id], results.get(m.id)) for m in markets]}
+            "markets": [market_view(m, outcomes[m.id], results.get(m.id), called.get(m.id)) for m in markets]}
 
 
 def _games(db: Session, fixture: Fixture) -> list[Game]:
@@ -380,6 +385,9 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
     results = _latest_results(db, list(markets))
     tickets = {t.id: t for t in db.execute(select(Ticket).where(
         Ticket.id.in_({s.ticket_id for s in selections}))).scalars()} if selections else {}
+    called = calls(db, [markets[s.market_id] for s in selections if s.status == "OPEN"], _settle_delay())
+    codes = {o.id: o.code for o in db.execute(select(Outcome).where(
+        Outcome.id.in_({s.outcome_id for s in selections}))).scalars()} if selections else {}
     out = []
     for s in selections:
         m = markets[s.market_id]
@@ -399,8 +407,25 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "accepted_at": tickets[s.ticket_id].accepted_at.isoformat(),
             "settled_at": s.settled_at.isoformat() if s.settled_at else None,
             "event": fixture_view(f, teams) if f else None,
+            # How this pick stands on the latest data, before it pays (D-032).
+            "call": _pick_call(called.get(m.id), codes.get(s.outcome_id)) if s.status == "OPEN" else None,
+            "close_at": m.close_at.isoformat(),
+            # Its close follows the game (3:00 of game time) rather than a fixed time until the game loads.
+            "closes_with_game": bool(m.params.get("through_draft") or m.params.get("early")),
         })
     return out
+
+
+def _pick_call(call: Call | None, code: str | None) -> dict | None:
+    if call is None:
+        return None
+    result = "VOID" if call.void else "WON" if code in call.codes else "LOST"
+    return {"result": result, "final": call.final, "reason": call.reason,
+            "pays_at": call.pays_at.isoformat() if call.pays_at else None}
+
+
+def _settle_delay() -> int:
+    return get_settings().settle_delay_seconds
 
 
 def my_selections(db: Session, user: User, state: str | None) -> list[dict]:
@@ -451,3 +476,18 @@ def activity(db: Session, season: Season, limit: int = 50, fixture_id: uuid.UUID
     for row, sel in zip(rows, selections, strict=True):
         row["user"] = {"handle": users[sel.user_id].handle, "display_name": users[sel.user_id].display_name}
     return rows
+
+
+def friends_pending(db: Session, season: Season, fixture_id: uuid.UUID, exclude_user_id: uuid.UUID) -> list[dict]:
+    """Who else has picks on this match that are still hidden (A-010): a count each and when the first reveals."""
+    rows = db.execute(
+        select(Selection.user_id, func.count(Selection.id), func.min(Market.close_at))
+        .join(Market, Market.id == Selection.market_id)
+        .where(Market.season_id == season.id, Market.fixture_id == fixture_id,
+               Market.state.in_(("OPEN", "SUSPENDED")), Selection.user_id != exclude_user_id)
+        .group_by(Selection.user_id)).all()
+    users = {u.id: u for u in db.execute(select(User).where(User.id.in_([r[0] for r in rows]))).scalars()} \
+        if rows else {}
+    return sorted(({"user": {"handle": users[uid].handle, "display_name": users[uid].display_name},
+                    "picks": n, "reveals_at": first.isoformat()} for uid, n, first in rows),
+                  key=lambda r: r["user"]["display_name"])
