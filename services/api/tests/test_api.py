@@ -199,3 +199,14 @@ def test_sign_in_code_expires(api, factory):
         s.execute(update(SignInCode).values(expires_at=SignInCode.created_at))
     r = TestClient(app).post("/api/v1/auth/sign-in", json={"code": code}, headers=H)
     assert (r.status_code, r.json()["error"]["code"]) == (400, "CODE_INVALID")
+
+
+def test_stream_holds_no_database_connection_while_open(api, factory):
+    app, codes = api
+    assert TestClient(app).get("/api/v1/stream").status_code == 401
+    kai = signup(app, codes[0], "kai")
+    pool = factory.kw["bind"].pool
+    with kai.stream("GET", "/api/v1/stream") as r:
+        assert r.status_code == 200
+        assert next(r.iter_text()).startswith("retry:")
+        assert pool.checkedout() == 0  # sign-in was checked on a session already returned to the pool

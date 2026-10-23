@@ -417,10 +417,14 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     # ------------------------------------------------------------ stream
 
     @app.get("/api/v1/stream")
-    async def stream(request: Request, user: CurrentUser,
-                     last_event_id: Annotated[str | None, Header(alias="last-event-id")] = None):
-        user_id = user.id
+    async def stream(request: Request, last_event_id: Annotated[str | None, Header(alias="last-event-id")] = None):
+        # No Db dependency here: FastAPI holds a dependency's session open until the response ends, which for a
+        # stream is hours of an idle transaction pinning a pooled connection. Each read gets its own session.
         with factory() as session:
+            user = auth.user_for_token(session, request.cookies.get(COOKIE), db_now(session))
+            if user is None:
+                raise ApiError(401, "UNAUTHENTICATED", "Sign in with your invite link.")
+            user_id = user.id
             cursor = int(last_event_id) if last_event_id and last_event_id.isdigit() else (
                 session.execute(select(OutboxEvent.id).order_by(OutboxEvent.id.desc()).limit(1)).scalar() or 0)
 
