@@ -210,3 +210,15 @@ def test_stream_holds_no_database_connection_while_open(api, factory):
         assert r.status_code == 200
         assert next(r.iter_text()).startswith("retry:")
         assert pool.checkedout() == 0  # sign-in was checked on a session already returned to the pool
+
+
+def test_offered_duel_stat_reaches_the_duel_window(api, world):
+    """2026-10-23: gold-at-15 was the only duel offered, but the request schema still rejected it (422)."""
+    app, codes = api
+    kai = signup(app, codes[0], "kai")
+    url = f"/api/v1/events/{world['fixture']}/duels"
+    r = kai.post(url, json={"game_index": 1, "role": "mid", "stat": "gold15"}, headers=H)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_OPEN"  # no game loaded yet
+    r = kai.post(url, json={"game_index": 1, "role": "mid", "stat": "assists"}, headers=H)
+    assert r.status_code == 422
+    assert r.json()["error"] == {**r.json()["error"], "code": "INVALID_REQUEST", "details": {"fields": ["stat"]}}
