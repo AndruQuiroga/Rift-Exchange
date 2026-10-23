@@ -59,6 +59,11 @@ def _apply_match(session: Session, season: Season, m: ScheduleMatch, now: dateti
         session.add(fixture)
     a_wins = (m.teams[0].game_wins if m.teams and m.teams[0] else None) or 0
     b_wins = (m.teams[1].game_wins if len(m.teams) > 1 and m.teams[1] else None) or 0
+    # The feed may list the same pair in the other order once a game loads (blue side first). Markets,
+    # picks and grading all key on A/B, so a fixture keeps the orientation it was created with.
+    if teams[0] and teams[1] and (teams[1].id, teams[0].id) == (fixture.team_a_id, fixture.team_b_id):
+        teams.reverse()
+        a_wins, b_wins = b_wins, a_wins
     status = STATUS.get(m.state, "SCHEDULED")
     if fixture.status == "LIVE" and status == "SCHEDULED":
         status = "LIVE"  # getLive saw it start before the schedule caught up; never re-open a live series
