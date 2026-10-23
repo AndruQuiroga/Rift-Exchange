@@ -11,7 +11,7 @@ import { RetryNotice } from "./bits";
 import { IconCheck, IconLock } from "./icons";
 import { Sheet } from "./MorePicks";
 import { Odds } from "./Odds";
-import { LockTimer } from "./Timing";
+import { DraftLock, LockTimer } from "./Timing";
 
 // "Picked by either team" is the one draft call offered; existing picks on other draft markets still settle.
 type Scope = "picked";
@@ -175,7 +175,9 @@ export function ChampionRow({ event, game }: { event: EventT; game: number }) {
           </span>
         </div>
       ) : (
-        <div className="champ-lock"><LockTimer at={grid.close_at} label="Draft picks lock in" /></div>
+        <div className="champ-lock">
+          {game === 1 && event.status === "SCHEDULED" ? <DraftLock scheduledAt={event.scheduled_at} /> : <LockTimer at={grid.close_at} label="Draft picks lock in" />}
+        </div>
       )}
       <div className="chips champ-roles" role="group" aria-label="Role">
         {[{ id: "all", label: "All" }, ...ROLES].map((r) => (

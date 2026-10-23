@@ -10,7 +10,7 @@ from test_money import join, place
 
 from rift import draft
 from rift.config import Settings
-from rift.markets import lock_due
+from rift.markets import lock_due, series_close
 from rift.models import Fixture, Game, Market, Season, Selection, Team
 from rift.settlement import apply_grade, grade_market
 
@@ -66,7 +66,7 @@ def test_tapping_a_champion_creates_one_shared_market(factory, history):
         again = draft.ensure_market(s, season, fx, 1, "Ahri", "A", SETTINGS, T0)
         assert first.id == again.id
         assert first.params == {"champion": "Ahri", "game_index": 1, "side": "A", "ban_refund": "0.5"}
-        assert first.close_at == fx.scheduled_at  # Game 1 locks with the series
+        assert first.close_at == series_close(fx)  # D-037: Game 1 locks when the series goes live (backstop)
         with pytest.raises(draft.DraftError) as e:
             draft.ensure_market(s, season, fx, 2, "Ahri", "picked", SETTINGS, T0)
         assert e.value.code == "NOT_OPEN"  # Game 2 opens only when Game 1 ends

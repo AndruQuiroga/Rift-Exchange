@@ -38,9 +38,22 @@ export function LockTimer({ at, label = "Locks in", compact }: { at: string | nu
 }
 
 /** A market's close: the countdown once it is real, "3:00 into the game" while its game hasn't loaded. */
-export function MarketClose({ at, known, label = "Locks in", compact }: { at: string | null | undefined; known?: boolean; label?: string; compact?: boolean }) {
+export function MarketClose({ at, known, rule, scheduledAt, label = "Locks in", compact }: {
+  at: string | null | undefined; known?: boolean; rule?: "game" | "draft" | null; scheduledAt?: string; label?: string; compact?: boolean;
+}) {
+  if (rule === "draft") return <DraftLock scheduledAt={scheduledAt} compact={compact} />;
   if (known === false) return <span className={`timer${compact ? " compact" : ""}`}>Closes <b>3:00 into the game</b></span>;
   return <LockTimer at={at} label={label} compact={compact} />;
+}
+
+/** D-037: locks when the draft starts, early or late, so no countdown to a listed time that may not hold. */
+export function DraftLock({ scheduledAt, compact }: { scheduledAt?: string; compact?: boolean }) {
+  const now = useNow(30000);
+  const listed = scheduledAt ? Date.parse(scheduledAt) : null;
+  const when = listed == null ? "" : listed > now
+    ? ` · listed ${new Date(listed).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
+    : " · running late";
+  return <span className={`timer${compact ? " compact" : ""}`}>Locks <b>when the draft starts</b>{when}</span>;
 }
 
 /** When a known result pays: "pays in 3:12", "paying now", or after the game for a live call. */

@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from rift import props
 from rift.config import Settings
-from rift.markets import game_specs, tournament_stats
+from rift.markets import game_specs, series_close, tournament_stats
 from rift.models import Fixture, Game, Market, Outcome, Season, Selection, Team
 from rift.settlement import grade_market
 
@@ -165,7 +165,8 @@ def test_lane_duel_priced_created_once_and_graded(factory, season_games):
     _finish_game1(factory, season_games)
     with factory() as s:
         assert grade_market(s, s.get(Market, first_id)).winning_codes == ["A"]
-        assert grade_market(s, s.get(Market, tie_id)).status == "VOID"
+        tie_grade = grade_market(s, s.get(Market, tie_id))  # D-036: a tie is half back for both sides
+        assert (tie_grade.status, tie_grade.winning_codes, tie_grade.partial_codes) == ("RESULT", [], ["A", "B"])
 
 
 def test_picks_after_first_blood_stand_and_after_three_minutes_are_void(factory, season_games):
@@ -472,11 +473,13 @@ def test_blind_duels_and_kill_lines_before_the_draft_then_after_it(factory, seas
         stats = tournament_stats(s, season)
         grid = props.duels(s, season, fx, 1, SETTINGS, T0)
         mid = next(d for d in grid["duels"] if d["role"] == "mid")
-        assert grid["phase"] == "BLIND" and grid["close_at"] == fx.scheduled_at.isoformat()
+        assert grid["phase"] == "BLIND" and grid["close_at"] == series_close(fx).isoformat()
+        # D-037: running late, the series not live yet: still blind, half an hour after the listed time.
+        assert props.duels(s, season, fx, 1, SETTINGS, fx.scheduled_at + timedelta(minutes=30))["phase"] == "BLIND"
         assert mid["odds"]["gold15"]["A"] and "champion" not in mid["a"]
         blind = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, T0)
         assert blind.template_key.endswith(":blind") and blind.params["blind"] and not blind.params.get("early")
-        assert blind.close_at == fx.scheduled_at and "(blind)" in blind.title
+        assert blind.close_at == series_close(fx) and "(blind)" in blind.title
         lines = props.kill_lines(s, fx, 1, stats, SETTINGS, T0)
         assert lines["phase"] == "BLIND" and lines["lines"]
         blind_line = props.ensure_kill_line(s, season, fx, 1, lines["lines"][0]["line"], stats, SETTINGS, T0)
@@ -514,4 +517,30 @@ def test_a_blind_duel_voids_when_a_named_player_does_not_play(factory, season_ga
     _finish_game1(factory, season_games)
     with factory() as s:
         grade = grade_market(s, s.get(Market, blind_id))
-        assert grade.status == "VOID" and "did not play" in grade.reason
+        assert grade.partial_codes == ["A", "B"] and "did not play" in grade.reason  # D-036: half back
+
+
+def test_a_tied_duel_pays_half_back_to_both_sides(factory, season_games):
+    """D-036: a duel with no winner returns half the stake; picks from before the rule keep a full void."""
+    from test_money import join, place
+
+    _live_game1(factory, season_games)
+    at = T0 + timedelta(minutes=1)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        tie = props.ensure_duel(s, season, fx, 1, "bottom", "gold15", SETTINGS, at)  # 100 gold apart: a tie
+        assert tie.params["void_refund"] == "0.5"
+        a, b = (s.execute(select(Outcome.id).where(Outcome.market_id == tie.id, Outcome.code == c)).scalar_one()
+                for c in ("A", "B"))
+        tie_id = tie.id
+    join(factory, season_games, "alice")
+    join(factory, season_games, "bob")
+    place(factory, season_games, "alice", [(a, 200)], "tie-a", now=at)
+    place(factory, season_games, "bob", [(b, 100)], "tie-b", now=at)
+    _finish_game1(factory, season_games)
+    from rift.settlement import apply_grade
+    with factory() as s, s.begin():
+        apply_grade(s, tie_id, grade_market(s, s.get(Market, tie_id)), T0 + timedelta(hours=1))
+    with factory() as s:
+        got = sorted((sel.stake_rc, sel.status, sel.return_rc) for sel in s.execute(select(Selection)).scalars())
+        assert got == [(100, "PARTIAL", 50), (200, "PARTIAL", 100)]

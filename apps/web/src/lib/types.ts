@@ -16,6 +16,8 @@ export type MarketT = {
   close_at: string;
   /** false while its close follows a game that hasn't loaded: close_at is only a backstop (3:00 of game time). */
   close_known?: boolean;
+  /** What really closes it while close_at is a backstop: "game" (3:00 into it) or "draft" (the series going live). */
+  close_rule?: "game" | "draft" | null;
   confidence: string;
   model: string;
   params: Record<string, unknown>;
@@ -78,6 +80,8 @@ export type GameT = {
   /** Duels and kill lines: UPCOMING until the game loads, OPEN until 3:00 or first blood. */
   early?: "UPCOMING" | "OPEN" | "CLOSED";
   burned_champions: string[];
+  /** Lane duels and kill lines: BLIND (before the draft), DRAFT (none), LIVE (after the draft, to 3:00), UPCOMING, CLOSED. */
+  lanes?: "BLIND" | "DRAFT" | "LIVE" | "UPCOMING" | "CLOSED";
 };
 
 export type LiveEvent = { type: "first_blood" | "first_tower" | "dragon" | "baron" | "inhibitor"; team: "A" | "B" | null; at_s: number; detail: string | null };
@@ -144,6 +148,7 @@ export type Pick = {
   close_at?: string;
   closes_with_game?: boolean;
   close_known?: boolean;
+  close_rule?: "game" | "draft" | null;
 };
 
 /** Friends on one match: picks revealed once their market locks, before that only a count (A-010). */

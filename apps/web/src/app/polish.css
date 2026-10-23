@@ -1,0 +1,119 @@
+/* Match-day polish (2026-10-23 feedback): objective icons on each side, a gold lead on the leading side, an event
+   timeline, three clear groups (open / in play / decided), slimmer rivals and calmer toasts. */
+
+/* Scoreboard: each team's objectives on its own half. */
+.lh-objs { display: flex; align-items: center; gap: 10px; min-height: 16px; font-size: 12px; font-weight: 700; color: rgba(243, 245, 247, 0.85); }
+.lh-half.right .lh-objs { flex-direction: row-reverse; }
+.lh-obj { display: inline-flex; align-items: center; gap: 3px; }
+.lh-obj svg { flex: none; }
+.lh-obj .dim { opacity: 0.35; filter: grayscale(1); }
+.lh-tugrow { display: grid; grid-template-columns: 48px minmax(0, 1fr) 48px; align-items: center; gap: 8px; }
+.lh-lead { font-family: var(--font-display); font-weight: 800; font-size: 15px; color: var(--accent); }
+.lh-lead.right { text-align: right; }
+
+/* Event timeline: dots on a track, the newest on its own line; hover (desktop) or tap (phone) for all of them. */
+.lh-events { display: grid; gap: 6px; position: relative; }
+.lh-track { position: relative; height: 14px; }
+.lh-track::before { content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 2px; border-radius: 2px; background: var(--surface-3); }
+.lh-now { position: absolute; top: 2px; width: 2px; height: 10px; margin-left: -1px; background: var(--muted); border-radius: 1px; }
+.lh-dot { position: absolute; top: 3px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; border: 1.5px solid var(--surface); }
+.lh-latest {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 36px;
+  padding: 6px 10px; border-radius: 10px; background: var(--surface-2); font-size: 13px; text-align: left;
+}
+.lh-latest-in { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lh-more { flex: none; font-size: 11px; font-weight: 800; color: var(--muted); padding: 2px 7px; border-radius: var(--radius-pill); background: var(--surface-3); }
+.lh-evlist {
+  display: none; list-style: none; margin: 0; padding: 4px 0; border-radius: 10px; background: var(--surface-2);
+  max-height: 220px; overflow-y: auto;
+}
+.lh-evlist li { display: grid; grid-template-columns: 16px 44px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 10px; font-size: 13px; }
+.lh-evlist li + li { border-top: 1px solid var(--divider); }
+.lh-events.open .lh-evlist { display: block; }
+@media (hover: hover) {
+  .lh-events:hover .lh-evlist { display: block; position: absolute; left: 0; right: 0; top: 100%; z-index: 5; box-shadow: 0 12px 28px rgba(0, 0, 0, 0.45); }
+}
+
+/* The three states as one jump row. */
+.msum { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: var(--s2); }
+.msum-i {
+  display: grid; justify-items: start; gap: 2px; padding: 10px 12px; border-radius: 14px; text-decoration: none; color: var(--text);
+  background: var(--surface); border: 1px solid var(--divider);
+}
+.msum-n { font-family: var(--font-display); font-weight: 800; font-size: 26px; line-height: 1; }
+.msum-l { font-size: 12px; font-weight: 700; color: var(--muted); }
+.msum-i.open { background: var(--accent-soft); border-color: #4a5a1c; }
+.msum-i.open .msum-n { color: var(--accent); }
+.msum-i.play .msum-n { color: var(--info); }
+.msum-i.zero { opacity: 0.55; }
+
+/* Groups: one header style, so open / in play / decided never blur together. */
+.group { display: grid; gap: 10px; padding-top: var(--s2); scroll-margin-top: calc(var(--topbar-h) + 12px); }
+.group + .group { margin-top: var(--s3); padding-top: var(--s4); border-top: 1px solid var(--divider); }
+.group-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.group-t { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-weight: 800; font-size: 22px; letter-spacing: 0.03em; text-transform: uppercase; }
+.group-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--subtle); }
+.group.open .group-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(212, 242, 90, 0.18); }
+.group.play .group-dot { background: var(--info); }
+.group-n { font-family: var(--font-ui); font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--muted); letter-spacing: 0; }
+.group.open .group-n { background: var(--accent); color: var(--accent-ink); }
+.group-empty { margin: 0; font-size: 13px; color: var(--subtle); }
+.group .mp-section.first, .group .mp-section { margin-top: 0; }
+
+.inplay { display: grid; gap: 8px; }
+.inplay .deciding { gap: 6px; }
+.dc-mkt { font-size: 12px; margin-top: -4px; }
+.decided { display: grid; gap: 6px; }
+.drow {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "t v" "you you"; align-items: center; gap: 2px 10px;
+  padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--divider);
+}
+.drow-t { grid-area: t; font-size: 13px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drow-v { grid-area: v; font-weight: 800; font-size: 14px; text-align: right; }
+.drow-you { grid-area: you; font-size: 12px; font-weight: 700; }
+.drow-you.none { display: none; }
+.drow.won { background: rgba(127, 220, 170, 0.08); border-color: #2c5440; }
+.drow.won .drow-you { color: var(--win); }
+.drow.lost .drow-you { color: var(--loss); }
+.drow.half, .drow.pending, .drow.void { background: rgba(243, 196, 106, 0.06); border-color: #5a4a2a; }
+.drow.half .drow-you, .drow.pending .drow-you, .drow.void .drow-you { color: var(--warn); }
+@media (min-width: 640px) {
+  .decided { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Rivals, slimmer: one row per friend pick, react on demand. */
+.fpicks { display: grid; gap: 6px; }
+.fpick { border-radius: 14px; background: var(--surface); border: 1px solid var(--divider); }
+.fpick.against { border-color: #5a2f2e; }
+.fpick.with { border-color: #2c5440; }
+.fpick-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; }
+.fpick-main { display: grid; min-width: 0; flex: 1; font-size: 14px; }
+.fpick-main .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fpick .stance { margin-left: 0; flex: none; }
+.react-open { flex: none; min-height: 32px; padding: 0 10px; border-radius: var(--radius-pill); background: var(--surface-3); font-size: 12px; font-weight: 700; color: var(--muted); }
+.react-open[aria-expanded="true"] { color: var(--text); background: var(--divider-strong); }
+.fpick-react { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 10px 10px; }
+.fpick-react .react { min-height: 34px; font-size: 12px; }
+.rivals .mtable { gap: 6px; padding: 10px 12px; }
+.rivals .fp-row { padding: 8px 10px; font-size: 13px; }
+.trash { gap: 4px; }
+.tt-row { padding: 7px 10px; font-size: 12px; }
+
+/* Game over, before the series is officially closed. */
+.lh-over-pill { font-size: 11px; font-weight: 800; letter-spacing: 0.08em; color: var(--accent-ink); background: var(--accent); padding: 2px 7px; border-radius: var(--radius-pill); }
+.lh-half.lost { filter: saturate(0.4) brightness(0.8); }
+.lh-win { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: var(--accent-ink); }
+.lh-over { padding: 10px 14px; border-top: 1px solid var(--divider); font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: 0.02em; text-align: center; }
+
+/* Calmer toasts. */
+.toast-stack { width: min(400px, calc(100% - 24px)); gap: 6px; }
+.rtoast { grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; padding: 7px 8px 7px 9px; border-radius: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4); }
+.rt-badge { width: 34px; height: 34px; border-radius: 10px; font-size: 13px; }
+.rt-badge.round { font-size: 11px; }
+.rt-kicker { font-size: 11px; }
+.rt-text { font-size: 13px; font-weight: 700; }
+.rt-close { width: 28px; height: 28px; font-size: 16px; }
+@media (prefers-reduced-motion: no-preference) {
+  .lh-latest-in { animation: reveal 420ms ease-out; }
+  .lh-dot:last-of-type { animation: glow 1.4s ease-out 1; }
+}

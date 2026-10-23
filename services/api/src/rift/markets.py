@@ -107,6 +107,14 @@ NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after 
 # Markets that stay open through the draft (D-026) carry a provisional cutoff this far past the usual one;
 # the worker pulls it to 3:00 of the game once the game loads, and settlement voids anything later.
 DRAFT_GRACE = timedelta(minutes=90)
+# D-037: series markets and Game 1's pre-draft markets lock when the series goes live (the draft starting), not
+# at the listed time, so a day running late keeps them open and one running early locks them at once. This is
+# only the backstop if the feed never reports the series live.
+SERIES_LOCK_BACKSTOP = timedelta(hours=3)
+
+
+def series_close(fixture: Fixture) -> datetime:
+    return fixture.scheduled_at + SERIES_LOCK_BACKSTOP
 THROUGH_DRAFT_NOTE = "Open through the draft until 3:00 of game time."
 
 
@@ -119,12 +127,14 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
     late = close_at + DRAFT_GRACE  # provisional; pulled to 3:00 of the game once it loads
     specs = []
     if fixture.best_of > 1:
+        # D-035: the winner closes when the draft starts (with the champion calls), not through it.
         specs.append(MarketSpec(
             f"game_winner:{key}:{idx}", "game_winner", "GAME", "WINNER", f"Game {idx} winner",
-            f"Winner of Game {idx} of this series. {when} Void if Game {idx} is not played.",
-            late, "elo_v1", confidence,
+            f"Winner of Game {idx} of this series. {opens}Closes when the Game {idx} draft starts. "
+            f"Void if Game {idx} is not played.",
+            close_at, "elo_v1", confidence,
             [OutcomeSpec("A", team_name(a.code, a.name), q), OutcomeSpec("B", team_name(b.code, b.name), 1 - q)],
-            {"game_index": idx, "through_draft": True}))
+            {"game_index": idx, "through_draft": False}))
     if stats.timeline is not None:
         from rift.props import objective_specs
 
@@ -170,24 +180,23 @@ def fixture_specs(fixture: Fixture, a: Team, b: Team, model: EloModel, stats: To
     bo1 = bo == 1
     specs = [MarketSpec(
         f"series_winner:{key}", "series_winner", "SERIES", "WINNER", "Match winner",
-        f"Settles on the official {fmt} series winner. "
-        f"{THROUGH_DRAFT_NOTE if bo1 else 'Locks at the scheduled start.'} Void if the series is "
-        "cancelled or not completed.",
-        fixture.scheduled_at + (DRAFT_GRACE if bo1 else timedelta(0)), "elo_v1", confidence,
+        f"Settles on the official {fmt} series winner. Closes when the draft starts (when the series goes live, "
+        "early or late). Void if the series is cancelled or not completed.",
+        series_close(fixture), "elo_v1", confidence,
         [OutcomeSpec("A", team_name(a.code, a.name), series_win_probability(q, bo)),
          OutcomeSpec("B", team_name(b.code, b.name), 1 - series_win_probability(q, bo))],
-        {"through_draft": True} if bo1 else {})]
+        {"through_draft": False} if bo1 else {})]
     if bo > 1:
         dist = series_score_distribution(q, bo)
         order = sorted(dist, key=lambda s: (-(s[0] > s[1]), -(s[0] - s[1])))
         specs.append(MarketSpec(
             f"series_score:{key}", "series_score", "SERIES", "WINNER", "Exact series score",
             f"Settles on the final {fmt} score (games won). Void if the series is not completed.",
-            fixture.scheduled_at, "elo_v1_independent_games", confidence,
+            series_close(fixture), "elo_v1_independent_games", confidence,
             [OutcomeSpec(f"{x}-{y}", f"{a.code if x > y else b.code} {max(x, y)}–{min(x, y)}", dist[(x, y)])
              for x, y in order], {}))
         # "Games played" is no longer offered (D-024): the exact score already says it. Earlier ones still settle.
-    specs.extend(game_specs(fixture, 1, a, b, q, stats, fixture.scheduled_at, confidence))
+    specs.extend(game_specs(fixture, 1, a, b, q, stats, series_close(fixture), confidence))
 
     # Champion markets are created on demand from the champion grid (rift.draft), not pre-picked here.
     return specs
@@ -361,7 +370,7 @@ def lock_due(session: Session, now: datetime) -> int:
             if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":
                 locked.setdefault(m.id, (m, "Game over"))
             continue
-        if m.category == "DRAFT" and (idx or 1) > 1:
+        if (m.category == "DRAFT" or m.kind == "game_winner") and (idx or 1) > 1:
             # Champion calls close before the draft: NEXT_GAME_WINDOW after the previous game ends (D-026).
             prev = games.get((f.id, idx - 1))
             if prev is not None and prev.ended_at is not None:

@@ -12,7 +12,7 @@ from rift.calls import Call, calls
 from rift.config import get_settings
 from rift.display import relabel, team_name
 from rift.domain.money import partial_return, refund_return, winning_return
-from rift.markets import game_index
+from rift.markets import game_index, series_close
 from rift.models import (
     Fixture,
     Game,
@@ -29,7 +29,7 @@ from rift.models import (
     User,
     Wallet,
 )
-from rift.props import early_state, early_window
+from rift.props import early_state, early_window, phase
 from rift.timeline import burned_champions
 
 CENT = Decimal("0.01")
@@ -49,23 +49,35 @@ def outcome_view(o: Outcome) -> dict:
             "probability": float(o.probability) if o.probability is not None else None}
 
 
-def provisional_closes(db: Session, markets: list[Market]) -> set[uuid.UUID]:
-    """Markets whose close follows their game (3:00 of game time) while that game hasn't loaded yet: their
-    close_at is only a backstop, so the client says "3:00 into the game" instead of counting down to it."""
-    timed = [m for m in markets if m.fixture_id and (m.params.get("through_draft") or m.params.get("early"))]
-    if not timed:
-        return set()
+def provisional_closes(db: Session, markets: list[Market]) -> dict[uuid.UUID, str]:
+    """Markets whose close_at is only a backstop, and what really closes them, so the client says so instead of
+    counting down: "game" (3:00 of game time, its game not loaded yet) or "draft" (the series going live, D-037)."""
+    fixture_ids = {m.fixture_id for m in markets if m.fixture_id}
+    if not fixture_ids:
+        return {}
+    fixtures = {f.id: f for f in db.execute(select(Fixture).where(Fixture.id.in_(fixture_ids))).scalars()}
     started = {(g.fixture_id, g.game_index) for g in db.execute(select(Game).where(
-        Game.fixture_id.in_({m.fixture_id for m in timed}), Game.started_at.is_not(None))).scalars()}
-    return {m.id for m in timed if (m.fixture_id, m.params.get("game_index", 1)) not in started}
+        Game.fixture_id.in_(fixture_ids), Game.started_at.is_not(None))).scalars()}
+    out = {}
+    for m in markets:
+        f = fixtures.get(m.fixture_id)
+        if f is None:
+            continue
+        if (m.params.get("through_draft") or m.params.get("early")) and (m.fixture_id, m.params.get("game_index", 1)) not in started:
+            out[m.id] = "game"
+        elif f.status == "SCHEDULED" and m.close_at >= series_close(f):
+            out[m.id] = "draft"
+    return out
 
 
 def market_view(m: Market, outcomes: list[Outcome], result: MarketResult | None = None, call: Call | None = None,
-                close_known: bool = True) -> dict:
+                close_known: bool | str = True) -> dict:
+    """close_known: True, or the rule that really closes it ("game" / "draft") when close_at is a backstop."""
     return {
         "id": str(m.id), "kind": m.kind, "scope": m.scope, "category": m.category, "title": m.title,
         "rules": m.rules_text, "state": m.state, "state_reason": m.state_reason, "close_at": m.close_at.isoformat(),
-        "close_known": close_known,
+        "close_known": close_known is True,
+        "close_rule": close_known if isinstance(close_known, str) else None,
         "confidence": m.confidence, "model": m.model_key, "params": m.params,
         "outcomes": [outcome_view(o) for o in sorted(outcomes, key=lambda o: o.sort)],
         "result": ({"void": result.void, "winning_codes": result.winning_codes, "reason": result.reason,
@@ -143,7 +155,7 @@ def events(db: Session, season: Season, date: str | None, stage: str | None,
                     "early_open": _early_open(db, f, now),
                     "close_at": featured.close_at.isoformat() if featured else None,
                     "featured": market_view(featured, outcomes[featured.id], results.get(featured.id),
-                                            close_known=featured.id not in provisional)
+                                            close_known=provisional.get(featured.id, True))
                     if featured else None})
     return out
 
@@ -158,10 +170,11 @@ def event_detail(db: Session, fixture: Fixture, now: datetime) -> dict:
     markets.sort(key=lambda m: (order.get(m.category, 9), m.created_at))
     called = calls(db, markets, _settle_delay())
     provisional = provisional_closes(db, markets)
+    lanes = {i: phase(db, fixture, i, now).name for i in range(1, fixture.best_of + 1)}
     return {**fixture_view(fixture, teams),
-            "games": games_view(fixture, _games(db, fixture), markets, now),
+            "games": [{**g, "lanes": lanes[g["index"]]} for g in games_view(fixture, _games(db, fixture), markets, now)],
             "markets": [market_view(m, outcomes[m.id], results.get(m.id), called.get(m.id),
-                                    close_known=m.id not in provisional) for m in markets]}
+                                    close_known=provisional.get(m.id, True)) for m in markets]}
 
 
 def _games(db: Session, fixture: Fixture) -> list[Game]:
@@ -431,6 +444,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "call": _pick_call(called.get(m.id), codes.get(s.outcome_id)) if s.status == "OPEN" else None,
             "close_at": m.close_at.isoformat(),
             "close_known": m.id not in provisional,
+            "close_rule": provisional.get(m.id),
             # Its close follows the game (3:00 of game time) rather than a fixed time until the game loads.
             "closes_with_game": bool(m.params.get("through_draft") or m.params.get("early")),
         })
@@ -569,8 +583,8 @@ def match_table(db: Session, season: Season, fixture_id: uuid.UUID, viewer_id: u
         elif result == "VOID":
             back = sel.stake_rc
         elif result == "PARTIAL":
-            back = (refund_return(sel.stake_rc, terms["ban_refund"]) if terms.get("ban_refund")
-                    else row["partial_return_rc"] or 0)
+            refund = terms.get("ban_refund") or terms.get("void_refund")
+            back = refund_return(sel.stake_rc, refund) if refund else row["partial_return_rc"] or 0
         else:
             back = 0
         t["back"] += back
