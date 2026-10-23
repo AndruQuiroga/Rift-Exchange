@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Header, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, text
@@ -54,6 +55,14 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         return JSONResponse(status_code=exc.status, content={"error": {
             "code": exc.code, "message": exc.message, "details": exc.details,
             "request_id": request.headers.get("x-request-id")}})
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid(request: Request, exc: RequestValidationError):
+        # The same envelope as every other error, so the client can show what was wrong.
+        fields = [".".join(str(p) for p in e.get("loc", ())[1:]) or "request" for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"error": {
+            "code": "INVALID_REQUEST", "message": f"That request wasn't valid ({', '.join(fields)}).",
+            "details": {"fields": fields}, "request_id": request.headers.get("x-request-id")}})
 
     @app.middleware("http")
     async def _csrf(request: Request, call_next):
@@ -225,7 +234,7 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
     class DuelBody(BaseModel):
         game_index: int = Field(ge=1, le=5)
         role: str = Field(pattern="^(top|jungle|mid|bottom|support)$")
-        stat: str = Field(pattern="^(kills|cs15|damage)$")
+        stat: str = Field(pattern=f"^({'|'.join(props.STATS)})$")  # ensure_duel checks it is still offered
 
     @app.post("/api/v1/events/{event_id}/duels")
     def duel_market(event_id: uuid.UUID, body: DuelBody, session: Db, user: CurrentUser):
