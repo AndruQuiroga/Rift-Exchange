@@ -9,6 +9,8 @@ param(
 $ErrorActionPreference = 'Stop'
 & "$PSScriptRoot/preflight.ps1" -TargetConfig $TargetConfig
 if ($LASTEXITCODE -ne 0) { throw 'Preflight failed' }
+# Native commands below are judged by their exit codes only: progress written to stderr is not a failure.
+$ErrorActionPreference = 'Continue'
 $targetSettings = Import-PowerShellDataFile -LiteralPath $TargetConfig
 $sshOptions = @('-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'StrictHostKeyChecking=yes', '-o', 'ForwardAgent=no')
 $targetEnv = @(

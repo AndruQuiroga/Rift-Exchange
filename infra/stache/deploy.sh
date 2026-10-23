@@ -8,6 +8,7 @@ export API_IMAGE=$1 WEB_IMAGE=$2 RELEASE_ID=$3
 export DATA_NODE BACKUP_NODE INGRESS_NETWORK
 root="$HOME/rift-exchange"
 mode=${4:-}
+explicit_mode=$mode  # -LeaguepediaMode passed: switching modes, so the provider check must pass
 # Preserve provider mode on ordinary releases; old releases default to mock.
 if [ -z "$mode" ] && [ -f "$root/current/release.env" ]; then
     mode=$(sed -n 's/^RIFT_LEAGUEPEDIA_MODE=//p' "$root/current/release.env")
@@ -144,7 +145,16 @@ APP_REPLICAS=0 stack_config deploy --detach=true --resolve-image always rift-exc
 wait_service rift-exchange_db
 run_job wait-db python -m rift.operations wait-db
 run_job migrate alembic upgrade head
-if [ "$mode" = live ]; then run_job leaguepedia python -m rift.operations check-leaguepedia; fi
+if [ "$mode" = live ]; then
+    if [ -n "$explicit_mode" ]; then
+        run_job leaguepedia python -m rift.operations check-leaguepedia
+    elif ! ( run_job leaguepedia python -m rift.operations check-leaguepedia ); then
+        # A routine release keeping live mode: Leaguepedia being briefly down or rate-limited only delays the
+        # draft and ban data that already wait for it, so it must not take the site down.
+        echo "Warning: Leaguepedia check failed; continuing in live mode (draft and ban data wait for it)" >&2
+        docker service rm "rift-job-$RELEASE_ID-leaguepedia" >/dev/null 2>&1 || true
+    fi
+fi
 run_job bootstrap python -m rift.operations bootstrap
 APP_REPLICAS=1 stack_config deploy --detach=true --resolve-image always rift-exchange
 # Take a post-migration dump promptly, including on the first deployment.
@@ -152,8 +162,9 @@ docker service update --force --detach=true rift-exchange_backup >/dev/null
 for svc in api worker web backup; do wait_service "rift-exchange_$svc"; done
 
 for attempt in $(seq 1 120); do
-    if curl -fsS -H 'Host: rift.mustache.network' "$INGRESS_ORIGIN/api/v1/health/ready" >/dev/null &&
-       curl -fsS -H 'Host: rift.mustache.network' "$INGRESS_ORIGIN/join" >/dev/null; then
+    # Quiet while retrying: a not-ready-yet 404 is expected and is not a failure.
+    if curl -fsS -H 'Host: rift.mustache.network' "$INGRESS_ORIGIN/api/v1/health/ready" >/dev/null 2>&1 &&
+       curl -fsS -H 'Host: rift.mustache.network' "$INGRESS_ORIGIN/join" >/dev/null 2>&1; then
         api=$(docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_api)
         web=$(docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_web)
         worker=$(docker ps -q --filter label=com.docker.swarm.service.name=rift-exchange_worker)
