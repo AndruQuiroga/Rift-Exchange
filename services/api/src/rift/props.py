@@ -339,12 +339,15 @@ def priced_before_a_kill(params: dict, game: Game | None, accepted_at: datetime)
 
 
 def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data: TimelineData,
-                     close_at: datetime, state: LiveState | None = None) -> list[MarketSpec]:
-    """First to 5 kills, gold lead at 15:00 and first dragon for a loaded game: one row each, A or B."""
+                     close_at: datetime, state: LiveState | None = None, blind: bool = False) -> list[MarketSpec]:
+    """First to 5 kills, gold lead at 15:00 and first dragon: one row each, A or B. Blind (D-031, as duels and
+    kill lines): before the draft from tournament rates, separate markets that close when the draft starts;
+    otherwise from game load until 3:00, priced from the live game."""
     if data.games < MIN_DRAFT_GAMES:
         return []
     key = fixture.provider_id
-    open_note = "Open from game load until 3:00 of game time; a pick accepted after that is void."
+    open_note = ("Called before the draft; closes when the draft starts." if blind else
+                 "Open from game load until 3:00 of game time; a pick accepted after that is void.")
     rows = (
         ("five_kills", "five_kills", "First to 5 kills",
          "Team that reaches 5 kills first. Void if neither does, or both in the same moment."),
@@ -359,14 +362,17 @@ def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, dat
         w = data.winner_took_first.get(what, 0.5)
         p = q * w + (1 - q) * (1 - w)
         params, note, model = {"game_index": idx, "early": True}, "", "timeline_rates_v1"
-        if kind in LIVE_KINDS and state is not None:
+        if blind:
+            params, model = {"game_index": idx, "blind": True}, "timeline_rates_blind_v1"
+        elif kind in LIVE_KINDS and state is not None:
             p = (five_kills_probability(p, state) if kind == "five_kills"
                  else gold_lead_probability(p, gold_gap_sd(data), state))
             params, note, model = {**params, **state.stamp()}, f" {LIVE_NOTE}", "timeline_rates_live_v1"
         if p is None:  # the race is already won: nothing left to price
             continue
         specs.append(MarketSpec(
-            f"{kind}:{key}:{idx}", kind, "GAME", "OBJECTIVES", f"Game {idx} {title.lower()}",
+            f"{kind}:{key}:{idx}{':blind' if blind else ''}", kind, "GAME", "OBJECTIVES",
+            f"Game {idx} {title.lower()}{' (blind)' if blind else ''}",
             f"{rules} {open_note}{note} Settles from the game's live data; void if Game {idx} is not played.",
             close_at, model, "EXPERIMENTAL",
             [OutcomeSpec("A", team_name(a.code, a.name), p), OutcomeSpec("B", team_name(b.code, b.name), 1 - p)],

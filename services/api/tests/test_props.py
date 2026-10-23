@@ -544,3 +544,25 @@ def test_a_tied_duel_pays_half_back_to_both_sides(factory, season_games):
     with factory() as s:
         got = sorted((sel.stake_rc, sel.status, sel.return_rc) for sel in s.execute(select(Selection)).scalars())
         assert got == [(100, "PARTIAL", 50), (200, "PARTIAL", 100)]
+
+
+def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory, season_games):
+    """Lanes & kills behave as one: team races also open blind before the draft, as separate markets."""
+    with factory() as s:
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
+        stats = tournament_stats(s, season)
+        specs = {sp.template_key: sp for sp in game_specs(fx, 1, a, b, 0.6, stats, series_close(fx), "MODEL")}
+    blind = {k: sp for k, sp in specs.items() if k.endswith(":blind")}
+    assert {sp.kind for sp in blind.values()} == {"five_kills", "gold_lead_15", "first_dragon"}
+    race = blind["gold_lead_15:fx-1:1:blind"]
+    assert race.close_at == series_close(fx) and race.params == {"game_index": 1, "blind": True}
+    assert "(blind)" in race.title and "before the draft" in race.rules_text
+    # After the draft the early-window races are their own markets (no ":blind"), and both grade the same way.
+    _live_game1(factory, season_games)
+    with factory() as s:
+        fx = s.get(Fixture, season_games["fixture"])
+        a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
+        after = props.early_team_specs(fx, 1, a, b, 0.6, props.timeline_data(s, s.get(Season, season_games["season"])),
+                                       T0 + timedelta(minutes=3))
+    assert {sp.template_key for sp in after} == {"five_kills:fx-1:1", "gold_lead_15:fx-1:1", "first_dragon:fx-1:1"}
