@@ -77,6 +77,33 @@ const Locked = ({ label }: { label?: string }) => (
   <span className="state-badges"><span className="state-locked"><IconLock width={10} height={10} aria-hidden="true" />LOCKED</span>{label ? <span className="muted">{label}</span> : null}</span>
 );
 
+/** What is closed now but coming back for this game, so a live page is never blank between windows. */
+const upNext = (game: GameT) => game.lanes === "DRAFT" || (game.window === "UPCOMING" && game.index > 1);
+
+function UpNext({ event, game }: { event: EventT; game: GameT }) {
+  if (game.window === "UPCOMING" && game.index > 1) {
+    return (
+      <p className="muted" style={{ fontSize: 14, margin: 0 }}>
+        Game {game.index} opens when Game {game.index - 1} ends: winner, draft calls, and blind duels and kill lines until its draft starts.
+      </p>
+    );
+  }
+  return (
+    <section className="mp-section">
+      <div className="mp-head">
+        <h2>Lanes &amp; kills</h2>
+        <Locked label="reopens when the game loads" />
+      </div>
+      <p className="muted" style={{ fontSize: 13, margin: 0 }}>
+        Blind picks closed when the match went live. Lane duels and kill lines reopen with champions when Game {game.index} loads,
+        until 3:00 of the game.
+      </p>
+      <div className="mp-sub">Lane duels · gold at 15:00</div>
+      <LaneDuels event={event} game={game.index} />
+    </section>
+  );
+}
+
 /** Everything about one game, head to head. live: only what is open right now (Play mode in a live match). */
 function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; live?: boolean }) {
   const markets = event.markets ?? [];
@@ -306,9 +333,7 @@ export default function EventPage() {
   const isFinal = event.status === "COMPLETED";
   const liveView = isLive && !!priced;
   const opened = openNow(event, now);
-  const panels = (
-    <>
-      {gameList.length ? (
+  const gameTabs = gameList.length ? (
         <div className="gametabs" role="group" aria-label="Series and games">
           <button className="gametab" aria-pressed={current === 0} onClick={() => setTab(0)}>
             <span className="t">Series</span>
@@ -321,7 +346,9 @@ export default function EventPage() {
             </button>
           ))}
         </div>
-      ) : null}
+      ) : null;
+  const panels = (
+    <>
       <div onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         {!priced ? (
           <div className="empty" style={{ marginTop: 12 }}>
@@ -371,6 +398,7 @@ export default function EventPage() {
       <aside className="m-rivals"><RivalsPanel event={event} /></aside>
 
       <div className="m-markets">
+        {gameTabs}
         {liveView ? (
           <>
             <MatchSummary event={event} live={live} game={shownGame ?? null} />
@@ -378,6 +406,11 @@ export default function EventPage() {
               empty="Nothing to pick right now. Results land below as they happen.">
               {panels}
             </Group>
+            {shownGame && upNext(shownGame) ? (
+              <Group id="next" tone="next" title="Up next" count={1}>
+                <UpNext event={event} game={shownGame} />
+              </Group>
+            ) : null}
             <Group id="inplay" tone="play" title="In play" count={inPlay(live).length} empty="None of your picks are waiting on the game.">
               <InPlay event={event} live={live} />
             </Group>

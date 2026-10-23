@@ -55,6 +55,8 @@
 .group-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--subtle); }
 .group.open .group-dot { background: var(--accent); box-shadow: 0 0 0 4px rgba(212, 242, 90, 0.18); }
 .group.play .group-dot { background: var(--info); }
+.group.next .group-dot { background: var(--warn); }
+.group.next .group-n { display: none; }
 .group-n { font-family: var(--font-ui); font-size: 12px; font-weight: 800; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--surface-3); color: var(--muted); letter-spacing: 0; }
 .group.open .group-n { background: var(--accent); color: var(--accent-ink); }
 .group-empty { margin: 0; font-size: 13px; color: var(--subtle); }

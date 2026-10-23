@@ -212,7 +212,7 @@ export function MatchSummary({ event, live, game }: { event: EventT; live: LiveT
 
 /** A group of the page with one consistent header: what it is, how many, and when it changes. */
 export function Group({ id, tone, title, count, aside, children, empty }: {
-  id: string; tone: "open" | "play" | "done"; title: string; count: number; aside?: ReactNode; children: ReactNode; empty?: string;
+  id: string; tone: "open" | "next" | "play" | "done"; title: string; count: number; aside?: ReactNode; children: ReactNode; empty?: string;
 }) {
   return (
     <section id={id} className={`group ${tone}`} aria-label={title}>
