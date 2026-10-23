@@ -19,6 +19,7 @@ export type SlipLine = {
   closeAt?: string;
   /** Through-draft and early-window markets close at 3:00 of game time, not at closeAt, once the game loads. */
   closesWithGame?: boolean;
+  closeRule?: "game" | "draft" | null;
   /** Share of the full return paid for a right-side, wrong-exact result (Swiss record), if any. */
   consolation?: string;
 };
@@ -88,6 +89,7 @@ function lineOf(market: MarketT, outcome: OutcomeT, eventLabel: string, stake: n
     stake,
     closeAt: market.close_at,
     closesWithGame: !!(market.params.through_draft || market.params.early),
+    closeRule: market.close_rule ?? null,
     consolation: typeof market.params.consolation === "string" ? market.params.consolation : undefined,
   };
 }

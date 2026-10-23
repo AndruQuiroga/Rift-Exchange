@@ -79,6 +79,7 @@ export function DeciderToasts({ event }: { event: EventT }) {
       if (seen.current.has(m.id)) continue;
       seen.current.add(m.id);
       const mine = m.outcomes.filter((o) => placed.has(o.id));
+      if (!mine.length) continue; // only what you have a pick on
       const won = !!mine.length && !out!.void && mine.some((o) => out!.codes.includes(o.code));
       const staked = mine.reduce((n, o) => n + (placed.get(o.id) ?? 0), 0);
       const winner = m.outcomes.find((o) => out!.codes.includes(o.code));

@@ -10,7 +10,7 @@ import { eventLabel, Matchup } from "@/components/EventCard";
 import { NotifyButton } from "@/components/GameAlerts";
 import { ChoiceRow, H2HHead, H2HRow, LockedRow, WinnerCards } from "@/components/H2H";
 import { IconBack, IconLock } from "@/components/icons";
-import { DecidedChips, DecidingLive, Feed, LiveHero, ModeToggle, OpenNowBar, openNow, useLive, useLiveMode, YourGame } from "@/components/MatchLive";
+import { Decided, decided, Group, InPlay, inPlay, LiveHero, MatchSummary, OpenAside, openNow, useLive, YourGame } from "@/components/MatchLive";
 import { PostGame } from "@/components/PostGame";
 import { KillLine, LaneDuels } from "@/components/PropsBuilders";
 import { DeciderToasts, ResultsSoFar } from "@/components/Results";
@@ -114,7 +114,8 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
   // Draft calls and blind duels show their own exact state (lock banner, Blind / Drafting); these only decide
   // what a live Play view keeps on screen.
   const draftOpen = early === "UPCOMING" && game.window !== "DONE";
-  const lanesOpen = early === "OPEN" || (early === "UPCOMING" && game.window === "OPEN");
+  const lanes = game.lanes ?? (early === "OPEN" ? "LIVE" : early === "UPCOMING" ? "BLIND" : "CLOSED");
+  const lanesOpen = lanes === "BLIND" || lanes === "LIVE";
   if (live && !winnerOpen && !draftOpen && !objectives.length && !lanesOpen) return null;
 
   return (
@@ -126,9 +127,11 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
             <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
             {winner.state !== "OPEN"
               ? <Locked label={windowText(game, event)} />
-              : winner.close_known === false
-                ? <Open label="closes 3:00 into the game" />
-                : <Open at={winner.close_at} />}
+              : winner.close_rule === "draft"
+                ? <Open label="locks when the draft starts" />
+                : winner.close_known === false
+                  ? <Open label="closes 3:00 into the game" />
+                  : <Open at={winner.close_at} />}
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
@@ -167,7 +170,8 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       ) : null}
 
       {live && !lanesOpen ? null : (
-      <Section title="Lanes & kills" sub={early === "OPEN" ? <Open label="after draft · until 3:00" /> : early === "UPCOMING" ? "Blind before the draft, then after it" : <Locked />}>
+      <Section title="Lanes & kills" sub={lanes === "LIVE" ? <Open label="after draft · until 3:00" /> : lanes === "BLIND" ? <Open label="blind · locks when the draft starts" />
+            : lanes === "DRAFT" ? <Locked label="drafting · reopens when the game loads" /> : lanes === "UPCOMING" ? <Locked label="opens later" /> : <Locked />}>
         {game.window === "DONE" || early === "CLOSED" ? (
           <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
         ) : (
@@ -252,7 +256,6 @@ export default function EventPage() {
   const [tab, setTab] = useState<number | null>(null);
   const touch = useRef<{ x: number; y: number } | null>(null);
   const { data: live } = useLive(event ?? ({ status: "SCHEDULED" } as EventT));
-  const [mode, setMode] = useLiveMode();
   const hidden = useHideScore();
   const placed = usePlaced();
 
@@ -341,13 +344,9 @@ export default function EventPage() {
           <Link href="/" className="link" style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 44 }}>
             <IconBack width={16} height={16} /> Today
           </Link>
-          {liveView ? (
-            <ModeToggle mode={mode} setMode={setMode} openCount={opened.count} />
-          ) : (
-            <span className="muted num" style={{ fontSize: 12 }}>
-              {isFinal ? "Final" : event.status === "LIVE" ? "Live" : cd ? null : "Locked"}
-            </span>
-          )}
+          <span className="muted num" style={{ fontSize: 12 }}>
+            {isFinal ? "Final" : event.status === "LIVE" ? "Live" : cd ? null : "Locked"}
+          </span>
         </div>
         <div className="eyebrow" style={{ marginTop: 4 }}>
           {event.stage} · Bo{event.best_of} · {longDate(event.local_date)} · <span className="num">{kickoff(event.scheduled_at)}</span>
@@ -372,19 +371,21 @@ export default function EventPage() {
       <aside className="m-rivals"><RivalsPanel event={event} /></aside>
 
       <div className="m-markets">
-        {liveView && mode === "watch" ? (
+        {liveView ? (
           <>
-            <OpenNowBar event={event} onPlay={() => setMode("play")} />
-            <Feed event={event} live={live} placed={placed} />
+            <MatchSummary event={event} live={live} game={shownGame ?? null} />
+            <Group id="open" tone="open" title="Open now" count={opened.count} aside={<OpenAside event={event} />}
+              empty="Nothing to pick right now. Results land below as they happen.">
+              {panels}
+            </Group>
+            <Group id="inplay" tone="play" title="In play" count={inPlay(live).length} empty="None of your picks are waiting on the game.">
+              <InPlay event={event} live={live} />
+            </Group>
+            <Group id="decided" tone="done" title="Decided" count={decided(event, shownGame ?? null).length} empty="Nothing decided yet.">
+              <Decided event={event} game={shownGame ?? null} placed={placed} />
+            </Group>
           </>
-        ) : (
-          <>
-            {liveView ? <OpenNowBar event={event} /> : null}
-            {liveView ? <DecidingLive event={event} live={live} /> : null}
-            {panels}
-            {liveView ? <DecidedChips event={event} game={shownGame ?? null} placed={placed} /> : null}
-          </>
-        )}
+        ) : panels}
         <p className="fineprint" style={{ textAlign: "left", marginTop: 16 }}>
           Every pick is a single with its own price. Nothing is multiplied together.
         </p>

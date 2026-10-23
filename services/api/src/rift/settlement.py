@@ -305,10 +305,11 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
         terms = sel.rules_snapshot.get("params", {})
         result = ("VOID" if void or late else "WON" if code in winning else "PARTIAL" if code in partial
                   else "LOST")
-        if result == "PARTIAL" and not (terms.get("consolation") or terms.get("ban_refund")):
+        refund = terms.get("ban_refund") or terms.get("void_refund")
+        if result == "PARTIAL" and not (terms.get("consolation") or refund):
             result = "LOST"  # accepted before the market offered a partial return: its own terms stand
         new_return = settlement_return(sel.stake_rc, sel.odds, result, consolation=terms.get("consolation"),
-                                       refund=terms.get("ban_refund"))
+                                       refund=refund)
         wallet = locked[wallet_by_user[sel.user_id].id]
         if sel.settled_revision > 0 and sel.status == result:
             pass  # unchanged outcome for this selection; record the revision without moving credits
@@ -321,7 +322,7 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
                 memo = sel.rules_snapshot.get("title", "")
                 ledger.credit(session, wallet, kind="VOID_REFUND" if result == "VOID" else "PAYOUT",
                               amount_rc=new_return, key=f"settle:{sel.id}:{revision}", ref_type="selection",
-                              ref_id=str(sel.id), memo=(f"{memo} (banned: half back)" if terms.get("ban_refund")
+                              ref_id=str(sel.id), memo=(f"{memo} (half back)" if refund
                                                         else f"{memo} (right side)") if result == "PARTIAL" else memo)
         session.add(Settlement(selection_id=sel.id, revision=revision, result=result, return_rc=new_return))
         sel.status, sel.return_rc, sel.settled_revision, sel.settled_at = result, new_return, revision, now

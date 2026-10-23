@@ -4,6 +4,7 @@ import { Providers } from "./providers";
 import "./globals.css";
 import "./match-day.css";
 import "./redesign.css";
+import "./polish.css";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const display = Barlow_Condensed({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-display-face", display: "swap" });

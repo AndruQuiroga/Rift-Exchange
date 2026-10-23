@@ -164,7 +164,8 @@ class Worker:
         stats = markets.tournament_stats(s, season)
         count = 0
         fixtures = s.execute(select(Fixture).where(
-            Fixture.season_id == season.id, Fixture.status == "SCHEDULED", Fixture.scheduled_at > now,
+            Fixture.season_id == season.id, Fixture.status == "SCHEDULED",
+            Fixture.scheduled_at > now - markets.SERIES_LOCK_BACKSTOP,  # D-037: keep pricing while running late
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
         markets.retire_kind(s, "champion_picked", "Replaced by the champion grid", template_prefix="champion_picked:")
         markets.retire_kind(s, "total_kills_game", "Kill lines now open when the game loads",

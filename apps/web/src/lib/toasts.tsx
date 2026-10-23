@@ -19,7 +19,7 @@ export type Toast = {
 
 const ToastContext = createContext<(t: Omit<Toast, "id"> & { key?: string }) => void>(() => {});
 
-/** Toasts from anywhere: slide in at the top, at most three, gone after six seconds or on a tap. */
+/** Toasts from anywhere: slide in at the top, at most two, gone after four and a half seconds or on a tap. */
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const seen = useRef(new Set<string>());
@@ -28,12 +28,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (seen.current.has(t.key)) return; // the same news once, however many places notice it
       seen.current.add(t.key);
     }
-    setToasts((prev) => [...prev, { ...t, id: `${Date.now()}-${Math.random()}` }].slice(-3));
+    setToasts((prev) => [...prev, { ...t, id: `${Date.now()}-${Math.random()}` }].slice(-2));
   }, []);
 
   useEffect(() => {
     if (!toasts.length) return;
-    const timer = setTimeout(() => setToasts((prev) => prev.slice(1)), 6000);
+    const timer = setTimeout(() => setToasts((prev) => prev.slice(1)), 4500);
     return () => clearTimeout(timer);
   }, [toasts]);
 

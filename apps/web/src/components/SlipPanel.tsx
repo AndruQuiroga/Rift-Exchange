@@ -206,7 +206,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                 Staked <b>{rc(s.stake_rc)} RC</b> · returns <b>{rc(s.potential_return_rc)} RC</b> if correct
               </div>
               <div className="receipt-when">
-                <MarketClose at={s.close_at} known={s.close_known} label="Betting closes in" />
+                <MarketClose at={s.close_at} known={s.close_known} rule={s.close_rule} scheduledAt={s.event?.scheduled_at} label="Betting closes in" />
                 <span className="muted">Result shows the moment it&apos;s known; credits follow 5 min later once the data holds.</span>
               </div>
             </div>
@@ -286,7 +286,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                       {l.marketTitle}
                       {groups.length > 1 ? null : ` · ${l.eventLabel}`}
                     </div>
-                    {l.closeAt ? <MarketClose at={l.closeAt} known={!(l.closesWithGame && Date.parse(l.closeAt) - Date.now() > 600_000)} compact /> : null}
+                    {l.closeAt ? <MarketClose at={l.closeAt} rule={l.closeRule === "draft" ? "draft" : null} known={!(l.closesWithGame && Date.parse(l.closeAt) - Date.now() > 600_000)} compact /> : null}
                   </div>
                   <div className="px num" aria-live="polite">
                     {was ? <span className="was">{fmtOdds(was)}</span> : null}

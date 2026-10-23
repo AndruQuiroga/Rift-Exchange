@@ -275,8 +275,8 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
     worker.cycle()
     ms = _markets(factory)
     g2 = ms["game_winner:m1:2"]
-    assert g2.state == "OPEN" and g2.params == {"game_index": 2, "through_draft": True} and g2.scope == "GAME"
-    assert g2.close_at == START + timedelta(minutes=42) + markets.DRAFT_GRACE  # provisional until it loads
+    assert g2.state == "OPEN" and g2.params == {"game_index": 2, "through_draft": False} and g2.scope == "GAME"
+    assert g2.close_at == START + timedelta(minutes=42)  # D-035: the winner closes when the draft starts
     # Series markets stay locked while the series is live; Game 1 is over; Game 3 is not offered yet.
     assert all(m.state == "LOCKED" for k, m in ms.items() if k != "game_winner:m1:2")
     assert "game_winner:m1:3" not in ms
@@ -288,8 +288,8 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
     feed.scripted["g2"] = ScriptedGame("g2", START + timedelta(minutes=40), 1800)
     now[0] = START + timedelta(minutes=40, seconds=20)
     worker.cycle()
-    g2 = _markets(factory)["game_winner:m1:2"]  # open through the draft: its cutoff is now 3:00 of Game 2
-    assert g2.state == "OPEN" and g2.close_at == START + timedelta(minutes=43)
+    g2 = _markets(factory)["game_winner:m1:2"]  # D-035: closed at the draft start, not 3:00 of the game
+    assert g2.state == "LOCKED" and g2.close_at == START + timedelta(minutes=40)  # pulled back to its start
     with factory() as s:
         game2 = s.execute(select(Game).where(Game.game_index == 2)).scalar_one()
         assert game2.started_at == START + timedelta(minutes=40) and game2.state == "unstarted"
@@ -302,7 +302,7 @@ def test_game_two_opens_when_game_one_ends_and_locks_when_it_loads(factory):
         live = s.execute(select(Game).where(Game.game_index == 2)).scalar_one().timeline["live"]
         assert live["state"] == "in_game" and 500 < live["clock_s"] < 600 and live["kills"]["blue"] == 1
     g2 = _markets(factory)["game_winner:m1:2"]
-    assert g2.state == "LOCKED" and g2.state_reason == "Locked at 3:00"
+    assert g2.state == "LOCKED" and g2.state_reason == "Locked at Game 2 start"
 
 
 def test_two_nil_never_opens_game_three_and_voids_a_stray_one(factory):
@@ -316,10 +316,10 @@ def test_two_nil_never_opens_game_three_and_voids_a_stray_one(factory):
     now[0] = START + timedelta(minutes=36)
     worker.cycle()
     assert _markets(factory)["game_winner:m1:2"].state == "OPEN"
-    # Through the draft (D-026): still open 7 minutes after Game 1, until 3:00 of Game 2 once it loads.
+    # D-035: it closes with the draft start, 7 minutes after Game 1 ended.
     now[0] = START + timedelta(minutes=43)
     worker.cycle()
-    assert _markets(factory)["game_winner:m1:2"].state == "OPEN"
+    assert _markets(factory)["game_winner:m1:2"].state == "LOCKED"
 
     # A Game 3 market left open by a lagging feed must not outlive the series.
     with factory() as s, s.begin():
@@ -428,8 +428,8 @@ def test_game_specs_hold_pre_game_markets_only():
     stats = markets.TournamentStats(games=15, pick_rate={}, kill_totals=[20] * 10 + [30] * 5)
     close = START + timedelta(minutes=42)
     fresh = {s.kind: s for s in markets.game_specs(fixture, 2, a, b, 0.6, stats, close, "MODEL")}
-    assert fresh["game_winner"].close_at == close + markets.DRAFT_GRACE and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
-    assert "until 3:00" in fresh["game_winner"].rules_text and fresh["game_winner"].params["through_draft"]
+    assert fresh["game_winner"].close_at == close and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
+    assert "draft starts" in fresh["game_winner"].rules_text and not fresh["game_winner"].params["through_draft"]
     assert "total_kills_game" not in fresh  # kill lines open once the game loads (early-game window)
 
 def test_open_markets_pick_up_new_rules_on_the_next_pricing_pass(factory, world):

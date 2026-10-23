@@ -11,7 +11,7 @@ import { RetryNotice } from "./bits";
 import { ChampIcon } from "./ChampionGrid";
 import { Choice } from "./Choice";
 import { Odds } from "./Odds";
-import { LockTimer } from "./Timing";
+import { DraftLock, LockTimer } from "./Timing";
 
 type Side = "A" | "B";
 /** BLIND: before the draft, no champions. DRAFT: blind closed, waiting for the game to load. LIVE: after the
@@ -20,7 +20,7 @@ type Phase = "BLIND" | "DRAFT" | "LIVE" | "UPCOMING" | "CLOSED";
 type WindowState = { phase?: Phase; open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close_at: string | null; opens_when: string | null };
 const phaseOf = (d: WindowState): Phase => d.phase ?? (d.open ? "LIVE" : d.state === "UPCOMING" ? "DRAFT" : "CLOSED");
 
-function WindowNote({ data, now }: { data: WindowState; now: number }) {
+function WindowNote({ data, now, event }: { data: WindowState; now: number; event?: EventT }) {
   const phase = phaseOf(data);
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   return (
@@ -33,7 +33,8 @@ function WindowNote({ data, now }: { data: WindowState; now: number }) {
           : phase === "UPCOMING" ? (data.opens_when ?? "Opens when the previous game ends.")
           : "Early-game picks are closed."}
       </span>
-      {open ? <LockTimer at={data.close_at} label={phase === "BLIND" ? "Blind closes in" : "Closes in"} /> : null}
+      {open && phase === "BLIND" && event?.status === "SCHEDULED" ? <DraftLock scheduledAt={event.scheduled_at} />
+        : open ? <LockTimer at={data.close_at} label={phase === "BLIND" ? "Blind closes in" : "Closes in"} /> : null}
     </div>
   );
 }
@@ -99,13 +100,13 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   const [picked, setStat] = useState<string | null>(null);
   const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
-  if (!data.duels.length) return <WindowNote data={data} now={now} />;
+  if (!data.duels.length) return <WindowNote data={data} now={now} event={event} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   const phase = phaseOf(data);
   const stat = picked ?? data.stats[0]?.id ?? "gold15";
   return (
     <div>
-      <WindowNote data={data} now={now} />
+      <WindowNote data={data} now={now} event={event} />
       {data.stats.length > 1 ? (
         <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
           {data.stats.map((s) => (
@@ -176,14 +177,14 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
     }
   }, [data, index]);
   if (!data) return <div className="skeleton" style={{ height: 140, marginTop: 12 }} />;
-  if (!data.lines.length || index === null) return <><WindowNote data={data} now={now} />{data.open ? <p className="muted">No kill lines are priced yet.</p> : null}</>;
+  if (!data.lines.length || index === null) return <><WindowNote data={data} now={now} event={event} />{data.open ? <p className="muted">No kill lines are priced yet.</p> : null}</>;
   const activeIndex = Math.min(index, data.lines.length - 1);
   const row = data.lines[activeIndex];
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   const phase = phaseOf(data);
   return (
     <div style={{ marginTop: 12 }}>
-      <WindowNote data={data} now={now} />
+      <WindowNote data={data} now={now} event={event} />
       {data.champions && Object.keys(data.champions).length ? <div className="line-champs">
         {(["A", "B"] as const).map((side) => (
           <div key={side}>

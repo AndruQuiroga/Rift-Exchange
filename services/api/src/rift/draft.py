@@ -31,7 +31,7 @@ from rift.champions import champion_key
 from rift.config import Settings
 from rift.display import team_name
 from rift.domain.pricing import price
-from rift.markets import MarketSpec, OutcomeSpec, champion_label, next_game, upsert_market
+from rift.markets import MarketSpec, OutcomeSpec, champion_label, next_game, series_close, upsert_market
 from rift.models import Fixture, Game, Market, Season, Team
 from rift.timeline import burned_champions
 
@@ -154,7 +154,8 @@ def draft_window(session: Session, fixture: Fixture, game_index: int, now: datet
     winner markets that stay open through it. Game 1 closes at the series start (or once the series is live);
     Game N opens when Game N-1 ends and closes NEXT_GAME_WINDOW later, before Game N's draft."""
     if game_index == 1:
-        return DraftWindow(fixture.status == "SCHEDULED" and now < fixture.scheduled_at, fixture.scheduled_at)
+        close = series_close(fixture)  # D-037: really the series going live; this is the backstop
+        return DraftWindow(fixture.status == "SCHEDULED" and now < close, close)
     games = list(session.execute(select(Game).where(Game.fixture_id == fixture.id)).scalars())
     nxt = next_game(fixture, games)
     if nxt is None or nxt[0] != game_index:
