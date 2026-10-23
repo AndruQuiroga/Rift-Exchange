@@ -543,15 +543,55 @@ def _window_view(w: EarlyWindow) -> dict:
             "close_at": w.close_at.isoformat() if w.close_at else None}
 
 
+# ------------------------------------------------------------------ blind vs after the draft
+#
+# Duels and kill lines are offered twice per game (D-031). Blind: before the draft, priced on the expected
+# players and team history, closing with the champion calls before the draft starts (rift.draft.draft_window).
+# After the draft: from the game's first frame, with champions, until 3:00 (the early window). They are
+# separate markets, so a blind pick stands whatever champions are picked; a blind duel voids if either named
+# player doesn't play. The draft itself has no betting: the feed shows no champion select, and anyone watching
+# the broadcast would see it first.
+
+
+@dataclass
+class Phase:
+    name: str  # BLIND / DRAFT (blind closed, waiting for the game to load) / LIVE / CLOSED / UPCOMING
+    open: bool
+    close_at: datetime | None
+    early: EarlyWindow
+
+
+def phase(session: Session, fixture: Fixture, game_index: int, now: datetime) -> Phase:
+    from rift.draft import draft_window
+
+    w = early_window(session, fixture, game_index, now)
+    if w.state != "UPCOMING":
+        return Phase("LIVE" if w.open else "CLOSED", w.open, w.close_at, w)
+    blind = draft_window(session, fixture, game_index, now)
+    if blind.open:
+        return Phase("BLIND", True, blind.close_at, w)
+    if blind.close_at is None:
+        return Phase("UPCOMING", False, None, w)  # a later game, before the previous one ends
+    return Phase("DRAFT", False, None, w)
+
+
+def _phase_view(ph: Phase) -> dict:
+    opens = {"BLIND": None, "DRAFT": "When the game loads, champions locked in", "UPCOMING": ph.early.opens_when}
+    return {"phase": ph.name, "open": ph.open, "state": "OPEN" if ph.open else ph.early.state,
+            "opens_when": opens.get(ph.name), "close_at": ph.close_at.isoformat() if ph.close_at else None}
+
+
 def duels(session: Session, season: Season, fixture: Fixture, game_index: int, settings: Settings,
           now: datetime) -> dict:
-    w = early_window(session, fixture, game_index, now)
+    ph = phase(session, fixture, game_index, now)
+    w = ph.early
     rows = []
-    # Before the game loads, show the expected matchups (last known lineups) without prices.
-    lineup = lineups(session, fixture) if w.state == "UPCOMING" else game_lineup(w.game, fixture) if w.game else {}
-    state = live_state(fixture, w.game)
+    # Until the game loads: the expected matchups (last known lineups), priced only while blind picks are open.
+    loaded = ph.name in ("LIVE", "CLOSED") and w.game is not None
+    lineup = game_lineup(w.game, fixture) if loaded else lineups(session, fixture)
+    state = live_state(fixture, w.game) if ph.name == "LIVE" else None
     if lineup:
-        data = timeline_data(session, season) if w.open else None
+        data = timeline_data(session, season) if ph.open else None
         for role in ROLES:
             a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
             if not a or not b:
@@ -561,7 +601,7 @@ def duels(session: Session, season: Season, fixture: Fixture, game_index: int, s
                 p = duel_probability(data, a, b, role, stat, state) if data is not None else None
                 odds[stat] = {"A": _px(p, settings), "B": _px(1 - p, settings) if p is not None else None}
             rows.append({"role": role, "a": a, "b": b, "odds": odds})
-    return {"game_index": game_index, **_window_view(w),
+    return {"game_index": game_index, **_phase_view(ph),
             "stats": [{"id": k, "label": STATS[k][0]} for k in OFFERED_STATS], "duels": rows}
 
 
@@ -584,6 +624,12 @@ def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: 
                 settings: Settings, now: datetime) -> Market:
     if role not in ROLES or stat not in OFFERED_STATS:
         raise PropsError("BAD_DUEL", "Unknown role or stat.")
+    ph = phase(session, fixture, game_index, now)
+    if ph.name == "BLIND":
+        return _ensure_blind_duel(session, season, fixture, game_index, role, stat, ph.close_at, settings, now)
+    if ph.name == "DRAFT":
+        raise PropsError("NOT_OPEN", f"Game {game_index} is in its draft: duels reopen with champions when the "
+                         "game loads.")
     w = _open_early(session, fixture, game_index, now)
     lineup = game_lineup(w.game, fixture)
     a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
@@ -613,7 +659,35 @@ def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: 
     return market
 
 
-# ------------------------------------------------------------------ kill lines (early-game window)
+def _ensure_blind_duel(session: Session, season: Season, fixture: Fixture, game_index: int, role: str, stat: str,
+                       close_at: datetime, settings: Settings, now: datetime) -> Market:
+    lineup = lineups(session, fixture)
+    a, b = lineup.get("A", {}).get(role), lineup.get("B", {}).get(role)
+    if not a or not b:
+        raise PropsError("NO_LINEUP", "This lane's expected players aren't known yet.")
+    p = duel_probability(timeline_data(session, season), a, b, role, stat)
+    if p is None:
+        raise PropsError("NOT_OFFERED", "Not enough data to price this duel yet.")
+    label = STATS[stat][0]
+    tie_note = (f"A gap under {TIE_MARGIN[stat]:,} gold is a tie" if stat in TIE_MARGIN else "An exact tie is")
+    at15_note = ", as is a game that ends before 15:00" if stat in ("cs15", "gold15") else ""
+    spec = MarketSpec(
+        f"lane_duel:{fixture.provider_id}:{game_index}:{role}:{stat}:{a['player_id']}:{b['player_id']}:blind",
+        "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role} (blind): {a['name']} vs {b['name']}",
+        f"{label}: {a['name']} or {b['name']} in Game {game_index}, called before the draft whatever champions "
+        f"they play. Closes before the draft starts. Void if either player doesn't play Game {game_index}. "
+        f"{tie_note} void{at15_note}. Settles from the game's live data.",
+        close_at, "player_blind_v1", "EXPERIMENTAL",
+        [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
+        {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"],
+         "blind": True})
+    market = upsert_market(session, season, fixture, spec, settings, now)
+    if market is None:
+        raise PropsError("NOT_OPEN", f"Game {game_index} blind picks are closed.")
+    return market
+
+
+# ------------------------------------------------------------------ kill lines (blind and early-game window)
 
 
 def _kill_dist(stats: TournamentStats) -> tuple[float, float] | None:
@@ -664,19 +738,35 @@ def _kill_line_rows(dist: tuple[float, float] | None, settings: Settings, floor:
 
 def kill_lines(session: Session, fixture: Fixture, game_index: int, stats: TournamentStats, settings: Settings,
                now: datetime) -> dict:
-    w = early_window(session, fixture, game_index, now)
+    ph = phase(session, fixture, game_index, now)
+    w = ph.early
     dist = _kill_dist(stats)
-    return {"game_index": game_index, **_window_view(w),
-            "champions": game_lineup(w.game, fixture) if w.game else {},
-            "typical": str(math.floor(dist[0]) + 0.5) if dist else None,
-            "lines": _kill_line_rows(dist, settings, kill_line_floor(w.game), live_state(fixture, w.game))
-            if w.open else []}
+    rows = (_kill_line_rows(dist, settings, kill_line_floor(w.game), live_state(fixture, w.game))
+            if ph.name == "LIVE" else _kill_line_rows(dist, settings) if ph.name == "BLIND" else [])
+    return {"game_index": game_index, **_phase_view(ph),
+            "champions": game_lineup(w.game, fixture) if w.game and ph.name in ("LIVE", "CLOSED") else {},
+            "typical": str(math.floor(dist[0]) + 0.5) if dist else None, "lines": rows}
 
 
 def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_index: int, line: str,
                      stats: TournamentStats, settings: Settings, now: datetime) -> Market:
     if float(line) not in LINES:
         raise PropsError("BAD_LINE", "Lines run from 14.5 to 44.5 kills.")
+    ph = phase(session, fixture, game_index, now)
+    if ph.name == "BLIND":
+        dist = _kill_dist(stats)
+        if dist is None:
+            raise PropsError("NOT_OFFERED", "Not enough games yet to price kill lines.")
+        under = kill_under_probability(float(line), dist, None)
+        if not _line_offered(under, settings):
+            raise PropsError("NOT_OFFERED", "That kill line isn't offered.")
+        market = upsert_market(session, season, fixture, _kill_line_spec(
+            fixture, game_index, str(float(line)), under, ph.close_at, None, blind=True), settings, now)
+        if market is None:
+            raise PropsError("NOT_OPEN", f"Game {game_index} blind picks are closed.")
+        return market
+    if ph.name == "DRAFT":
+        raise PropsError("NOT_OPEN", f"Game {game_index} is in its draft: kill lines reopen when the game loads.")
     w = _open_early(session, fixture, game_index, now)
     if float(line) < (floor := kill_line_floor(w.game)):
         raise PropsError("BAD_LINE", f"Kill lines start at {floor} right now.")
@@ -695,7 +785,17 @@ def ensure_kill_line(session: Session, season: Season, fixture: Fixture, game_in
 
 
 def _kill_line_spec(fixture: Fixture, game_index: int, line: str, under: float, close_at: datetime,
-                    state: LiveState | None) -> MarketSpec:
+                    state: LiveState | None, blind: bool = False) -> MarketSpec:
+    if blind:
+        return MarketSpec(
+            f"total_kills_game:{fixture.provider_id}:{game_index}:{line}:blind", "total_kills_game", "GAME",
+            "PROPS", f"Game {game_index} total kills {line} (blind)",
+            f"Combined kills by both teams in Game {game_index}, called before the draft. Over means "
+            f"{int(float(line)) + 1} or more. Closes before the draft starts. Requires verified final game stats; "
+            f"void if Game {game_index} is not played.",
+            close_at, "negbin_blind_v1", "EXPERIMENTAL",
+            [OutcomeSpec("OVER", f"Over {line}", 1 - under), OutcomeSpec("UNDER", f"Under {line}", under)],
+            {"game_index": game_index, "line": line, "blind": True})
     return MarketSpec(
         f"total_kills_game:{fixture.provider_id}:{game_index}:{line}", "total_kills_game", "GAME", "PROPS",
         f"Game {game_index} total kills {line}",

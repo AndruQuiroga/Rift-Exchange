@@ -4,23 +4,42 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
 import { useNow, usePlaced } from "@/lib/hooks";
-import { countdown, oddsSpoken } from "@/lib/format";
+import { oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
+import { ChampIcon } from "./ChampionGrid";
 import { Choice } from "./Choice";
 import { Odds } from "./Odds";
+import { LockTimer } from "./Timing";
 
 type Side = "A" | "B";
-type WindowState = { open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close_at: string | null; opens_when: string | null };
+/** BLIND: before the draft, no champions. DRAFT: blind closed, waiting for the game to load. LIVE: after the
+ * draft with champions, until 3:00. UPCOMING: a later game. CLOSED: over (D-031). */
+type Phase = "BLIND" | "DRAFT" | "LIVE" | "UPCOMING" | "CLOSED";
+type WindowState = { phase?: Phase; open: boolean; state: "UPCOMING" | "OPEN" | "CLOSED"; close_at: string | null; opens_when: string | null };
+const phaseOf = (d: WindowState): Phase => d.phase ?? (d.open ? "LIVE" : d.state === "UPCOMING" ? "DRAFT" : "CLOSED");
+
 function WindowNote({ data, now }: { data: WindowState; now: number }) {
-  const seconds = data.close_at ? Math.max(0, Math.ceil((Date.parse(data.close_at) - now) / 1000)) : 0;
-  const text = data.state === "UPCOMING" ? "Opens after draft, when champions are confirmed."
-    : data.open && seconds > 0
-      ? `Closes in ${seconds < 3600 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}` : countdown(data.close_at!, now)}`
-    : "Early-game picks closed.";
-  return <p className="muted num" role="status" style={{ fontSize: 13, marginTop: 12 }}>{text}</p>;
+  const phase = phaseOf(data);
+  const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
+  return (
+    <div className={`phase-note ${phase.toLowerCase()}`} role="status">
+      <span className="phase-tag">{phase === "BLIND" ? "Blind" : phase === "LIVE" ? "After draft" : phase === "DRAFT" ? "Drafting" : phase === "UPCOMING" ? "Later" : "Closed"}</span>
+      <span className="phase-text">
+        {phase === "BLIND" ? "Called before the draft, whatever champions they play."
+          : phase === "LIVE" ? "Champions locked in. Priced from the live game."
+          : phase === "DRAFT" ? "No picks during the draft. They reopen with champions when the game loads."
+          : phase === "UPCOMING" ? (data.opens_when ?? "Opens when the previous game ends.")
+          : "Early-game picks are closed."}
+      </span>
+      {open ? <LockTimer at={data.close_at} label={phase === "BLIND" ? "Blind closes in" : "Closes in"} /> : null}
+    </div>
+  );
 }
+
+/** Which market a builder button belongs to: blind and after-draft markets are separate (D-031). */
+const inPhase = (m: MarketT, phase: Phase) => (phase === "BLIND" ? !!m.params.blind : !m.params.blind);
 type DuelGrid = WindowState & {
   stats: { id: string; label: string }[];
   duels: { role: string; a: { player_id: string; name: string; champion?: string }; b: { player_id: string; name: string; champion?: string }; odds: Record<string, Record<Side, string | null>> }[];
@@ -82,9 +101,11 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
   if (!data.duels.length) return <WindowNote data={data} now={now} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
+  const phase = phaseOf(data);
   const stat = picked ?? data.stats[0]?.id ?? "gold15";
   return (
     <div>
+      <WindowNote data={data} now={now} />
       {data.stats.length > 1 ? (
         <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
           {data.stats.map((s) => (
@@ -100,9 +121,10 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
       <div className="duels">
         {data.duels.map((d) => {
           const side = (s: Side) => {
-            const key = `${game}:${d.role}:${stat}:${s}`;
+            const key = `${game}:${phase}:${d.role}:${stat}:${s}`;
             const px = d.odds[stat]?.[s];
-            const mine = placed((m) => m.kind === "lane_duel" && m.params.game_index === game && m.params.role === d.role && m.params.stat === stat, s);
+            const p = s === "A" ? d.a : d.b;
+            const mine = placed((m) => m.kind === "lane_duel" && m.params.game_index === game && m.params.role === d.role && m.params.stat === stat && inPhase(m, phase), s);
             return (
               <button
                 className={`side${s === "B" ? " right" : ""}`}
@@ -112,10 +134,17 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
                 disabled={!open || !px || isBusy(key)}
                 aria-busy={isBusy(key) || undefined}
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
-                aria-label={`${(s === "A" ? d.a : d.b).name}, ${oddsSpoken(px ?? null)}`}
+                aria-label={`${p.name}${p.champion ? ` on ${p.champion}` : ""}, ${oddsSpoken(px ?? null)}`}
               >
-                <span className="duel-name"><span className="code">{(s === "A" ? d.a : d.b).name}</span><small style={{ display: "block", color: "var(--muted)" }}>{(s === "A" ? d.a : d.b).champion ?? "Champion pending"}</small></span>
+                <span className="duel-who">
+                  {p.champion ? <ChampIcon id={p.champion} label={p.champion} small /> : <span className="cicon sm pending" aria-hidden="true">?</span>}
+                  <span className="duel-name">
+                    <span className="code">{p.name}</span>
+                    <small>{p.champion ?? (phase === "BLIND" ? "Any champion" : phase === "DRAFT" ? "Drafting…" : "Champion pending")}</small>
+                  </span>
+                </span>
                 <Price odds={px ?? null} busy={isBusy(key)} style={{ fontSize: 15 }} />
+                {mine ? <span className="pk-tag">Placed</span> : null}
               </button>
             );
           };
@@ -129,7 +158,11 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         })}
       </div>
       {notice}
-      <p className="fineprint" style={{ textAlign: "left" }}>Champions confirm when the game loads. Picks close at 3:00.</p>
+      <p className="fineprint" style={{ textAlign: "left" }}>
+        {phase === "BLIND"
+          ? "Blind duels stand whatever champions are picked; void if either player doesn't play."
+          : "Champions confirm when the game loads. Picks close at 3:00."}
+      </p>
     </div>
   );
 }
@@ -150,11 +183,17 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
   const activeIndex = Math.min(index, data.lines.length - 1);
   const row = data.lines[activeIndex];
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
+  const phase = phaseOf(data);
   return (
     <div style={{ marginTop: 12 }}>
       <WindowNote data={data} now={now} />
-      {data.champions ? <div style={{ fontSize: 12, margin: "8px 0 12px" }}>
-        {(["A", "B"] as const).map((side) => <p key={side} className="muted"><b>{side === "A" ? event.team_a?.code : event.team_b?.code}</b> · {Object.values(data.champions?.[side] ?? {}).map((p) => p.champion).filter(Boolean).join(" · ")}</p>)}
+      {data.champions && Object.keys(data.champions).length ? <div className="line-champs">
+        {(["A", "B"] as const).map((side) => (
+          <div key={side}>
+            <b>{side === "A" ? event.team_a?.code : event.team_b?.code}</b>
+            {Object.values(data.champions?.[side] ?? {}).map((p) => p.champion).filter((c): c is string => !!c).map((c) => <ChampIcon key={c} id={c} label={c} small />)}
+          </div>
+        ))}
       </div> : null}
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: 6 }}>
         <span className="display num" style={{ fontSize: 40, fontWeight: 800, lineHeight: 1 }}>{row.line}</span>
@@ -177,9 +216,9 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
       </div>
       <div className="mrow-sides" style={{ marginTop: 10 }}>
         {(["OVER", "UNDER"] as const).map((code) => {
-          const key = `${game}:${row.line}:${code}`;
+          const key = `${game}:${phase}:${row.line}:${code}`;
           const px = code === "OVER" ? row.over : row.under;
-          const mine = placed((m) => m.kind === "total_kills_game" && m.params.game_index === game && String(m.params.line) === String(row.line), code);
+          const mine = placed((m) => m.kind === "total_kills_game" && m.params.game_index === game && String(m.params.line) === String(row.line) && inPhase(m, phase), code);
           return (
             <button
               key={code}
@@ -193,6 +232,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
             >
               <span className="code">{code === "OVER" ? "Over" : "Under"} {row.line}</span>
               <Price odds={px} busy={isBusy(key)} />
+              {mine ? <span className="pk-tag">Placed</span> : null}
             </button>
           );
         })}

@@ -1,0 +1,138 @@
+/* Match day: lock timers, blind/after-draft phases, results before payout, friends, toasts and motion.
+   Same solid-surface system as globals.css (docs/spec/17); every animation sits behind reduced-motion. */
+
+/* One countdown everywhere: calm, amber in the last two minutes, red and pulsing in the last thirty seconds. */
+.timer {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: var(--radius-pill);
+  border: 1px solid var(--divider-strong); background: var(--surface-2); color: var(--muted); font-size: 12px; white-space: nowrap;
+}
+.timer b { color: var(--text); font-size: 13px; font-variant-numeric: tabular-nums; }
+.timer.compact { padding: 1px 7px; margin-top: 4px; }
+.timer.soon { border-color: #5a4a2a; color: var(--warn); }
+.timer.soon b { color: var(--warn); }
+.timer.urgent { border-color: #5a2f2e; color: var(--loss); }
+.timer.urgent b { color: var(--loss); }
+.timer.locked { color: var(--subtle); border-style: dashed; }
+
+/* Blind / drafting / after-draft note above duels and kill lines. */
+.phase-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+.phase-note .phase-text { flex: 1 1 180px; min-width: 0; }
+.phase-tag { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 4px; background: var(--surface-3); color: var(--text); }
+.phase-note.blind .phase-tag { background: var(--info); color: #06212f; }
+.phase-note.live .phase-tag { background: var(--accent); color: var(--accent-ink); }
+.phase-note.draft .phase-tag { background: var(--warn); color: #2a1e05; }
+
+/* Lane duels: champion art beside each player. */
+.side { position: relative; }
+.duel-who { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.side.right .duel-who { flex-direction: row-reverse; }
+.duel-name small { display: block; color: var(--muted); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.side[aria-pressed="true"] .duel-name small { color: #3a4510; }
+.duel-who .cicon.sm { width: 34px; height: 34px; border-radius: 7px; flex: none; }
+.cicon.pending { border: 1px dashed var(--divider-strong); background: none; color: var(--subtle); }
+.line-champs { display: grid; gap: 6px; margin: 8px 0 12px; font-size: 12px; }
+.line-champs > div { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.line-champs b { min-width: 40px; }
+.line-champs .cicon.sm { width: 26px; height: 26px; border-radius: 5px; }
+
+/* Draft: a countdown while open; once locked the carousel greys out and, after load, marks what was picked. */
+.champ-lock { display: flex; justify-content: flex-end; }
+.lock-banner {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: var(--radius-control);
+  background: var(--surface-2); border: 1px dashed var(--divider-strong); font-size: 13px; color: var(--muted);
+}
+.lock-banner b { color: var(--text); }
+.champ-row.locked .champ-card { cursor: default; }
+.champ-row.locked .champ-card:not(.hit):not([data-held="true"]) .cicon { filter: grayscale(1) brightness(0.55); }
+.champ-row.locked .champ-card:not(.hit):not([data-held="true"]) { opacity: 0.6; }
+.champ-card.hit { border-color: var(--win); }
+.champ-card.miss .nm { text-decoration: line-through; text-decoration-color: var(--subtle); }
+.verdict { position: absolute; left: 8px; top: 8px; font-size: 9px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; padding: 1px 5px; border-radius: 4px; }
+.verdict.hit { background: var(--win); color: var(--accent-ink); }
+.verdict.miss { background: var(--surface-3); color: var(--muted); }
+
+/* A side the data has already decided, before it pays. */
+.pk.called { border-color: var(--win); box-shadow: inset 0 0 0 1px var(--win); }
+.pk-tag.result { right: auto; left: 8px; background: var(--info); }
+
+/* Friends: initials on what they picked, counts before reveal, with you / against you. */
+.fdots { display: inline-flex; align-items: center; }
+.pk .fdots { position: absolute; bottom: -8px; right: 8px; }
+.fdot {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; margin-left: -5px;
+  background: var(--surface-3); border: 1.5px solid var(--canvas); color: var(--text); font-size: 9px; font-weight: 800;
+}
+.fdot:first-child { margin-left: 0; }
+.fdot.more { background: var(--divider-strong); }
+.fdot.lg { width: 32px; height: 32px; font-size: 12px; margin: 0; flex: none; background: var(--accent-soft); color: var(--accent); border-color: #4a5a1c; }
+.friends .builder > summary { justify-content: flex-start; }
+.friend-pending { display: grid; gap: 6px; }
+.fp-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-card); background: var(--surface); border: 1px dashed var(--divider-strong); font-size: 14px; }
+.stance { margin-left: 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase; padding: 1px 6px; border-radius: 4px; vertical-align: 2px; }
+.stance.with { background: rgba(127, 220, 170, 0.15); color: var(--win); }
+.stance.against { background: rgba(255, 158, 154, 0.15); color: var(--loss); }
+
+/* Results so far. */
+.result-rows { display: grid; gap: 6px; }
+.result-row {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: 10px 12px;
+  border-radius: var(--radius-card); background: var(--surface); border: 1px solid var(--divider);
+}
+.result-row.won { border-color: #2c5440; }
+.result-row.lost { border-color: #5a2f2e; }
+.result-row .r-title { font-weight: 700; font-size: 14px; }
+.result-row .r-sub { font-size: 12px; color: var(--muted); }
+.result-row .r-right { display: grid; justify-items: end; gap: 4px; text-align: right; }
+.result-row .r-val { font-weight: 800; }
+.payout b { color: var(--text); font-variant-numeric: tabular-nums; }
+.status.called .payout, .status.called .payout b { color: inherit; text-transform: none; letter-spacing: 0; font-weight: 700; }
+
+/* Decider toasts: a market just decided while you watch. */
+.decider-stack {
+  position: fixed; z-index: 61; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top) + var(--topbar-h) + 8px);
+  width: min(520px, calc(100% - 32px)); display: grid; gap: var(--s2);
+}
+.decider {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s3); padding: 10px 8px 10px 14px;
+  border-radius: var(--radius-card); background: var(--surface-3); border: 1px solid var(--divider-strong);
+  border-left: 4px solid var(--info); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); font-size: 14px;
+}
+.decider.won { border-left-color: var(--win); }
+.decider.lost { border-left-color: var(--loss); }
+.decider .d-title { display: block; font-size: 12px; color: var(--muted); }
+.decider .d-you { color: var(--muted); font-size: 13px; }
+.decider.won .d-you { color: var(--win); }
+
+/* Post-bet receipt. */
+.receipt-hero {
+  display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--radius-card);
+  background: rgba(127, 220, 170, 0.08); border: 1px solid #2c5440;
+}
+.receipt-hero .tick { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--win); color: var(--accent-ink); flex: none; }
+.receipt-when { display: grid; gap: 6px; justify-items: start; margin-top: 8px; font-size: 12px; }
+.receipt-friends {
+  display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: var(--radius-card);
+  background: var(--surface); border: 1px solid var(--divider); color: inherit; text-decoration: none; font-size: 14px;
+}
+.receipt-friends:hover { border-color: var(--divider-strong); }
+.livecard.final { border-color: var(--divider-strong); }
+
+/* Feel: every tap answers at once; changes slide and fade in rather than snap. */
+.pk, .side, .champ-card, .chip, .btn, .ctile, .odds, .segmented button, .gametab, .result-row, .timer {
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 90ms ease, opacity 200ms ease;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pk:active:not(:disabled), .side:active:not(:disabled), .champ-card:active:not(:disabled), .chip:active, .btn:active,
+  .ctile:active:not(:disabled), .odds:active:not(:disabled), .gametab:active { transform: scale(0.97); }
+  .pk[aria-pressed="true"], .side[aria-pressed="true"], .champ-card[aria-pressed="true"] { animation: pop 220ms ease-out; }
+  .reveal { animation: reveal 360ms ease-out both; }
+  .pk.called, .champ-card.hit { animation: glow 1.4s ease-out 1; }
+  .timer.urgent { animation: pulse 1s ease-in-out infinite; }
+  .decider { animation: drop 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+  .receipt-hero .tick { animation: pop 380ms cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+  .pk-tag, .verdict, .fdots { animation: reveal 260ms ease-out both; }
+}
+@keyframes pop { 0% { transform: scale(0.94); } 60% { transform: scale(1.03); } 100% { transform: none; } }
+@keyframes reveal { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes drop { from { opacity: 0; transform: translateY(-14px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes glow { 0% { box-shadow: 0 0 0 0 rgba(127, 220, 170, 0.55); } 100% { box-shadow: 0 0 0 10px rgba(127, 220, 170, 0); } }

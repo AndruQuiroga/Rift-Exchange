@@ -15,6 +15,10 @@ export type SlipLine = {
   odds: string;
   oddsVersion: number;
   stake: number | null;
+  /** When its market stops taking picks, for the countdown on the line. */
+  closeAt?: string;
+  /** Through-draft and early-window markets close at 3:00 of game time, not at closeAt, once the game loads. */
+  closesWithGame?: boolean;
   /** Share of the full return paid for a right-side, wrong-exact result (Swiss record), if any. */
   consolation?: string;
 };
@@ -82,6 +86,8 @@ function lineOf(market: MarketT, outcome: OutcomeT, eventLabel: string, stake: n
     odds: outcome.odds!,
     oddsVersion: outcome.odds_version,
     stake,
+    closeAt: market.close_at,
+    closesWithGame: !!(market.params.through_draft || market.params.early),
     consolation: typeof market.params.consolation === "string" ? market.params.consolation : undefined,
   };
 }

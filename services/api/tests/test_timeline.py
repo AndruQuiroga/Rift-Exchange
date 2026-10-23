@@ -2,6 +2,8 @@
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
+
 from rift import timeline
 from rift.adapters.lolesports import parse_detail_frames, parse_frames
 from rift.models import Game
@@ -205,3 +207,29 @@ def test_fearless_pool_accumulates_earlier_games():
         "1": {"champion": "Rumble"}, "2": {"champion": "Vi"}}})
     pool = timeline.burned_champions([g1, g2], 3)
     assert pool[1] == [] and pool[2] == CHAMPS and pool[3] == CHAMPS + ["Rumble", "Vi"]
+
+
+class DelayedClient(ScriptedClient):
+    """The feed running 75 s behind real time: it answers 400 for anything newer, as it did on 2026-10-23."""
+
+    def frames(self, game_id, starting_time=None):
+        if starting_time is not None and starting_time > self.clock() - timedelta(seconds=75):
+            self.requests += 1
+            request = httpx.Request("GET", f"https://feed/window/{game_id}")
+            raise httpx.HTTPStatusError("400", request=request, response=httpx.Response(400, request=request))
+        return super().frames(game_id, starting_time)
+
+
+def test_live_polling_backs_off_when_the_feed_trails_further_behind():
+    script = ScriptedGame("g1", T0, 2300)
+    now = [T0 + timedelta(seconds=20)]
+    client = DelayedClient(lambda: now[0], script)
+    game = Game(provider_id="g1", game_index=1, state="inProgress", timeline_complete=False)
+    timeline.track(game, client, now[0])  # the first window takes no start time, so it always answers
+    for _ in range(40):  # ten minutes of 15-second polls
+        now[0] += timedelta(seconds=15)
+        timeline.track(game, client, now[0])
+    state = game.timeline["live_state"]
+    assert 75 <= state["lag_s"] <= 75 + timeline.LAG_STEP_S
+    # Live data keeps up to within the feed's own delay instead of freezing at the first failure.
+    assert game.timeline["live"]["clock_s"] >= 10 * 60 - 75 - timeline.LAG_STEP_S - 15

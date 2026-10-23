@@ -347,5 +347,10 @@ class LolesportsClient:
         probe = min(now - timedelta(seconds=30), first.first_frame_at + timedelta(hours=3))
         if probe <= first.first_frame_at:
             return first
-        latest = self.window(game_id, probe)
+        try:
+            latest = self.window(game_id, probe)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 400:
+                raise
+            return first  # the feed hasn't reached that time yet (broadcast delay): not finished, try next cycle
         return latest if latest is not None and latest.last_frame_at is not None else first

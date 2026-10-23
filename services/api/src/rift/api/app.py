@@ -419,9 +419,10 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
 
     @app.get("/api/v1/events/{event_id}/league")
     def event_league(event_id: uuid.UUID, user: CurrentUser, session: Db):
-        """Friends' picks on this match, each shown once its market has locked."""
-        return {"picks": views.activity(session, season_of(session), limit=200, fixture_id=event_id,
-                                        exclude_user_id=user.id)}
+        """Friends' picks on this match, each shown once its market has locked; before that only a count."""
+        season = season_of(session)
+        return {"picks": views.activity(session, season, limit=200, fixture_id=event_id, exclude_user_id=user.id),
+                "pending": views.friends_pending(session, season, event_id, user.id)}
 
     # ------------------------------------------------------------ stream
 

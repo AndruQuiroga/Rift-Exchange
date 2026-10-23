@@ -19,9 +19,17 @@ export type MarketT = {
   params: Record<string, unknown>;
   outcomes: OutcomeT[];
   result: { void: boolean; winning_codes: string[]; reason: string; revision: number } | null;
+  /** The result as soon as the data shows it, before it pays (D-032). final: graded, pays at pays_at once the
+   * data holds steady; otherwise called from live game data and confirmed after the game. */
+  call?: MarketCall | null;
   /** Futures markets about one team (Swiss record) carry it here. */
   team?: Team | null;
 };
+
+export type MarketCall = { winning_codes: string[]; void: boolean; reason: string; final: boolean; pays_at: string | null };
+
+/** Where an open pick stands on the latest data, before it pays. */
+export type PickCall = { result: "WON" | "LOST" | "VOID"; final: boolean; reason: string; pays_at: string | null };
 
 export type EventT = {
   id: string;
@@ -119,6 +127,15 @@ export type Pick = {
   settled_at: string | null;
   event: EventT | null;
   user?: { handle: string; display_name: string };
+  call?: PickCall | null;
+  close_at?: string;
+  closes_with_game?: boolean;
+};
+
+/** Friends on one match: picks revealed once their market locks, before that only a count (A-010). */
+export type FriendsOnMatch = {
+  picks: Pick[];
+  pending: { user: { handle: string; display_name: string }; picks: number; reveals_at: string }[];
 };
 
 export type Standing = {

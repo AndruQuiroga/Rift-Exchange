@@ -126,9 +126,11 @@ def _finish_game1(factory, world):
 def test_early_window_opens_at_game_load_and_closes_at_three_minutes(factory, season_games):
     with factory() as s:
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
-        before = props.duels(s, season, fx, 1, SETTINGS, T0)
-        assert before["state"] == "UPCOMING" and "loads" in before["opens_when"]
+        fx.status = "LIVE"  # the series has started (its draft is under way) but Game 1 hasn't loaded
+        before = props.duels(s, season, fx, 1, SETTINGS, fx.scheduled_at + timedelta(minutes=1))
+        assert before["phase"] == "DRAFT" and "loads" in before["opens_when"]
         assert all(row["odds"]["gold15"]["A"] is None for row in before["duels"])  # preview: no prices yet
+        s.rollback()
     _live_game1(factory, season_games)
     with factory() as s:
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
@@ -216,7 +218,7 @@ def test_any_kill_line_is_one_shared_market(factory, season_games):
     with factory() as s, s.begin():
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         stats = tournament_stats(s, season)
-        assert props.kill_lines(s, fx, 1, stats, SETTINGS, T0 - timedelta(minutes=5))["lines"] == []  # not loaded
+        assert props.kill_lines(s, fx, 1, stats, SETTINGS, at)["phase"] == "LIVE"
         grid = props.kill_lines(s, fx, 1, stats, SETTINGS, at)
         offered = [row["line"] for row in grid["lines"]]
         assert grid["open"] and offered and min(float(x) for x in offered) >= props.KILL_LINE_FLOOR
@@ -460,3 +462,56 @@ def test_open_kill_lines_and_duels_reprice_from_each_frame(factory, season_games
         stamp = (T0 + timedelta(seconds=150)).isoformat()
         assert s.get(Outcome, ids[2]).odds < before  # five kills already: the over is shorter
         assert s.get(Market, ids[0]).params["priced_at"] == s.get(Market, ids[1]).params["priced_at"] == stamp
+
+
+def test_blind_duels_and_kill_lines_before_the_draft_then_after_it(factory, season_games):
+    """D-031: blind picks before the draft (expected players, no champions), none during it, then the
+    after-draft markets with champions from the first frame until 3:00. Separate markets throughout."""
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        stats = tournament_stats(s, season)
+        grid = props.duels(s, season, fx, 1, SETTINGS, T0)
+        mid = next(d for d in grid["duels"] if d["role"] == "mid")
+        assert grid["phase"] == "BLIND" and grid["close_at"] == fx.scheduled_at.isoformat()
+        assert mid["odds"]["gold15"]["A"] and "champion" not in mid["a"]
+        blind = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, T0)
+        assert blind.template_key.endswith(":blind") and blind.params["blind"] and not blind.params.get("early")
+        assert blind.close_at == fx.scheduled_at and "(blind)" in blind.title
+        lines = props.kill_lines(s, fx, 1, stats, SETTINGS, T0)
+        assert lines["phase"] == "BLIND" and lines["lines"]
+        blind_line = props.ensure_kill_line(s, season, fx, 1, lines["lines"][0]["line"], stats, SETTINGS, T0)
+        assert blind_line.params["blind"] and blind_line.model_key == "negbin_blind_v1"
+        blind_id = blind.id
+
+        fx.status = "LIVE"  # drafting: nothing to pick until the game loads
+        s.flush()
+        with pytest.raises(props.PropsError, match="draft"):
+            props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, fx.scheduled_at + timedelta(minutes=2))
+        with pytest.raises(props.PropsError, match="draft"):
+            props.ensure_kill_line(s, season, fx, 1, lines["lines"][0]["line"], stats, SETTINGS,
+                                   fx.scheduled_at + timedelta(minutes=2))
+    _live_game1(factory, season_games)
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        after = props.ensure_duel(s, season, fx, 1, "mid", "gold15", SETTINGS, T0 + timedelta(minutes=1))
+        assert after.id != blind_id and after.params["early"] and after.params["a_champion"] == "C3"
+    _finish_game1(factory, season_games)
+    with factory() as s:
+        assert grade_market(s, s.get(Market, blind_id)).winning_codes == ["A"]
+
+
+def test_a_blind_duel_voids_when_a_named_player_does_not_play(factory, season_games):
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        blind_id = props.ensure_duel(s, season, fx, 1, "top", "gold15", SETTINGS, T0).id
+    _live_game1(factory, season_games)
+    with factory() as s, s.begin():
+        g = s.execute(select(Game).where(Game.provider_id == "g1")).scalar_one()
+        tl = dict(g.timeline)
+        tl["participants"] = {pid: ({**p, "player_id": "a-sub", "name": "A sub"} if p["player_id"] == "a-top" else p)
+                              for pid, p in tl["participants"].items()}
+        g.timeline = tl
+    _finish_game1(factory, season_games)
+    with factory() as s:
+        grade = grade_market(s, s.get(Market, blind_id))
+        assert grade.status == "VOID" and "did not play" in grade.reason

@@ -6,9 +6,34 @@ import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
+import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { STAKES, useSlip } from "@/lib/slip";
-import type { Quote, QuoteItem, Receipt } from "@/lib/types";
-import { IconClose } from "./icons";
+import type { EventT, Quote, QuoteItem, Receipt } from "@/lib/types";
+import { IconCheck, IconClose } from "./icons";
+import { LockTimer } from "./Timing";
+
+/** After placing: who else is on this match. Hidden picks show as a count until their market locks (A-010). */
+function ReceiptFriends({ event }: { event: EventT }) {
+  const { picks, pending } = useFriendsOnMatch(event.id);
+  const names = [...new Set([...pending.map((r) => r.user.display_name), ...picks.map((p) => p.user?.display_name ?? "A friend")])];
+  if (!names.length) {
+    return <p className="muted" style={{ fontSize: 13, marginTop: 12 }}>No friends on {event.team_a?.code} vs {event.team_b?.code} yet. You&apos;re first in.</p>;
+  }
+  const hidden = pending.reduce((n, r) => n + r.picks, 0);
+  const reveal = pending.map((r) => r.reveals_at).sort()[0];
+  return (
+    <Link className="receipt-friends" href={`/events/${event.id}`}>
+      <span className="fdots">{names.slice(0, 4).map((n) => <span key={n} className="fdot">{initials(n)}</span>)}</span>
+      <span style={{ minWidth: 0, flex: 1 }}>
+        <b>{names.join(", ")}</b> {names.length === 1 ? "is" : "are"} on {event.team_a?.code} vs {event.team_b?.code}
+        <span className="muted num" style={{ display: "block", fontSize: 12 }}>
+          {hidden ? <>{hidden} hidden pick{hidden === 1 ? "" : "s"} · <LockTimer at={reveal} label="reveal in" compact /></> : `${picks.length} pick${picks.length === 1 ? "" : "s"} revealed`}
+        </span>
+      </span>
+      <span aria-hidden="true">›</span>
+    </Link>
+  );
+}
 
 type Phase =
   | { kind: "edit" }
@@ -157,26 +182,41 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
             </button>
           ) : null}
         </div>
-        <div className="notice success" role="status">
-          {r.selections.length} pick{r.selections.length === 1 ? "" : "s"} accepted at{" "}
-          {new Date(r.accepted_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })}. Odds are locked in.
+        <div className="receipt-hero" role="status">
+          <span className="tick" aria-hidden="true"><IconCheck width={22} height={22} /></span>
+          <span>
+            <b>{r.selections.length} pick{r.selections.length === 1 ? "" : "s"} locked in</b>
+            <span className="muted num" style={{ display: "block", fontSize: 13 }}>
+              at {new Date(r.accepted_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" })} · odds frozen ·{" "}
+              {rc(r.selections.reduce((n, s) => n + s.potential_return_rc, 0))} RC back if all win
+            </span>
+          </span>
         </div>
         <div style={{ marginTop: 12 }}>
-          {r.selections.map((s) => (
-            <div className="slip-line" key={s.id}>
+          {r.selections.map((s, i) => (
+            <div className="slip-line reveal" style={{ animationDelay: `${i * 60}ms` }} key={s.id}>
               <div className="top">
                 <div>
                   <div className="sel">{s.outcome_label}</div>
-                  <div className="ctx">{s.market_title}</div>
+                  <div className="ctx">{s.market_title}{s.event ? ` · ${s.event.team_a?.code} vs ${s.event.team_b?.code}` : ""}</div>
                 </div>
                 <div className="px num">{fmtOdds(s.odds)}</div>
               </div>
               <div className="if-correct num">
                 Staked <b>{rc(s.stake_rc)} RC</b> · returns <b>{rc(s.potential_return_rc)} RC</b> if correct
               </div>
+              <div className="receipt-when">
+                {s.closes_with_game && s.close_at && Date.parse(s.close_at) - Date.now() > 3600_000
+                  ? <span className="timer">Open until <b>3:00 of the game</b></span>
+                  : <LockTimer at={s.close_at} label="Betting closes in" />}
+                <span className="muted">Result shows the moment it&apos;s known; credits follow 5 min later once the data holds.</span>
+              </div>
             </div>
           ))}
         </div>
+        {[...new Map(r.selections.filter((s) => s.event).map((s) => [s.event!.id, s.event!])).values()].map((e) => (
+          <ReceiptFriends key={e.id} event={e} />
+        ))}
         <div className="totals num">
           <div>
             <span className="sub">Available now</span>
@@ -248,6 +288,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                       {l.marketTitle}
                       {groups.length > 1 ? null : ` · ${l.eventLabel}`}
                     </div>
+                    {l.closeAt && !(l.closesWithGame && Date.parse(l.closeAt) - Date.now() > 3600_000) ? <LockTimer at={l.closeAt} compact /> : null}
                   </div>
                   <div className="px num" aria-live="polite">
                     {was ? <span className="was">{fmtOdds(was)}</span> : null}
