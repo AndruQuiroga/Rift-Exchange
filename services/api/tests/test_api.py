@@ -92,6 +92,11 @@ def test_place_retry_and_privacy(api, factory, world):
     assert kai.get(f"/api/v1/events/{event_id}/league").json()["picks"] == []  # never your own
     standings = mika.get("/api/v1/league/standings").json()["standings"]
     assert {r["user"]["handle"] for r in standings} == {"kai", "mika"}
+    # Ranked by bankroll: the 400 kai has in play still counts, so placing a bet never drops you down the table.
+    kai_row = next(r for r in standings if r["user"]["handle"] == "kai")
+    assert kai_row["open_stake_rc"] == 400 and kai_row["bankroll_rc"] == kai_row["available_rc"] + 400
+    assert [r["rank"] for r in standings] == [1, 1]  # same grants, nothing settled
+    assert {(r["won"], r["lost"], r["won_today"], r["lost_today"], r["today_rank"]) for r in standings} == {(0, 0, 0, 0, 1)}
 
 
 def test_odds_change_returns_new_quote(api, factory, world):
@@ -337,3 +342,12 @@ def test_today_net_counts_picks_settled_today_only(api, factory, world):
         wallet = s.execute(sel_(Wallet).join(Selection, Selection.user_id == Wallet.user_id)).scalars().first()
         assert today_net(s, wallet, now=settled_at) == 62  # 100 at 1.62
         assert today_net(s, wallet, now=settled_at + timedelta(days=1)) == 0  # a new day starts at zero
+        # The league's daily standings use the same day: a win today, then a fresh day with the season record kept.
+        from rift.api.views import standings
+        from rift.models import Season
+
+        season = s.get(Season, wallet.season_id)
+        row = standings(s, season, now=settled_at)[0]
+        assert (row["won"], row["lost"], row["won_today"], row["lost_today"], row["today_net_rc"]) == (1, 0, 1, 0, 62)
+        row = standings(s, season, now=settled_at + timedelta(days=1))[0]
+        assert (row["won"], row["won_today"]) == (1, 0)

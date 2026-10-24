@@ -362,14 +362,18 @@ def wallet_summary(db: Session, wallet: Wallet) -> dict:
             "today_net_rc": today_net(db, wallet)}
 
 
-def today_net(db: Session, wallet: Wallet, now: datetime | None = None) -> int:
-    """What your picks settled today won or lost (return minus stake), plus Swiss card rewards: the venue's
-    calendar day, as match days are. Grants don't count; cancels only for what they kept."""
-    season = db.get(Season, wallet.season_id)
+def venue_day(season: Season, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Today on the venue's calendar, as match days are: [start, end)."""
     tz = ZoneInfo(season.timezone)
     now = now or datetime.now(UTC)
     start = datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tz)
-    end = start + timedelta(days=1)
+    return start, start + timedelta(days=1)
+
+
+def today_net(db: Session, wallet: Wallet, now: datetime | None = None) -> int:
+    """What your picks settled today won or lost (return minus stake), plus Swiss card rewards: the venue's
+    calendar day, as match days are. Grants don't count; cancels only for what they kept."""
+    start, end = venue_day(db.get(Season, wallet.season_id), now)
     picks = db.execute(select(func.coalesce(func.sum(Selection.return_rc - Selection.stake_rc), 0)).where(
         Selection.user_id == wallet.user_id, *_COUNTED,
         Selection.settled_at >= start, Selection.settled_at < end)).scalar()
@@ -503,20 +507,40 @@ def my_selections(db: Session, user: User, state: str | None) -> list[dict]:
     return selection_rows(db, list(db.execute(q).scalars()))
 
 
-def standings(db: Session, season: Season) -> list[dict]:
+def _record(db: Session, season: Season, user_id: uuid.UUID, since: datetime | None = None,
+            until: datetime | None = None) -> tuple[int, int]:
+    """(won, lost) of this season's settled picks: a win returned more than its stake, a loss returned nothing.
+    Voids, cancels and half-back pushes count as neither. since/until: settled in that window."""
+    q = (select(Selection.status, Selection.stake_rc, Selection.return_rc)
+         .join(Market, Market.id == Selection.market_id)
+         .where(Market.season_id == season.id, Selection.user_id == user_id,
+                Selection.status.in_(("WON", "PARTIAL", "LOST"))))
+    if since is not None:
+        q = q.where(Selection.settled_at >= since, Selection.settled_at < until)
+    rows = db.execute(q).all()
+    return (sum(1 for st, stake, ret in rows if st != "LOST" and ret > stake),
+            sum(1 for st, _stake, _ret in rows if st == "LOST"))
+
+
+def standings(db: Session, season: Season, now: datetime | None = None) -> list[dict]:
+    """Everyone's season and today. Ranked by bankroll (available plus in play), so a big open bet doesn't drop
+    you down the table; today_rank orders the same rows by today's net."""
     wallets = list(db.execute(select(Wallet).where(Wallet.season_id == season.id)).scalars())
     users = {u.id: u for u in db.execute(select(User).where(User.id.in_([w.user_id for w in wallets]))).scalars()}
+    start, end = venue_day(season, now)
     rows = []
     for w in wallets:
-        summary = wallet_summary(db, w)
-        record = dict(db.execute(select(Selection.status, func.count()).where(Selection.user_id == w.user_id)
-                                 .group_by(Selection.status)).all())
+        summary = {**wallet_summary(db, w), "today_net_rc": today_net(db, w, now)}
+        won, lost = _record(db, season, w.user_id)
+        won_today, lost_today = _record(db, season, w.user_id, start, end)
         rows.append({"user": {"id": str(w.user_id), "handle": users[w.user_id].handle,
                               "display_name": users[w.user_id].display_name}, **summary,
-                     "won": record.get("WON", 0) + record.get("PARTIAL", 0), "lost": record.get("LOST", 0)})
-    rows.sort(key=lambda r: -r["available_rc"])
+                     "bankroll_rc": summary["available_rc"] + summary["open_stake_rc"],
+                     "won": won, "lost": lost, "won_today": won_today, "lost_today": lost_today})
+    rows.sort(key=lambda r: -r["bankroll_rc"])
     for i, r in enumerate(rows):
-        r["rank"] = 1 + sum(1 for o in rows if o["available_rc"] > r["available_rc"])
+        r["rank"] = 1 + sum(1 for o in rows if o["bankroll_rc"] > r["bankroll_rc"])
+        r["today_rank"] = 1 + sum(1 for o in rows if o["today_net_rc"] > r["today_net_rc"])
         r["index"] = i
     open_markets = db.execute(select(func.count()).select_from(Selection).where(Selection.status == "OPEN")).scalar()
     for r in rows:

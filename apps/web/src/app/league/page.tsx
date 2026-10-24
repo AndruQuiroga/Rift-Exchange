@@ -1,43 +1,75 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
 import { PickStatus } from "@/components/bits";
 import { odds as fmtOdds, rc } from "@/lib/format";
+import { useMe } from "@/lib/hooks";
 import type { Pick, Standing } from "@/lib/types";
+
+const signed = (n: number) => `${n >= 0 ? "+" : "−"}${rc(Math.abs(n))}`;
+const record = (w: number, l: number) => `${w}W–${l}L`;
 
 export default function LeaguePage() {
   const { data: league } = useSWR<{ standings: Standing[] }>("/league/standings");
   const { data: activity } = useSWR<{ activity: Pick[] }>("/league/activity");
+  const { data: me } = useMe();
+  const [view, setView] = useState<"today" | "season">("today");
   const provisional = league?.standings.some((s) => s.provisional);
+  // Today: by today's net (then bankroll). Season: by bankroll, available plus what is in play.
+  const rows = [...(league?.standings ?? [])].sort((a, b) =>
+    view === "today" ? b.today_net_rc - a.today_net_rc || b.bankroll_rc - a.bankroll_rc : b.bankroll_rc - a.bankroll_rc);
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>League</h1>
-          <p>Ranked by available credits{provisional ? " · provisional while picks are open" : ""}.</p>
+          <p>
+            {view === "today" ? "Today's net and record, settled picks only" : "Ranked by bankroll: available plus in play"}
+            {provisional ? " · moves as open picks settle" : ""}.
+          </p>
         </div>
       </div>
-      <div className="rows">
+      <div className="segmented" role="group" aria-label="Standings">
+        <button aria-pressed={view === "today"} onClick={() => setView("today")}>Today</button>
+        <button aria-pressed={view === "season"} onClick={() => setView("season")}>All time</button>
+      </div>
+      <div className="rows" style={{ marginTop: 12 }}>
         {!league ? (
           <div className="skeleton" style={{ border: 0 }} />
         ) : (
-          league.standings.map((s) => (
-            <div className={`standing${s.rank === 1 ? " leader" : ""}`} key={s.user.id}>
-              <div className="rank num">{s.rank}</div>
-              <div>
-                <div className="who">{s.user.display_name}</div>
-                <div className="meta num">
-                  {rc(s.open_stake_rc)} in play · {s.won}W–{s.lost}L ·{" "}
-                  <span className={s.realized_net_rc >= 0 ? "win" : "loss"}>
-                    {s.realized_net_rc >= 0 ? "+" : "−"}
-                    {rc(Math.abs(s.realized_net_rc))} net
-                  </span>
+          rows.map((s) => {
+            const rank = view === "today" ? s.today_rank : s.rank;
+            const you = s.user.handle === me?.user.handle;
+            return (
+              <div className={`standing${rank === 1 ? " leader" : ""}${you ? " you" : ""}`} key={s.user.id}>
+                <div className="rank num">{rank}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div className="who">{s.user.display_name}{you ? <span className="you-tag">You</span> : null}</div>
+                  <div className="meta num">
+                    {view === "today" ? (
+                      <>{rc(s.open_stake_rc)} in play · season {record(s.won, s.lost)}{" "}
+                        <span className={s.realized_net_rc >= 0 ? "win" : "loss"}>{signed(s.realized_net_rc)}</span></>
+                    ) : (
+                      <>{rc(s.available_rc)} available · {rc(s.open_stake_rc)} in play</>
+                    )}
+                  </div>
+                </div>
+                <div className="bal num">
+                  {view === "today" ? (
+                    <span className={s.today_net_rc > 0 ? "win" : s.today_net_rc < 0 ? "loss" : undefined}>{signed(s.today_net_rc)}</span>
+                  ) : (
+                    rc(s.bankroll_rc)
+                  )}
+                  <small>
+                    {view === "today" ? `${record(s.won_today, s.lost_today)} today`
+                      : <>{record(s.won, s.lost)} · <span className={s.realized_net_rc >= 0 ? "win" : "loss"}>{signed(s.realized_net_rc)} net</span></>}
+                  </small>
                 </div>
               </div>
-              <div className="bal num">{rc(s.available_rc)}</div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
