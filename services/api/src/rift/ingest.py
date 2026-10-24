@@ -79,6 +79,8 @@ def _apply_match(session: Session, season: Season, m: ScheduleMatch, now: dateti
     fixture.team_b_id = teams[1].id if teams[1] else None
     fixture.scheduled_at = m.start_time
     fixture.local_date = m.start_time.astimezone(tz).date()
+    if status == "LIVE" and fixture.live_at is None:
+        fixture.live_at = now  # D-039: starts the draft countdown (when the schedule saw it first)
     fixture.status, fixture.team_a_wins, fixture.team_b_wins = status, a_wins, b_wins
     if status == "COMPLETED":
         winner = 0 if a_wins == need else 1 if b_wins == need else None
@@ -114,6 +116,7 @@ def mark_live(session: Session, live_ids: set[str], now: datetime) -> int:
                                                  Fixture.status == "SCHEDULED")).scalars().all()
     for f in rows:
         f.status, f.data_changed_at, f.updated_at = "LIVE", now, now
+        f.live_at = f.live_at or now  # D-039: starts the draft countdown
         session.add(OutboxEvent(type="event.updated", entity_id=f.provider_id, payload={"status": "LIVE"}))
     session.flush()
     return len(rows)

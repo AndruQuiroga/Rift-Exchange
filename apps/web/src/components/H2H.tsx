@@ -1,16 +1,18 @@
 "use client";
 
 import type { ReactNode } from "react";
+import useSWR from "swr";
 import { oddsSpoken, potentialReturn, rc } from "@/lib/format";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { usePlaced } from "@/lib/hooks";
 import { useSlip } from "@/lib/slip";
 import { teamColor, teamName } from "@/lib/teams";
-import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
+import type { EventT, MarketT, OutcomeT, Pick, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
 import { eventLabel } from "./EventCard";
 import { IconCheck, IconLock } from "./icons";
 import { Odds } from "./Odds";
+import { CancelPick } from "./CancelPick";
 import { PayoutNote } from "./Timing";
 
 /** Friends who hold this outcome (shown once its market locks): a stack of initials. */
@@ -71,6 +73,7 @@ export function PickButton({ event, market, outcome, className = "", label, chil
 export function PickNote({ market }: { market: MarketT }) {
   const slip = useSlip();
   const placed = usePlaced();
+  const { data: openPicks } = useSWR<{ picks: Pick[] }>("/me/picks?state=open");
   const line = slip.lines.find((l) => l.marketId === market.id);
   if (line) {
     return (
@@ -91,6 +94,7 @@ export function PickNote({ market }: { market: MarketT }) {
     ) : null;
   }
   const winning = !!call && !call.void && held.some((o) => call.winning_codes.includes(o.code));
+  const mine = (openPicks?.picks ?? []).filter((p) => p.market_id === market.id);
   return (
     <p className={`pk-note placed num${call ? " reveal" : ""}`}>
       Placed · {held.map((o) => `${o.label} ${rc(placed.get(o.id) ?? 0)} RC`).join(" · ")}
@@ -101,6 +105,7 @@ export function PickNote({ market }: { market: MarketT }) {
           {winning || call.void ? <>, <PayoutNote payAt={call.pays_at} final={call.final} /></> : null}
         </>
       ) : null}
+      {mine.map((p) => <CancelPick key={p.id} pick={p} compact />)}
     </p>
   );
 }

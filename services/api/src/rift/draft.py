@@ -31,7 +31,15 @@ from rift.champions import champion_key
 from rift.config import Settings
 from rift.display import team_name
 from rift.domain.pricing import price
-from rift.markets import MarketSpec, OutcomeSpec, champion_label, next_game, series_close, upsert_market
+from rift.markets import (
+    MarketSpec,
+    OutcomeSpec,
+    champion_label,
+    draft_countdown_end,
+    next_game,
+    series_close,
+    upsert_market,
+)
 from rift.models import Fixture, Game, Market, Season, Team
 from rift.timeline import burned_champions
 
@@ -154,8 +162,13 @@ def draft_window(session: Session, fixture: Fixture, game_index: int, now: datet
     winner markets that stay open through it. Game 1 closes at the series start (or once the series is live);
     Game N opens when Game N-1 ends and closes NEXT_GAME_WINDOW later, before Game N's draft."""
     if game_index == 1:
-        close = series_close(fixture)  # D-037: really the series going live; this is the backstop
-        return DraftWindow(fixture.status == "SCHEDULED" and now < close, close)
+        if fixture.status == "SCHEDULED":
+            close = series_close(fixture)  # D-037: really the series going live; this is the backstop
+            return DraftWindow(now < close, close)
+        g1 = session.execute(select(Game).where(Game.fixture_id == fixture.id, Game.game_index == 1)).scalar_one_or_none()
+        end = draft_countdown_end(fixture, g1.started_at if g1 else None) if fixture.status == "LIVE" else None
+        # D-039: the countdown after going live; no countdown (live before it existed, or over) means closed now.
+        return DraftWindow(end is not None and now < end, end or now)
     games = list(session.execute(select(Game).where(Game.fixture_id == fixture.id)).scalars())
     nxt = next_game(fixture, games)
     if nxt is None or nxt[0] != game_index:

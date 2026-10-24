@@ -125,3 +125,13 @@
   .match-layout.no-rivals { grid-template-columns: minmax(0, 1fr); grid-template-areas: "hero" "markets"; }
   .main-inner:has(.match-layout.no-rivals) { max-width: 760px; }
 }
+
+/* Cancel a pick before its market locks (D-038). */
+.cancel-pick { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pick > .cancel-pick { margin: 8px 0 2px; }
+.pk-note .cancel-pick { margin-left: 8px; vertical-align: middle; }
+.cp-open { min-height: 30px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--muted); background: var(--surface-3); }
+.cp-open:hover { color: var(--text); }
+.cp-yes { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 800; background: var(--warn); color: #2a1e05; }
+.cp-no { min-height: 32px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--muted); }
+.cancel-pick.compact .cp-open { min-height: 26px; padding: 0 8px; font-size: 11px; }

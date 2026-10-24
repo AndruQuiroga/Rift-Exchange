@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { STAKES, useSlip } from "@/lib/slip";
+import { stakeLimits, type StakeLimit } from "@/lib/stake-limits";
 import type { EventT, Quote, QuoteItem, Receipt } from "@/lib/types";
 import { IconCheck, IconClose } from "./icons";
+import { CancelPick } from "./CancelPick";
 import { LockTimer, MarketClose } from "./Timing";
 
 /** After placing: who else is on this match. Hidden picks show as a count until their market locks (A-010). */
@@ -61,6 +63,9 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const { mutate } = useSWRConfig();
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
   const [error, setError] = useState<string | null>(null);
+  const [limits, setLimits] = useState<Record<string, StakeLimit>>({});
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
   // Picks whose stake is being typed by hand; the rest show their amount as a chip.
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const keyRef = useRef<{ quoteId: string; key: string } | null>(null);
@@ -71,6 +76,21 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const possible = lines.reduce((s, l) => s + (l.stake ? potentialReturn(l.stake, l.odds) : 0), 0);
   const missing = lines.some((l) => !l.stake || l.stake <= 0);
   const over = staked > available;
+  const invalidLines = lines.filter((line) => limits[line.marketId] && (line.stake ?? 0) > limits[line.marketId].remaining);
+  useEffect(() => {
+    panelRef.current?.querySelector<HTMLElement>("[data-stake-error]")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [limits]);
+
+  function showError(cause: unknown, fallback: string) {
+    const affected = cause instanceof ApiError && cause.code === "STAKE_LIMIT" ? stakeLimits(cause.details) : [];
+    if (affected.length) {
+      setLimits((previous) => ({ ...previous, ...Object.fromEntries(affected.map((limit) => [limit.marketId, limit])) }));
+      setPhase({ kind: "edit" });
+      setError(null);
+      return;
+    }
+    setError(cause instanceof ApiError ? cause.message : fallback);
+  }
   // One row of amounts sets every pick at once (and becomes the stake new picks start with); "All" splits the balance.
   function preset(amount: number | "all") {
     setEditing(new Set());
@@ -102,7 +122,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
       setPhase({ kind: "review", quote, previous });
     } catch (e) {
       setPhase({ kind: "edit" });
-      setError(e instanceof ApiError ? e.message : "Couldn't get a quote.");
+      showError(e, "Couldn't get a quote.");
     }
   }
 
@@ -139,7 +159,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
           setPhase({ kind: "review", quote: fresh, previous: previousOdds ?? Object.fromEntries(quote.items.map((i) => [i.outcome_id, i.odds])) });
         } catch (inner) {
           setPhase({ kind: "edit" });
-          setError(inner instanceof ApiError ? inner.message : "Couldn't refresh prices.");
+          showError(inner, "Couldn't refresh prices.");
         }
         return;
       }
@@ -159,7 +179,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
         return;
       }
       setPhase({ kind: "edit" });
-      setError(e.message);
+      showError(e, "Couldn't place your picks.");
     }
   }
 
@@ -208,6 +228,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
               <div className="receipt-when">
                 <MarketClose at={s.close_at} known={s.close_known} rule={s.close_rule} scheduledAt={s.event?.scheduled_at} label="Betting closes in" />
                 <span className="muted">Result shows the moment it&apos;s known; credits follow 5 min later once the data holds.</span>
+                <CancelPick pick={s} compact />
               </div>
             </div>
           ))}
@@ -245,7 +266,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
   }, []);
 
   return (
-    <div>
+    <div ref={panelRef}>
       <div className="slip-head">
         <div>
           <h2>Your slip</h2>
@@ -260,6 +281,12 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
         ) : null}
       </div>
 
+      {invalidLines.length > 0 ? (
+        <div className="notice error" role="alert" style={{ marginBottom: 14 }}>
+          <strong>No bets were placed.</strong> {invalidLines.length === 1 ? "One pick exceeds its" : `${invalidLines.length} picks exceed their`} total market limit.
+          {" "}Adjust or remove the highlighted {invalidLines.length === 1 ? "pick" : "picks"} below; your other picks are saved.
+        </div>
+      ) : null}
       {lines.length === 0 ? (
         <div className="empty" style={{ padding: "24px 16px" }}>
           <h3>Slip is empty</h3>
@@ -277,8 +304,11 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
               ) : null}
           {g.lines.map((l) => {
             const was = reviewing?.previous?.[l.outcomeId];
+            const limit = limits[l.marketId];
+            const invalid = !!limit && (l.stake ?? 0) > limit.remaining;
+            const limitId = `${panelId}-${l.outcomeId}-limit`;
             return (
-              <div className="slip-line" key={l.outcomeId}>
+              <div className="slip-line" key={l.outcomeId} data-stake-error={invalid || undefined}>
                 <div className="top">
                   <div style={{ minWidth: 0 }}>
                     <div className="sel">{l.outcomeLabel}</div>
@@ -303,7 +333,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                           type="button"
                           className="num"
                           aria-pressed={l.stake === v}
-                          disabled={phase.kind !== "edit"}
+                          disabled={phase.kind !== "edit" || (!!limit && v > limit.remaining)}
                           onClick={() => slip.setStake(l.outcomeId, v)}
                         >
                           {v >= 1000 ? `${v / 1000}K` : v}
@@ -340,6 +370,8 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                       placeholder="Stake"
                       autoFocus
                       value={l.stake ?? ""}
+                      aria-invalid={invalid || undefined}
+                      aria-describedby={limit ? limitId : undefined}
                       disabled={phase.kind !== "edit"}
                       onChange={(e) => {
                         const digits = e.target.value.replace(/\D/g, "").slice(0, 12);
@@ -353,6 +385,24 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                     <IconClose width={18} height={18} />
                   </button>
                 </div>
+                {limit ? (
+                  <div id={limitId} className={invalid ? "notice error" : "hint"} style={{ marginTop: 8 }}>
+                    <strong>{rc(limit.cap)} RC total limit on this market.</strong> You already have {rc(limit.placed)} RC staked across all bets; you can add {rc(limit.remaining)} RC more.
+                    {invalid ? (
+                      <div style={{ marginTop: 8 }}>
+                        {limit.remaining > 0 ? (
+                          <button type="button" className="btn secondary" onClick={() => slip.setStake(l.outcomeId, limit.remaining)}>
+                            Use {rc(limit.remaining)} RC
+                          </button>
+                        ) : (
+                          <button type="button" className="btn secondary" onClick={() => slip.remove(l.outcomeId)}>
+                            Remove this pick — limit reached
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 <div className="if-correct num">
                   If correct: <b>{l.stake ? `${rc(potentialReturn(l.stake, l.odds))} RC` : "—"}</b>
                   {l.stake ? ` (+${rc(potentialReturn(l.stake, l.odds) - l.stake)} profit)` : ""}
@@ -427,8 +477,8 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                 </button>
               </>
             ) : (
-              <button className="btn" style={{ marginTop: 10 }} disabled={missing || over || staked === 0} onClick={review}>
-                {missing ? "Enter a stake for each pick" : "Review picks"}
+              <button className="btn" style={{ marginTop: 10 }} disabled={missing || over || staked === 0 || invalidLines.length > 0} onClick={review}>
+                {invalidLines.length ? "Fix highlighted stakes to continue" : missing ? "Enter a stake for each pick" : "Review picks"}
               </button>
             )}
           </div>

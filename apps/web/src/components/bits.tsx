@@ -107,6 +107,7 @@ export function PickStatus({ pick }: { pick: Pick }) {
     return <span className={`status ${ban ? "void" : "won"}`}><span className="dot" />{ban ? "Half back" : "Right side"}</span>;
   }
   if (pick.status === "LOST") return <span className="status lost"><span className="dot" />Lost</span>;
+  if (pick.status === "CANCELLED") return <span className="status"><span className="dot" />Cancelled</span>;
   if (pick.status === "VOID") return <span className="status void"><span className="dot" />Void</span>;
   if (pick.call) return <CallStatus call={pick.call} />;
   if (pick.market_state === "HOLD") return <span className="status hold"><span className="dot" />Awaiting data</span>;

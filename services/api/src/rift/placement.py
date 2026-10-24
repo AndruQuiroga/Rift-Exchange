@@ -44,12 +44,31 @@ def _check_cap(session: Session, market: Market, user_id: uuid.UUID, stake_rc: i
     if cap is None:
         return
     placed = session.execute(select(func.coalesce(func.sum(Selection.stake_rc), 0)).where(
-        Selection.market_id == market.id, Selection.user_id == user_id, Selection.status != "VOID")).scalar()
+        Selection.market_id == market.id, Selection.user_id == user_id,
+        Selection.status.notin_(("VOID", "CANCELLED")))).scalar()
     room = max(cap - int(placed), 0)
     if stake_rc > room:
-        already = f" You have {int(placed):,} RC on it already." if placed else ""
-        raise PlacementError("STAKE_LIMIT", f"Up to {cap:,} RC per prediction.{already}",
-                             {"market_id": str(market.id), "cap_rc": cap, "max_stake_rc": room})
+        raise PlacementError(
+            "STAKE_LIMIT",
+            f"{market.title}: {cap:,} RC total limit across all bets on this market. "
+            f"You already have {int(placed):,} RC staked; you can add {room:,} RC more.",
+            {"market_id": str(market.id), "market_title": market.title, "cap_rc": cap,
+             "placed_rc": int(placed), "max_stake_rc": room, "requested_stake_rc": stake_rc})
+
+
+def _check_caps(session: Session, items: list[tuple[Market, int]], user_id: uuid.UUID, cap_rc: int) -> None:
+    violations = []
+    for market, stake in items:
+        try:
+            _check_cap(session, market, user_id, stake, cap_rc)
+        except PlacementError as error:
+            if error.code != "STAKE_LIMIT":
+                raise
+            violations.append({**error.details, "message": error.message})
+    if violations:
+        message = violations[0]["message"] if len(violations) == 1 else \
+            f"{len(violations)} picks exceed their market's total stake limit. No bets were placed."
+        raise PlacementError("STAKE_LIMIT", message, {**violations[0], "violations": violations})
 
 
 @dataclass
@@ -121,8 +140,6 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
                                  {"market_id": str(market.id)})
         markets_seen.add(market.id)
         _check_open(session, market, outcome, now)
-        if stake_cap_rc is not None:
-            _check_cap(session, market, user_id, item.stake_rc, stake_cap_rc)
         out_items.append({
             "outcome_id": str(outcome.id), "market_id": str(market.id), "stake_rc": item.stake_rc,
             "odds": str(outcome.odds.quantize(Decimal("0.01"))), "odds_version": outcome.odds_version,
@@ -131,6 +148,8 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
             if market.params.get("consolation") else None,
             "market_title": market.title, "outcome_label": outcome.label,
         })
+    if stake_cap_rc is not None:
+        _check_caps(session, [(found[i.outcome_id][1], i.stake_rc) for i in items], user_id, stake_cap_rc)
     total = sum(i.stake_rc for i in items)
     wallet = _wallet(session, season_id, user_id)
     quote = Quote(user_id=user_id, season_id=season_id, items=out_items, total_stake_rc=total,
@@ -200,8 +219,8 @@ def accept_ticket(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID,
 
     wallet = ledger.lock_wallet(session, _wallet(session, season_id, user_id).id)
     if stake_cap_rc is not None:  # under the wallet lock, so two slips at once can't both use the same room
-        for item in quote.items:
-            _check_cap(session, markets[uuid.UUID(item["market_id"])], user_id, item["stake_rc"], stake_cap_rc)
+        _check_caps(session, [(markets[uuid.UUID(i["market_id"])], i["stake_rc"]) for i in quote.items],
+                    user_id, stake_cap_rc)
     if quote.total_stake_rc > wallet.available_rc:
         raise PlacementError("INSUFFICIENT_CREDITS",
                              f"Available {wallet.available_rc:,} RC; your slip needs {quote.total_stake_rc:,} RC.",
@@ -242,3 +261,35 @@ def _existing_ticket(session: Session, season_id: uuid.UUID, user_id: uuid.UUID,
         select(Ticket).where(Ticket.user_id == user_id, Ticket.season_id == season_id,
                              Ticket.idempotency_key == key)
     ).scalar_one_or_none()
+
+
+def cancel_selection(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, selection_id: uuid.UUID,
+                     now: datetime) -> Selection:
+    """Take back a pick before its market locks (D-038): the whole stake comes back and it never settles.
+
+    Only your own open pick, only while its market is open, and not once its series has gone live for a
+    market that locks at the draft (the worker locking it a poll later must not leave a window).
+    """
+    sel = session.execute(select(Selection).where(Selection.id == selection_id).with_for_update()).scalar_one_or_none()
+    if sel is None or sel.user_id != user_id:
+        raise PlacementError("UNKNOWN_PICK", "That pick doesn't exist.")
+    market = session.execute(select(Market).where(Market.id == sel.market_id).with_for_update()).scalar_one()
+    if market.season_id != season_id:
+        raise PlacementError("UNKNOWN_PICK", "That pick doesn't exist.")
+    if sel.status != "OPEN" or sel.settled_revision:
+        raise PlacementError("NOT_CANCELLABLE", "That pick is already settled or cancelled.")
+    fixture = session.get(Fixture, market.fixture_id) if market.fixture_id else None
+    follows_game = market.params.get("early") or market.params.get("through_draft") or (market.params.get("game_index") or 1) > 1
+    started = fixture is not None and fixture.status != "SCHEDULED" and not follows_game
+    if market.state != "OPEN" or market.close_at <= now or started:
+        raise PlacementError("MARKET_LOCKED", "Betting on this has closed, so the pick stands.")
+    wallet = session.execute(select(Wallet).where(Wallet.season_id == season_id, Wallet.user_id == user_id)
+                             ).scalar_one()
+    wallet = ledger.lock_wallets(session, {wallet.id})[wallet.id]
+    ledger.credit(session, wallet, kind="VOID_REFUND", amount_rc=sel.stake_rc, key=f"cancel:{sel.id}",
+                  ref_type="selection", ref_id=str(sel.id), memo=f"Cancelled: {sel.rules_snapshot.get('title', '')}")
+    sel.status, sel.settled_at = "CANCELLED", now
+    session.add(OutboxEvent(type="ticket.accepted", entity_id=str(sel.ticket_id), user_id=user_id,
+                            payload={"cancelled": str(sel.id)}))
+    session.flush()
+    return sel

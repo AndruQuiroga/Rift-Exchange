@@ -111,6 +111,17 @@ DRAFT_GRACE = timedelta(minutes=90)
 # at the listed time, so a day running late keeps them open and one running early locks them at once. This is
 # only the backstop if the feed never reports the series live.
 SERIES_LOCK_BACKSTOP = timedelta(hours=3)
+# D-039: going live starts this countdown rather than locking at once; the broadcast opens a few minutes before the
+# draft (measured 4-7 minutes on 2026-10-23). The game loading ends it immediately.
+DRAFT_COUNTDOWN = timedelta(minutes=1)
+
+
+def draft_countdown_end(fixture: Fixture, game1_started_at: datetime | None) -> datetime | None:
+    """When a live series' pre-draft markets lock: the countdown from going live, or the game loading if sooner."""
+    if fixture.live_at is None:
+        return None
+    end = fixture.live_at + DRAFT_COUNTDOWN
+    return min(end, game1_started_at) if game1_started_at else end
 
 
 def series_close(fixture: Fixture) -> datetime:
@@ -384,8 +395,13 @@ def lock_due(session: Session, now: datetime) -> int:
         # slipped in after the start is voided at settlement (settlement.apply_grade).
         start = g.started_at if g is not None else None
         if idx is None or idx == 1:
-            reason = "Locked at series start"
-            m.close_at = min(m.close_at, now, *([start] if start else []))
+            # D-039: a countdown from going live, ended early by the game loading.
+            end = draft_countdown_end(f, start) if f.status == "LIVE" else None
+            if end is not None and now < end:
+                m.close_at = min(m.close_at, end)
+                continue
+            reason = "Locked at the draft"
+            m.close_at = min(m.close_at, now, *([end] if end else []), *([start] if start else []))
         elif g is not None and (g.state in ("inProgress", "completed") or g.started_at is not None):
             reason = f"Locked at Game {idx} start"
             m.close_at = min(m.close_at, now, *([start] if start else []))

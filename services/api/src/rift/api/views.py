@@ -2,8 +2,9 @@
 
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -285,7 +286,7 @@ def live_view(db: Session, fixture: Fixture, user: User) -> dict:
     markets = {m.id: m for m in db.execute(select(Market).where(Market.fixture_id == fixture.id)).scalars()}
     selections = list(db.execute(
         select(Selection).join(Ticket, Ticket.id == Selection.ticket_id)
-        .where(Selection.user_id == user.id, Selection.market_id.in_(list(markets)))
+        .where(Selection.user_id == user.id, Selection.market_id.in_(list(markets)), Selection.status != "CANCELLED")
         .order_by(Ticket.accepted_at)).scalars()) if markets else []
     picks = []
     by_index = {g.game_index: g for g in games}
@@ -344,14 +345,31 @@ def wallet_summary(db: Session, wallet: Wallet) -> dict:
                            .where(LedgerEntry.wallet_id == wallet.id).group_by(LedgerEntry.kind)).all())
     granted = int(sums.get("GRANT_OPENING", 0) + sums.get("GRANT_MATCH_DAY", 0))
     settled_stake = db.execute(select(func.coalesce(func.sum(Selection.stake_rc), 0)).where(
-        Selection.user_id == wallet.user_id, Selection.status != "OPEN")).scalar()
+        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")))).scalar()
     settled_return = db.execute(select(func.coalesce(func.sum(Selection.return_rc), 0)).where(
-        Selection.user_id == wallet.user_id, Selection.status != "OPEN")).scalar()
+        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")))).scalar()
     rewards = db.execute(select(func.coalesce(func.sum(SwissCall.reward_rc), 0)).where(
         SwissCall.user_id == wallet.user_id)).scalar()
     return {"available_rc": wallet.available_rc, "open_stake_rc": int(open_stake),
             "recovery_due_rc": wallet.recovery_due_rc, "granted_rc": granted,
-            "realized_net_rc": int(settled_return) - int(settled_stake) + int(rewards)}
+            "realized_net_rc": int(settled_return) - int(settled_stake) + int(rewards),
+            "today_net_rc": today_net(db, wallet)}
+
+
+def today_net(db: Session, wallet: Wallet, now: datetime | None = None) -> int:
+    """What your picks settled today won or lost (return minus stake), plus Swiss card rewards: the venue's
+    calendar day, as match days are. Grants and cancelled picks don't count."""
+    season = db.get(Season, wallet.season_id)
+    tz = ZoneInfo(season.timezone)
+    now = now or datetime.now(UTC)
+    start = datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tz)
+    end = start + timedelta(days=1)
+    picks = db.execute(select(func.coalesce(func.sum(Selection.return_rc - Selection.stake_rc), 0)).where(
+        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")),
+        Selection.settled_at >= start, Selection.settled_at < end)).scalar()
+    rewards = db.execute(select(func.coalesce(func.sum(SwissCall.reward_rc), 0)).where(
+        SwissCall.user_id == wallet.user_id, SwissCall.settled_at >= start, SwissCall.settled_at < end)).scalar()
+    return int(picks) + int(rewards)
 
 
 def ledger_view(db: Session, wallet: Wallet, limit: int = 100) -> list[dict]:
@@ -501,7 +519,8 @@ def activity(db: Session, season: Season, limit: int = 50, fixture_id: uuid.UUID
     """Friends' picks, but only once the market has locked (A-010). Optionally one match, without your own."""
     q = (select(Selection).join(Market, Market.id == Selection.market_id)
          .join(Ticket, Ticket.id == Selection.ticket_id)
-         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED"))
+         .where(Market.season_id == season.id, Market.state != "OPEN", Market.state != "SUSPENDED",
+                Selection.status != "CANCELLED"))
     if fixture_id is not None:
         q = q.where(Market.fixture_id == fixture_id)
     if exclude_user_id is not None:
@@ -521,7 +540,8 @@ def friends_pending(db: Session, season: Season, fixture_id: uuid.UUID, exclude_
         select(Selection.user_id, func.count(Selection.id), func.min(Market.close_at))
         .join(Market, Market.id == Selection.market_id)
         .where(Market.season_id == season.id, Market.fixture_id == fixture_id,
-               Market.state.in_(("OPEN", "SUSPENDED")), Selection.user_id != exclude_user_id)
+               Market.state.in_(("OPEN", "SUSPENDED")), Selection.user_id != exclude_user_id,
+               Selection.status != "CANCELLED")
         .group_by(Selection.user_id)).all()
     users = {u.id: u for u in db.execute(select(User).where(User.id.in_([r[0] for r in rows]))).scalars()} \
         if rows else {}
@@ -556,7 +576,7 @@ def match_table(db: Session, season: Season, fixture_id: uuid.UUID, viewer_id: u
     """Everyone's standing on one match right now: settled results plus what the data has already decided.
     Friends' picks count only once their market locks (A-010); your own always do."""
     q = (select(Selection).join(Market, Market.id == Selection.market_id)
-         .where(Market.season_id == season.id, Market.fixture_id == fixture_id,
+         .where(Market.season_id == season.id, Market.fixture_id == fixture_id, Selection.status != "CANCELLED",
                 (Selection.user_id == viewer_id) | Market.state.notin_(("OPEN", "SUSPENDED"))))
     selections = list(db.execute(q).scalars())
     if not selections:
