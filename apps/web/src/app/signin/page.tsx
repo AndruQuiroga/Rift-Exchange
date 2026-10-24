@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { Brand } from "@/components/AppShell";
 import { api, ApiError } from "@/lib/api";
 
@@ -19,6 +19,22 @@ function SignIn() {
   const [code, setCode] = useState(params.get("code") ?? "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const linkStarted = useRef(false);
+
+  useEffect(() => {
+    const token = new URLSearchParams(location.hash.slice(1)).get("token");
+    if (!token || linkStarted.current) return;
+    linkStarted.current = true;
+    // Fragments never go to the server; remove the credential from this history entry too.
+    history.replaceState(null, "", location.pathname);
+    setBusy(true);
+    api("/auth/sign-in-link", { method: "POST", json: { token } })
+      .then(() => { location.replace("/"); })
+      .catch((err) => {
+        setError(err instanceof ApiError ? err.message : "Something went wrong. Open your saved link to try again.");
+        setBusy(false);
+      });
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

@@ -68,6 +68,15 @@ class Session(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class SignInLink(Base):
+    """An admin-issued, reusable credential; replace or revoke it when lost."""
+
+    __tablename__ = "sign_in_links"
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    created_at: Mapped[datetime] = _created()
+
+
 class SignInCode(Base):
     """A short-lived, one-time code that signs another device into an existing account."""
 

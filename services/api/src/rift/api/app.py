@@ -154,6 +154,17 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
             raise ApiError(400, e.code, e.message) from e
         return signed_in(response, user, token)
 
+    class SignInLinkBody(BaseModel):
+        token: str = Field(min_length=43, max_length=43)
+
+    @app.post("/api/v1/auth/sign-in-link")
+    def sign_in_link(body: SignInLinkBody, response: Response, session: Db):
+        try:
+            user, token = auth.redeem_sign_in_link(session, body.token, db_now(session), settings.session_days)
+        except auth.AuthError as e:
+            raise ApiError(400, e.code, e.message) from e
+        return signed_in(response, user, token)
+
     @app.post("/api/v1/auth/logout")
     def logout(request: Request, response: Response, session: Db):
         token = request.cookies.get(COOKIE)
