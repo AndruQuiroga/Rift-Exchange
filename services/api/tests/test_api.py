@@ -253,6 +253,7 @@ def test_rivals_table_and_reactions_after_lock(api, factory, world):
     after = mika.get(f"/api/v1/events/{event}/league").json()
     rows = {r["user"]["handle"]: r for r in after["table"]}
     assert set(rows) == {"kai", "mika"} and rows["kai"]["riding"] == 400 and rows["mika"]["you"]
+    assert rows["kai"]["potential"] == 648 - 400 and rows["mika"]["potential"] == 480 - 200  # if both win
     r = mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "sweating"}, headers=H)
     again = mika.post(f"/api/v1/picks/{kai_pick}/reactions", json={"phrase": "sweating"}, headers=H)
     assert r.status_code == 200 and len(again.json()["reactions"]) == 1  # once per phrase

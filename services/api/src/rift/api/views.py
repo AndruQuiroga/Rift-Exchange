@@ -587,12 +587,13 @@ def match_table(db: Session, season: Season, fixture_id: uuid.UUID, viewer_id: u
     table: dict[uuid.UUID, dict] = {}
     for sel, row in zip(selections, rows, strict=True):
         t = table.setdefault(sel.user_id, {"staked": 0, "back": 0, "decided": 0, "riding": 0, "won": 0, "lost": 0,
-                                           "partial": 0, "picks": 0})
+                                           "partial": 0, "picks": 0, "riding_return": 0})
         t["staked"] += sel.stake_rc
         t["picks"] += 1
         result = sel.status if sel.status != "OPEN" else (row["call"] or {}).get("result")
         if result is None:
             t["riding"] += sel.stake_rc
+            t["riding_return"] += row["potential_return_rc"]
             continue
         t["decided"] += sel.stake_rc
         terms = sel.rules_snapshot.get("params", {})
@@ -612,7 +613,9 @@ def match_table(db: Session, season: Season, fixture_id: uuid.UUID, viewer_id: u
         if key:
             t[key] += 1
     out = [{"user": {"handle": users[uid].handle, "display_name": users[uid].display_name},
-            "you": uid == viewer_id, **t, "net": t["back"] - t["decided"]} for uid, t in table.items()]
+            "you": uid == viewer_id, **t, "net": t["back"] - t["decided"],
+            # If every undecided pick wins: what is back so far plus their full returns, minus everything staked.
+            "potential": t["back"] + t["riding_return"] - t["staked"]} for uid, t in table.items()]
     out.sort(key=lambda r: (-r["net"], -r["staked"]))
     for i, r in enumerate(out):
         r["rank"] = i + 1

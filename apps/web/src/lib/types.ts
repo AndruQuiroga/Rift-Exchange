@@ -163,6 +163,8 @@ export type TableRow = {
   user: Person; you: boolean; rank: number; picks: number;
   staked: number; back: number; decided: number; riding: number; net: number;
   won: number; lost: number; partial: number;
+  /** Net if every undecided pick wins; riding_return is those picks' full returns. */
+  potential?: number; riding_return?: number;
 };
 
 export type ReactionT = { id: number; from: Person; to: Person; phrase: string; text: string; selection_id: string; pick: string; market: string; at: string };
