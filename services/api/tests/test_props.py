@@ -320,12 +320,12 @@ def test_team_races_open_with_the_game_and_close_at_three_minutes(factory, seaso
     _live_game1(factory, season_games)
     with factory() as s, s.begin():
         season = s.get(Season, season_games["season"])
-        # Three team races and the after-draft first blood, first tower and Baron (D-040).
-        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1)) == 6
+        # Three team races and the after-draft first blood, first tower, Baron, soul and first Baron (D-040, D-041).
+        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1)) == 8
         races = {m.kind: m for m in s.execute(select(Market).where(Market.kind.in_(props.EARLY_TEAM_KINDS))).scalars()}
         objectives = s.execute(select(Market).where(Market.kind.in_(props.OFFERED_OBJECTIVES))).scalars().all()
-        assert {m.template_key for m in objectives} == {f"{k}:fx-1:1:live" for k in ("first_blood", "first_tower",
-                                                                                     "baron_before")}
+        assert {m.template_key for m in objectives} == {f"{k}:fx-1:1:live" for k in (
+            "first_blood", "first_tower", "baron_before", "soul_team", "first_baron")}
         assert set(races) == set(props.EARLY_TEAM_KINDS)
         assert all(m.close_at == T0 + timedelta(minutes=3) and m.params["early"] for m in races.values())
     with factory() as s, s.begin():  # after 3:00 nothing new opens
@@ -561,7 +561,7 @@ def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory
         specs = {sp.template_key: sp for sp in game_specs(fx, 1, a, b, 0.6, stats, series_close(fx), "MODEL")}
     blind = {k: sp for k, sp in specs.items() if k.endswith(":blind")}
     assert {sp.kind for sp in blind.values()} == {"five_kills", "gold_lead_15", "first_dragon", "first_blood",
-                                                 "first_tower", "baron_before"}
+                                                 "first_tower", "baron_before", "soul_team", "first_baron"}
     race = blind["gold_lead_15:fx-1:1:blind"]
     assert race.close_at == series_close(fx) and race.params == {"game_index": 1, "blind": True}
     assert "(blind)" in race.title and "before the draft" in race.rules_text
@@ -663,3 +663,37 @@ def test_game_length_line_and_grade(factory, season_games):
         assert grade_market(s, m).winning_codes == ["OVER"]  # 31:00 by the feed's clock
         g.bans = {"length_s": 1800}  # Leaguepedia: 30:00 once the pause is taken out
         assert grade_market(s, m).winning_codes == ["UNDER"]
+
+
+def test_soul_and_first_baron_by_team_or_nobody(factory, season_games):
+    """D-041: dragon soul and first Baron, three ways: either team or nobody, settled from the timeline."""
+    with factory() as s:
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
+        specs = {sp.kind: sp for sp in game_specs(fx, 1, a, b, 0.6, tournament_stats(s, season), T0, "MODEL")}
+    for kind, none_label in (("soul_team", "No soul"), ("first_baron", "No Baron")):
+        sp = specs[kind]
+        probs = {o.code: o.probability for o in sp.outcomes}
+        assert [o.code for o in sp.outcomes] == ["A", "NONE", "B"] and sp.outcomes[1].label == none_label
+        assert abs(sum(probs.values()) - 1) < 1e-9
+        # The sample games always gave A the Baron (and A won); no soul side was recorded, so soul splits evenly.
+        assert probs["A"] > probs["B"] if kind == "first_baron" else probs["A"] == probs["B"]
+        assert sp.template_key.endswith(":blind") and sp.params == {"game_index": 1, "blind": True}
+    with factory() as s, s.begin():
+        tl = timeline(season_games["team_a"], season_games["team_b"])
+        tl["soul_side"] = "red"  # team B (red) took soul
+        g = Game(fixture_id=season_games["fixture"], provider_id="g1", game_index=1, state="completed",
+                 blue_team_id=season_games["team_a"], red_team_id=season_games["team_b"], timeline_complete=True,
+                 timeline=tl)
+        markets = {k: Market(season_id=season_games["season"], fixture_id=season_games["fixture"],
+                             template_key=f"{k}:x", kind=k, scope="GAME", category="OBJECTIVES", title=k,
+                             rules_text="", params={"game_index": 1}, model_key="t", confidence="EXPERIMENTAL",
+                             close_at=T0) for k in ("soul_team", "first_baron")}
+        s.add_all([g, *markets.values()])
+        s.flush()
+        assert grade_market(s, markets["soul_team"]).winning_codes == ["B"]
+        assert grade_market(s, markets["first_baron"]).winning_codes == ["A"]  # the helper's Baron is A's
+        g.timeline = {**timeline(season_games["team_a"], season_games["team_b"], baron_at=None, soul=None),
+                      "soul_side": None}
+        assert grade_market(s, markets["soul_team"]).winning_codes == ["NONE"]
+        assert grade_market(s, markets["first_baron"]).winning_codes == ["NONE"]

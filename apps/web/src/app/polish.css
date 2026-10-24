@@ -232,3 +232,9 @@ a.pg-head:hover { background: var(--surface-3); }
   .pg-head { flex-wrap: wrap; }
   .pg-sum { justify-content: flex-start; flex-basis: 100%; order: 3; }
 }
+
+/* D-041: the "neither team" pick under a row's label (No soul, No Baron). */
+.h2h-label .mid-pk { margin-top: 6px; min-height: 34px; padding: 4px 8px; display: flex; flex-direction: column; align-items: center; gap: 0; }
+.h2h-label .mid-pk .pk-lbl { font-size: 11px; font-weight: 700; color: var(--muted); }
+.h2h-label .mid-pk .pk-px { font-size: 13px; }
+.h2h-label .mid-pk .pk-tag { top: -8px; right: -4px; }

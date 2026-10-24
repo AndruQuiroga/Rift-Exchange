@@ -105,6 +105,14 @@ def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
                             "five_kills": "five_kills"}[kind])
         code = side_code.get((first or {}).get("team_id") or "")
         return called([code], f"{kind.replace('_', ' ').capitalize()} seen live") if code else None
+    if kind == "first_baron":
+        code = side_code.get((firsts.get("baron") or {}).get("team_id") or "")
+        return called([code], "First Baron seen live") if code else None
+    if kind == "soul_team":
+        from rift.props import soul_team
+
+        code = side_code.get(soul_team(game) or "")
+        return called([code], "Dragon soul seen live") if code else None
     if kind == "first_dragon_type":
         dragon = firsts.get("dragon")
         return called([dragon["type"]], "First dragon seen live") if dragon and dragon.get("type") else None

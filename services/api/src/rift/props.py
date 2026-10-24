@@ -56,12 +56,13 @@ TIE_MARGIN = {"gold15": 700}
 DUEL_VOID_REFUND = "0.5"  # D-036: a tie, a game over before 15:00 or a missing player returns half the stake
 TEAM_GOLD_TIE = 700  # the team gold lead at 15:00 uses the same tie band
 SHRINK_GAMES = 3  # pseudo-games of the role average added to each player's own record
-OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul", "game_length")
+OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul", "game_length",
+                   "soul_team", "first_baron")
 # Team races in the early window (D-025): open from game load to 3:00, settled from the timeline.
 EARLY_TEAM_KINDS = ("five_kills", "gold_lead_15", "first_dragon")
 # Offered for new games (D-023). First dragon element and dragon soul are no longer offered; existing ones
 # still lock and settle from the timeline like the rest.
-OFFERED_OBJECTIVES = ("first_blood", "first_tower", "baron_before", "game_length")
+OFFERED_OBJECTIVES = ("first_blood", "first_tower", "baron_before", "game_length", "soul_team", "first_baron")
 RETIRED_OBJECTIVES = tuple(k for k in OBJECTIVE_KINDS if k not in OFFERED_OBJECTIVES)
 KINDS = (*OBJECTIVE_KINDS, *EARLY_TEAM_KINDS, "lane_duel")
 LINES = [x + 0.5 for x in range(14, 45)]
@@ -91,6 +92,7 @@ class TimelineData:
     early_baron: int = 0
     gold15_gaps: list[int] = field(default_factory=list)  # team gold difference at 15:00, one per game
     lengths: list[int] = field(default_factory=list)  # game time in seconds, one per game
+    nobody: Counter = field(default_factory=Counter)  # "soul"/"baron": games where no team took it (D-041)
     player: dict[str, dict[str, list[float]]] = field(default_factory=dict)  # player_id -> stat -> values
     role: dict[str, dict[str, list[float]]] = field(default_factory=dict)  # role -> stat -> values
     reference_samples: list[tuple[str | None, str, str | None, float, float]] = field(default_factory=list)
@@ -151,6 +153,14 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
             if first and first.get("team_id") and g.winner_team_id is not None:
                 took[(what, "n")] += 1
                 took[(what, "w")] += int(first.get("team_id") == str(g.winner_team_id))
+        # D-041: who took soul and the first Baron, if anyone.
+        for what, team in (("soul", soul_team(g)), ("baron", (firsts.get("baron") or {}).get("team_id"))):
+            if team is None:
+                data.nobody[what] += int(what == "baron" and "baron" in firsts and firsts["baron"] is None
+                                         or what == "soul" and tl.get("soul") is None)
+            elif g.winner_team_id is not None:
+                took[(what, "n")] += 1
+                took[(what, "w")] += int(team == str(g.winner_team_id))
         lead = gold15_lead(g)
         if lead:
             data.gold15_gaps.append(lead[1])
@@ -172,7 +182,7 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
                 data.role.setdefault(line["role"], defaultdict(list))[stat].append(float(line[stat]))
                 if champions.get(pid):
                     data.champion_samples.append((line["role"], champions[pid], stat, float(line[stat]), 1.0))
-    for what in ("blood", "tower", "dragon", "five_kills", "gold15"):
+    for what in ("blood", "tower", "dragon", "five_kills", "gold15", "soul", "baron"):
         n = took[(what, "n")]
         # Shrink toward a coin flip; first objectives only lean slightly toward the eventual winner.
         data.winner_took_first[what] = (took[(what, "w")] + 5) / (n + 10)
@@ -228,6 +238,23 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
         f"later or never. {note} {void}",
         close_at, model, "EXPERIMENTAL",
         [OutcomeSpec("YES", "Yes", early), OutcomeSpec("NO", "No", 1 - early)], dict(params)))
+    # D-041: dragon soul and first Baron by team, or nobody. Nobody's share is how often this Worlds saw neither
+    # team take it; the rest splits like first tower, leaning to the stronger side.
+    for kind, what, title, none_label in (("soul_team", "soul", "Dragon soul", "No soul"),
+                                          ("first_baron", "baron", "First Baron", "No Baron")):
+        if what == "baron" and firsts.get("baron"):
+            continue  # already taken: decided
+        none = (data.nobody[what] + 1) / (data.games + 2)
+        w = data.winner_took_first.get(what, 0.5)
+        pa = (1 - none) * (q * w + (1 - q) * (1 - w))
+        specs.append(MarketSpec(
+            f"{kind}:{key}:{idx}{suffix}", kind, "GAME", "OBJECTIVES", f"Game {idx} {title.lower()}{tag}",
+            f"Team that takes {'dragon soul (four elemental dragons)' if what == 'soul' else 'the first Baron'} in "
+            f"Game {idx}, or {none_label.lower()} if neither does. {note} {void}",
+            close_at, model, "EXPERIMENTAL",
+            [OutcomeSpec("A", team_name(a.code, a.name), pa), OutcomeSpec("NONE", none_label, none),
+             OutcomeSpec("B", team_name(b.code, b.name), 1 - none - pa)],
+            dict(params)))
     line = game_length_line(data)
     if line is not None:
         over = game_length_over(data, line)
@@ -243,6 +270,13 @@ def objective_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, data
 
 
 # ------------------------------------------------------------------ game length (D-040)
+
+
+def soul_team(game: Game) -> str | None:
+    """The team id that took dragon soul, from the timeline's soul side."""
+    side = (game.timeline or {}).get("soul_side")
+    team = {"blue": game.blue_team_id, "red": game.red_team_id}.get(side or "")
+    return str(team) if team else None
 
 
 def clock(seconds: int) -> str:
@@ -952,6 +986,21 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
         if code is None:
             return Grade("VOID", reason="No verified first for this game", evidence=ev)
         return Grade("RESULT", [code], f"{kind.replace('_', ' ').capitalize()} confirmed", {**ev, "at_s": first["at_s"]})
+    if kind == "first_baron":
+        baron = firsts.get("baron")
+        if baron is None:
+            return Grade("RESULT", ["NONE"], "No Baron taken", ev)
+        code = side_code.get(baron.get("team_id") or "")
+        if code is None:
+            return Grade("VOID", reason="First Baron not attributable to a team", evidence=ev)
+        return Grade("RESULT", [code], "First Baron confirmed", {**ev, "at_s": baron["at_s"]})
+    if kind == "soul_team":
+        if tl.get("soul") is None:
+            return Grade("RESULT", ["NONE"], "No dragon soul", ev)
+        code = side_code.get(soul_team(game) or "")
+        if code is None:
+            return Grade("HOLD", reason="Soul side not matched to a team", evidence=ev)
+        return Grade("RESULT", [code], "Dragon soul confirmed", {**ev, "soul": tl.get("soul")})
     if kind == "first_dragon_type":
         dragon = firsts.get("dragon")
         if not dragon or dragon.get("type") not in DRAGONS:
