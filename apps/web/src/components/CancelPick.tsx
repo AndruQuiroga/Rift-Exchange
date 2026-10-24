@@ -7,6 +7,7 @@ import { rc } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { useToast } from "@/lib/toasts";
 import type { Pick } from "@/lib/types";
+import { IconClose } from "./icons";
 
 /** What taking a pick back returns now, or null (D-038, D-040). The server decides; before it says (an older
  * response) only a still-open market counts, for the whole stake. */
@@ -45,21 +46,26 @@ export function CancelPick({ pick, compact }: { pick: Pick; compact?: boolean })
   }
 
   return (
-    <span className={`cancel-pick${compact ? " compact" : ""}`}>
+    <span className={`cancel-pick${compact ? " compact" : ""}${confirm ? " confirming" : ""}`}>
       {confirm ? (
-        <>
-          <button type="button" className="cp-yes" disabled={busy} onClick={cancel}>
-            {busy ? <span className="spinner" aria-hidden="true" /> : null}Cancel · {rc(refund)} RC back
-          </button>
-          <button type="button" className="cp-no" disabled={busy} onClick={() => setConfirm(false)}>Keep</button>
-          {partial ? <span className="cp-why">75% back once the draft has started</span> : null}
-        </>
+        <span className="cp-confirm" role="group" aria-label={`Cancel your bet on ${pick.outcome_label}?`}>
+          <span className="cp-q">
+            Cancel this bet? <b className="num">{partial ? `${rc(refund)} of ${rc(pick.stake_rc)} RC back` : `All ${rc(refund)} RC back`}</b>
+            {partial ? <small>75% once the draft has started</small> : null}
+          </span>
+          <span className="cp-btns">
+            <button type="button" className="cp-no" disabled={busy} onClick={() => setConfirm(false)}>Keep bet</button>
+            <button type="button" className="cp-yes" disabled={busy} onClick={cancel}>
+              {busy ? <span className="spinner" aria-hidden="true" /> : null}Cancel bet
+            </button>
+          </span>
+        </span>
       ) : (
-        <button type="button" className="cp-open" onClick={() => setConfirm(true)} aria-label={`Cancel your pick on ${pick.outcome_label}`}>
-          Cancel
+        <button type="button" className="cp-open" onClick={() => setConfirm(true)} aria-label={`Cancel your bet on ${pick.outcome_label}`}>
+          <IconClose width={12} height={12} aria-hidden="true" />{compact ? "Cancel" : "Cancel bet"}
         </button>
       )}
-      {error ? <span className="loss" style={{ fontSize: 12 }}>{error}</span> : null}
+      {error ? <span className="loss cp-err">{error}</span> : null}
     </span>
   );
 }

@@ -123,26 +123,15 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
     }
     setError(cause instanceof ApiError ? cause.message : fallback);
   }
-  // One row of amounts sets every pick at once (and becomes the stake new picks start with); "All" splits the balance.
-  function preset(amount: number | "all") {
-    setEditing(new Set());
-    if (amount === "all") {
-      const base = Math.floor(available / lines.length);
-      const extra = available % lines.length;
-      return slip.setAllStakes((_, i) => base + (i < extra ? 1 : 0) || null);
-    }
-    slip.setDefaultStake(amount);
-    slip.setAllStakes(() => amount);
-  }
-  const uniform = lines.length > 0 && lines.every((l) => l.stake === lines[0].stake) ? lines[0].stake : null;
 
   async function requestQuote(): Promise<Quote> {
     return api<Quote>("/quotes", { method: "POST", json: { items: lines.map((l) => ({ outcome_id: l.outcomeId, stake_rc: l.stake })) } });
   }
 
-  async function review() {
+  /** One tap: get today's prices and place. Only a price that moved since you picked stops to ask. */
+  async function placeNow() {
     setError(null);
-    setPhase({ kind: "busy", label: "Getting current prices…" });
+    setPhase({ kind: "busy", label: "Placing your picks…" });
     try {
       const quote = await requestQuote();
       const previous: Record<string, string> = {};
@@ -150,11 +139,15 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
         const line = lines.find((l) => l.outcomeId === it.outcome_id);
         if (line && line.odds !== it.odds) previous[it.outcome_id] = line.odds;
       }
-      slip.updatePrices(quote.items);
-      setPhase({ kind: "review", quote, previous });
+      if (Object.keys(previous).length) {
+        slip.updatePrices(quote.items);
+        setPhase({ kind: "review", quote, previous });
+        return;
+      }
+      await place(quote);
     } catch (e) {
       setPhase({ kind: "edit" });
-      showError(e, "Couldn't get a quote.");
+      showError(e, "Couldn't place your picks.");
     }
   }
 
@@ -356,8 +349,8 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   </div>
                 </div>
                 <div className="stake-row">
-                  {!editing.has(l.outcomeId) && lines.length > 1 ? (
-                    // Several picks: each has its own amounts, so they can differ without typing.
+                  {!editing.has(l.outcomeId) ? (
+                    // Each pick has its own amounts, so they can differ without typing.
                     <div className="line-presets" role="group" aria-label={`Stake on ${l.outcomeLabel}`}>
                       {STAKES.map((v) => (
                         <button
@@ -366,7 +359,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                           className="num"
                           aria-pressed={l.stake === v}
                           disabled={phase.kind !== "edit" || (!!limit && v > limit.remaining)}
-                          onClick={() => slip.setStake(l.outcomeId, v)}
+                          onClick={() => { slip.setStake(l.outcomeId, v); slip.setDefaultStake(v); }}
                         >
                           {v >= 1000 ? `${v / 1000}K` : v}
                         </button>
@@ -382,16 +375,6 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                         {l.stake && !STAKES.includes(l.stake) ? rc(l.stake) : "Other"}
                       </button>
                     </div>
-                  ) : !editing.has(l.outcomeId) ? (
-                    <button
-                      type="button"
-                      className="stake-chip num"
-                      disabled={phase.kind !== "edit"}
-                      onClick={() => setEditing((e) => new Set(e).add(l.outcomeId))}
-                      aria-label={`Stake ${l.stake ?? 0} RC on ${l.outcomeLabel}. Enter a custom amount`}
-                    >
-                      {l.stake ? `${rc(l.stake)} RC` : "No stake"} <span className="muted">· Custom</span>
-                    </button>
                   ) : (
                   <label className="stake-input">
                     <span className="sr-only">Stake for {l.outcomeLabel}</span>
@@ -447,20 +430,6 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
             </div>
           ))}
 
-          {phase.kind === "edit" ? (
-            <>
-              <div className="presets" role="group" aria-label={lines.length > 1 ? "Stake on every pick" : "Stake"} style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
-                {STAKES.map((v) => (
-                  <button key={v} className="num" aria-pressed={uniform === v} onClick={() => preset(v)}>
-                    {rc(v)}
-                  </button>
-                ))}
-                <button onClick={() => preset("all")}>All</button>
-              </div>
-              {lines.length > 1 ? <div className="hint">Sets every pick at once · All splits your balance across them.</div> : null}
-            </>
-          ) : null}
-
           <div className="totals num" aria-live="polite">
             <div>
               <span className="sub">Staked</span>
@@ -503,15 +472,16 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
             ) : reviewing ? (
               <>
                 <button className="btn" style={{ marginTop: 10 }} onClick={() => place(reviewing.quote, reviewing.previous)}>
-                  {changedIds.length ? "Accept new odds & place" : `Place ${lines.length} pick${lines.length === 1 ? "" : "s"}`} · {rc(reviewing.quote.total_stake_rc)} RC
+                  Accept new odds &amp; place · {rc(reviewing.quote.total_stake_rc)} RC
                 </button>
                 <button className="btn secondary" onClick={() => setPhase({ kind: "edit" })}>
                   Edit stakes
                 </button>
               </>
             ) : (
-              <button className="btn" style={{ marginTop: 10 }} disabled={missing || over || staked === 0 || invalidLines.length > 0} onClick={review}>
-                {invalidLines.length ? "Fix highlighted stakes to continue" : missing ? "Enter a stake for each pick" : "Review picks"}
+              <button className="btn" style={{ marginTop: 10 }} disabled={missing || over || staked === 0 || invalidLines.length > 0} onClick={placeNow}>
+                {invalidLines.length ? "Fix highlighted stakes to continue" : missing ? "Enter a stake for each pick"
+                  : `Place ${lines.length} pick${lines.length === 1 ? "" : "s"} · ${rc(staked)} RC`}
               </button>
             )}
           </div>
