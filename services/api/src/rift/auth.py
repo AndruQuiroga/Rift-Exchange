@@ -10,7 +10,7 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import Session as DbSession
 
 from rift import grants
-from rift.models import AuditEvent, Invite, Season, Session, SignInCode, User
+from rift.models import AuditEvent, Invite, Season, Session, SignInCode, SignInLink, User
 
 # No 0/O or 1/I/L: codes are read off one screen and typed into another.
 CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -91,6 +91,38 @@ def redeem_sign_in_code(db: DbSession, code: str, now: datetime, session_days: i
     row.used_at = now
     user = db.get(User, row.user_id)
     db.add(AuditEvent(actor=user.handle, action="sign_in_code.redeemed", entity_type="user",
+                      entity_id=str(user.id)))
+    return user, start_session(db, user.id, now, session_days)
+
+
+def revoke_sign_in_link(db: DbSession, user: User) -> None:
+    # Serialize issuance/revocation for a member, including their first link.
+    db.execute(select(User).where(User.id == user.id).with_for_update()).scalar_one()
+    row = db.get(SignInLink, user.id)
+    if row is not None:
+        db.delete(row)
+        db.flush()
+    db.add(AuditEvent(actor="cli", action="sign_in_link.revoked", entity_type="user",
+                      entity_id=str(user.id)))
+
+
+def create_sign_in_link(db: DbSession, user: User) -> str:
+    """Replace the member's permanent credential. Only its hash is stored."""
+    revoke_sign_in_link(db, user)
+    token = secrets.token_urlsafe(32)
+    db.add(SignInLink(user_id=user.id, token_hash=digest(token)))
+    db.add(AuditEvent(actor="cli", action="sign_in_link.created", entity_type="user",
+                      entity_id=str(user.id)))
+    return token
+
+
+def redeem_sign_in_link(db: DbSession, token: str, now: datetime, session_days: int) -> tuple[User, str]:
+    row = db.execute(select(SignInLink).where(SignInLink.token_hash == digest(token)).with_for_update()
+                     ).scalar_one_or_none()
+    if row is None:
+        raise AuthError("LINK_INVALID", "That sign-in link is invalid or has been revoked. Ask the admin for a new one.")
+    user = db.get(User, row.user_id)
+    db.add(AuditEvent(actor=user.handle, action="sign_in_link.redeemed", entity_type="user",
                       entity_id=str(user.id)))
     return user, start_session(db, user.id, now, session_days)
 

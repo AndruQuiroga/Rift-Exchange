@@ -18,6 +18,10 @@ def main() -> None:
     invite.add_argument("--admin", action="store_true")
     code = sub.add_parser("sign-in-code", help="create a 24-hour sign-in code for a member with no signed-in device")
     code.add_argument("--user", required=True, help="the member's name or handle")
+    link = sub.add_parser("sign-in-link", help="issue or revoke a permanent, reusable private login link")
+    link.add_argument("--user", required=True, help="the member's name or handle")
+    link.add_argument("--revoke", action="store_true", help="revoke without issuing a replacement")
+    link.add_argument("--origin", default="https://rift.mustache.network", help="public site origin")
     sub.add_parser("backtest", help="print the team-strength model backtest")
     args = parser.parse_args()
 
@@ -48,21 +52,30 @@ def main() -> None:
         with transaction() as db:
             code = create_invite(db, "ADMIN" if args.admin else "PLAYER")
         print(code)
-    elif args.cmd == "sign-in-code":
+    elif args.cmd in ("sign-in-code", "sign-in-link"):
         from sqlalchemy import func, or_, select
 
-        from rift.auth import ADMIN_CODE_TTL, create_sign_in_code
+        from rift.auth import ADMIN_CODE_TTL, create_sign_in_code, create_sign_in_link, revoke_sign_in_link
         from rift.db import db_now, transaction
         from rift.models import User
 
         with transaction() as db:
-            named = or_(User.handle == args.user, func.lower(User.display_name) == args.user.lower())
+            named = or_(func.lower(User.handle) == args.user.lower(),
+                        func.lower(User.display_name) == args.user.lower())
             user = db.execute(select(User).where(named)).scalar_one_or_none()
             if user is None:
                 raise SystemExit(f"No member named {args.user!r}")
-            code, expires_at = create_sign_in_code(db, user, db_now(db), ADMIN_CODE_TTL, actor="cli")
             name = user.display_name
-        print(f"{code}  for {name}, valid until {expires_at:%Y-%m-%d %H:%M %Z}")
+            if args.cmd == "sign-in-code":
+                code, expires_at = create_sign_in_code(db, user, db_now(db), ADMIN_CODE_TTL, actor="cli")
+                output = f"{code}  for {name}, valid until {expires_at:%Y-%m-%d %H:%M %Z}"
+            elif args.revoke:
+                revoke_sign_in_link(db, user)
+                output = f"Permanent sign-in link revoked for {name}."
+            else:
+                token = create_sign_in_link(db, user)
+                output = f"{args.origin.rstrip('/')}/signin#token={token}"
+        print(output)
     elif args.cmd == "backtest":
         from rift import ratings
         from rift.db import session_factory

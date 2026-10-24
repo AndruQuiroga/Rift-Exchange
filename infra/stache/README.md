@@ -135,9 +135,17 @@ API responses are no-store, and the app's router/API access logs are disabled.
 Create an invite by executing `rift invite --admin` or `rift invite` in the API
 container. Capture the output into a private file, not release logs or a PR. Share
 `https://rift.mustache.network/join?code=<code>` privately. A code creates one
-account. V0 sessions last 60 days; returning-account sign-in/recovery is not yet
-implemented. Preserve the session cookie and avoid logging out until recovery is
-added. Do not create duplicate accounts with fresh invites as a workaround.
+account. Sessions last 60 days. Members can generate a one-time sign-in code from
+Profile; `rift sign-in-code --user <name>` issues a 24-hour recovery code.
+
+For a member whose browser clears cookies, run `rift sign-in-link --user <name>`
+in the API container and capture its output privately. It prints a permanent,
+reusable `/signin#token=...` link: opening it restores the existing account with
+a fresh session. Share privately and have the member bookmark the original link.
+Anyone holding it can access that account. Only its SHA-256 hash is stored, and
+the fragment is removed from browser history on use. Running the command again
+replaces the previous link; `rift sign-in-link --user <name> --revoke` disables
+it without issuing another. Revocation does not sign out existing sessions.
 
 For an application rollback with a compatible schema, deploy previous healthy
 digests with a new release ID. Review migrations first. Do not automatically
