@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from rift.calls import Call, calls
@@ -30,6 +30,7 @@ from rift.models import (
     User,
     Wallet,
 )
+from rift.placement import cancel_refund
 from rift.props import early_state, early_window, phase
 from rift.timeline import burned_champions
 
@@ -338,6 +339,11 @@ def season_markets(db: Session, season: Season, category: str | None) -> list[di
              "team": team_view(teams.get(m.params.get("team", "")))} for m in markets]
 
 
+# Picks that count toward net: settled ones, and cancels that kept part of the stake (D-040, the 25% after the
+# draft starts). A full refund nets zero; cancels from before D-040 recorded no return and stay out.
+_COUNTED = (Selection.status != "OPEN", or_(Selection.status != "CANCELLED", Selection.return_rc > 0))
+
+
 def wallet_summary(db: Session, wallet: Wallet) -> dict:
     open_stake = db.execute(select(func.coalesce(func.sum(Selection.stake_rc), 0)).where(
         Selection.user_id == wallet.user_id, Selection.status == "OPEN")).scalar()
@@ -345,9 +351,9 @@ def wallet_summary(db: Session, wallet: Wallet) -> dict:
                            .where(LedgerEntry.wallet_id == wallet.id).group_by(LedgerEntry.kind)).all())
     granted = int(sums.get("GRANT_OPENING", 0) + sums.get("GRANT_MATCH_DAY", 0))
     settled_stake = db.execute(select(func.coalesce(func.sum(Selection.stake_rc), 0)).where(
-        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")))).scalar()
+        Selection.user_id == wallet.user_id, *_COUNTED)).scalar()
     settled_return = db.execute(select(func.coalesce(func.sum(Selection.return_rc), 0)).where(
-        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")))).scalar()
+        Selection.user_id == wallet.user_id, *_COUNTED)).scalar()
     rewards = db.execute(select(func.coalesce(func.sum(SwissCall.reward_rc), 0)).where(
         SwissCall.user_id == wallet.user_id)).scalar()
     return {"available_rc": wallet.available_rc, "open_stake_rc": int(open_stake),
@@ -358,14 +364,14 @@ def wallet_summary(db: Session, wallet: Wallet) -> dict:
 
 def today_net(db: Session, wallet: Wallet, now: datetime | None = None) -> int:
     """What your picks settled today won or lost (return minus stake), plus Swiss card rewards: the venue's
-    calendar day, as match days are. Grants and cancelled picks don't count."""
+    calendar day, as match days are. Grants don't count; cancels only for what they kept."""
     season = db.get(Season, wallet.season_id)
     tz = ZoneInfo(season.timezone)
     now = now or datetime.now(UTC)
     start = datetime.combine(now.astimezone(tz).date(), datetime.min.time(), tz)
     end = start + timedelta(days=1)
     picks = db.execute(select(func.coalesce(func.sum(Selection.return_rc - Selection.stake_rc), 0)).where(
-        Selection.user_id == wallet.user_id, Selection.status.notin_(("OPEN", "CANCELLED")),
+        Selection.user_id == wallet.user_id, *_COUNTED,
         Selection.settled_at >= start, Selection.settled_at < end)).scalar()
     rewards = db.execute(select(func.coalesce(func.sum(SwissCall.reward_rc), 0)).where(
         SwissCall.user_id == wallet.user_id, SwissCall.settled_at >= start, SwissCall.settled_at < end)).scalar()
@@ -438,6 +444,7 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
     provisional = provisional_closes(db, list(markets.values()))
     codes = {o.id: o.code for o in db.execute(select(Outcome).where(
         Outcome.id.in_({s.outcome_id for s in selections}))).scalars()} if selections else {}
+    now = datetime.now(UTC)
     out = []
     for s in selections:
         m = markets[s.market_id]
@@ -465,6 +472,9 @@ def selection_rows(db: Session, selections: list[Selection]) -> list[dict]:
             "close_rule": provisional.get(m.id),
             # Its close follows the game (3:00 of game time) rather than a fixed time until the game loads.
             "closes_with_game": bool(m.params.get("through_draft") or m.params.get("early")),
+            # What cancelling returns right now (D-038, D-040), or None when it can't be cancelled.
+            "cancel_refund_rc": cancel_refund(db, s, m, now, decided=m.id in called) if s.status == "OPEN" else None,
+            "after_draft": bool(m.params.get("early")),
         })
     return out
 

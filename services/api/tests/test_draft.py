@@ -26,6 +26,12 @@ def players(a_id, b_id, a=A_CHAMPS, b=B_CHAMPS):
             for side, tid, champs in (("blue", a_id, a), ("red", b_id, b)) for i, c in enumerate(champs)]
 
 
+@pytest.fixture(autouse=True)
+def champion_markets(monkeypatch):
+    """D-040 stopped offering champion markets; these tests cover the picks already placed on them."""
+    monkeypatch.setattr(draft, "CHAMPION_MARKETS_OFFERED", True)
+
+
 @pytest.fixture
 def history(factory, world):
     """Four verified games elsewhere at Worlds so every champion above has a pick rate."""

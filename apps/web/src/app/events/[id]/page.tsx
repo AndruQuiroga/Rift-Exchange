@@ -5,7 +5,6 @@ import { useParams } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
 import { MarketBlock } from "@/components/bits";
-import { ChampionRow } from "@/components/ChampionGrid";
 import { eventLabel, Matchup } from "@/components/EventCard";
 import { NotifyButton } from "@/components/GameAlerts";
 import { ChoiceRow, H2HHead, H2HRow, LockedRow, WinnerCards } from "@/components/H2H";
@@ -59,11 +58,6 @@ function Section({ title, sub, children }: { title: string; sub?: ReactNode; chi
   );
 }
 
-const OBJECTIVES = ["first_blood", "first_tower", "baron_before"];
-// Team races in the early window, opened when the game loads (D-025).
-const RACES = ["five_kills", "gold_lead_15", "first_dragon"];
-
-/** Everything about one game, head to head: winner, who gets picked, objectives, then lanes and kills. */
 /** OPEN (with its countdown) or LOCKED: every section says whether you can pick right now. */
 function Open({ at, label }: { at?: string | null; label?: string }) {
   return (
@@ -77,6 +71,116 @@ const Locked = ({ label }: { label?: string }) => (
   <span className="state-badges"><span className="state-locked"><IconLock width={10} height={10} aria-hidden="true" />LOCKED</span>{label ? <span className="muted">{label}</span> : null}</span>
 );
 
+type LanePhase = NonNullable<GameT["lanes"]>;
+const phaseOf = (game: GameT): LanePhase =>
+  game.lanes ?? (game.early === "OPEN" ? "LIVE" : game.early === "UPCOMING" ? "BLIND" : "CLOSED");
+
+/** The same badge on every section of a game (D-040): which window is open, its price, and when it closes. */
+function PhaseBadge({ phase, closeAt }: { phase: LanePhase; closeAt?: string | null }) {
+  if (phase === "BLIND") return <Open label="Blind · full odds · closes when the draft starts" />;
+  if (phase === "LIVE") {
+    return (
+      <span className="state-badges">
+        <span className="state-open"><span className="dot" aria-hidden="true" />OPEN</span>
+        <span className="muted">After draft · lower odds</span>
+        {closeAt ? <LockTimer at={closeAt} compact /> : <span className="muted">until 3:00</span>}
+      </span>
+    );
+  }
+  if (phase === "DRAFT") return <Locked label="Drafting · reopens at game start" />;
+  if (phase === "UPCOMING") return <Locked label="Opens when the previous game ends" />;
+  return <Locked label="Closed at 3:00" />;
+}
+
+/** The three windows every game market goes through, with the one you are in lit (D-040). */
+function PhaseStrip({ phase }: { phase: LanePhase }) {
+  const steps: { id: LanePhase; t: string; s: string }[] = [
+    { id: "BLIND", t: "Blind", s: "Full odds, before the draft" },
+    { id: "DRAFT", t: "Draft", s: "Locked" },
+    { id: "LIVE", t: "Game start → 3:00", s: "Lower odds, champions known" },
+  ];
+  return (
+    <div className="phase-strip" role="group" aria-label="Betting windows for this game">
+      <ol>
+        {steps.map((st) => (
+          <li key={st.id} className={st.id === phase ? "now" : undefined} aria-current={st.id === phase ? "step" : undefined}>
+            <b>{st.t}</b>
+            <span>{st.s}</span>
+          </li>
+        ))}
+      </ol>
+      <p>One bet per market, blind or after the draft. Cancel until 3:00: all back before the draft, 75% after it starts.</p>
+    </div>
+  );
+}
+
+const OBJECTIVE_ROWS: [string, string][] = [
+  ["first_blood", "First blood"], ["first_tower", "First tower"], ["first_dragon", "First dragon"],
+  ["baron_before", "Baron before 25:00"], ["game_length", "Game length"],
+];
+const LANE_ROWS: [string, string][] = [["five_kills", "First to 5 kills"], ["gold_lead_15", "Gold lead at 15:00"]];
+
+/** A market's blind and after-draft copies in one game (D-040), and the one its row shows in this window. */
+function pairOf(markets: MarketT[], game: number, kind: string, phase: LanePhase) {
+  const of = markets.filter((m) => m.kind === kind && m.params.game_index === game);
+  const blind = of.find((m) => m.params.blind);
+  const live = of.find((m) => m.params.early);
+  const shown = phase === "LIVE" || phase === "CLOSED" ? live ?? blind : blind ?? live;
+  return { blind, live, shown };
+}
+
+/** One market, one row, whichever window it is in. Not priced yet: greyed out, so the page still says it's coming. */
+function TimelineRow({ event, game, kind, label, phase }: { event: EventT; game: number; kind: string; label: string; phase: LanePhase }) {
+  const { blind, live, shown } = pairOf(event.markets ?? [], game, kind, phase);
+  if (!shown) {
+    const [l, r] = kind === "baron_before" ? ["Yes", "No"] : kind === "game_length" ? ["Over", "Under"]
+      : [event.team_a?.code ?? "TBD", event.team_b?.code ?? "TBD"];
+    return <LockedRow label={label} left={l} right={r} />;
+  }
+  const behind = shown === live ? blind : undefined;
+  if (shown.outcomes.every((o) => o.code === "A" || o.code === "B")) {
+    return <H2HRow event={event} market={shown} label={label} blind={behind} />;
+  }
+  const line = kind === "game_length" ? shown.outcomes[0]?.label.replace(/^Over /, "") : null;
+  return <ChoiceRow event={event} market={shown} label={line ? `${label} · ${line}` : label} blind={behind}
+    short={(o) => (kind === "game_length" ? o.label.split(" ")[0] : o.label)} />;
+}
+
+/** Objectives and Lanes & kills for one game: the phase strip, then every market once, in its current window. */
+function GameMarkets({ event, game }: { event: EventT; game: GameT }) {
+  const phase = phaseOf(game);
+  const markets = event.markets ?? [];
+  const liveClose = markets.filter((m) => m.params.game_index === game.index && m.params.early && m.state === "OPEN")
+    .map((m) => m.close_at).sort()[0];
+  const badge = <PhaseBadge phase={phase} closeAt={phase === "LIVE" ? liveClose : null} />;
+  const shown = [...OBJECTIVE_ROWS, ...LANE_ROWS].map(([k]) => pairOf(markets, game.index, k, phase).shown)
+    .filter((m): m is MarketT => !!m);
+  if (phase === "CLOSED" || game.window === "DONE") {
+    return (
+      <Section title="Objectives, lanes & kills" sub={<Locked label={game.window === "DONE" ? `Game ${game.index} is over` : "Closed at 3:00"} />}>
+        <p className="muted" style={{ fontSize: 13, margin: 0 }}>Your picks are in play; results land as the game decides them.</p>
+      </Section>
+    );
+  }
+  return (
+    <>
+      <PhaseStrip phase={phase} />
+      <Section title="Objectives" sub={badge}>
+        {OBJECTIVE_ROWS.map(([k, l]) => <TimelineRow key={k} event={event} game={game.index} kind={k} label={l} phase={phase} />)}
+      </Section>
+      <Section title="Lanes & kills" sub={badge}>
+        {LANE_ROWS.map(([k, l]) => <TimelineRow key={k} event={event} game={game.index} kind={k} label={l} phase={phase} />)}
+        <div className="mp-sub">Kill line</div>
+        <KillLine event={event} game={game.index} />
+        <div className="mp-sub">Lane duels · gold at 15:00</div>
+        <LaneDuels event={event} game={game.index} />
+        {phase === "BLIND" || phase === "UPCOMING" ? <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} /> : null}
+      </Section>
+      <Rules markets={shown} summary="Settles from the game's live data; void if the game isn't played." />
+    </>
+  );
+}
+
 /** What is closed now but coming back for this game, so a live page is never blank between windows. */
 const upNext = (game: GameT) => game.lanes === "DRAFT" || (game.window === "UPCOMING" && game.index > 1);
 
@@ -84,27 +188,15 @@ function UpNext({ event, game }: { event: EventT; game: GameT }) {
   if (game.window === "UPCOMING" && game.index > 1) {
     return (
       <p className="muted" style={{ fontSize: 14, margin: 0 }}>
-        Game {game.index} opens when Game {game.index - 1} ends: winner, draft calls, and blind duels and kill lines until its draft starts.
+        Game {game.index} opens when Game {game.index - 1} ends: its winner and blind picks at full odds until its draft
+        starts, then everything again at lower odds from game start to 3:00.
       </p>
     );
   }
-  return (
-    <section className="mp-section">
-      <div className="mp-head">
-        <h2>Lanes &amp; kills</h2>
-        <Locked label="reopens when the game loads" />
-      </div>
-      <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-        Blind picks closed when the match went live. Lane duels and kill lines reopen with champions when Game {game.index} loads,
-        until 3:00 of the game.
-      </p>
-      <div className="mp-sub">Lane duels · gold at 15:00</div>
-      <LaneDuels event={event} game={game.index} />
-    </section>
-  );
+  return <GameMarkets event={event} game={game} />;
 }
 
-/** Everything about one game, head to head. live: only what is open right now (Play mode in a live match). */
+/** Everything about one game, head to head. live: only what is open right now (a live match's Open now). */
 function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; live?: boolean }) {
   const markets = event.markets ?? [];
   const ofGame = (m: MarketT) => m.params.game_index === game.index;
@@ -117,8 +209,8 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Winner, draft picks and blind duels and kill lines open between games and close before the draft. After the
-          draft, duels and kill lines reopen with champions until 3:00.
+          Its winner and blind picks open between games at full odds and close when its draft starts. Objectives,
+          lanes and kills reopen at lower odds from game start to 3:00.
         </p>
         <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
       </div>
@@ -132,21 +224,10 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       </div>
     );
   }
-  const objectives = OBJECTIVES.map((k) => markets.find((m) => m.kind === k && ofGame(m))).filter((m): m is MarketT => !!m && m.state === "OPEN");
-  const early = game.early ?? "UPCOMING";
-  // Team races work like duels and kill lines: blind markets before the draft, early-window ones after it.
-  const racesFor = (blind: boolean) => RACES.map((k) => markets.find((m) => m.kind === k && ofGame(m) && !!m.params.blind === blind && m.state === "OPEN"))
-    .filter((m): m is MarketT => !!m);
-  const races = racesFor(game.lanes === "BLIND");
-  const name = (m: MarketT) => m.title.replace(`Game ${game.index} `, "").replace(/^./, (c) => c.toUpperCase());
-  const firstClose = (ms: MarketT[]) => ms.map((m) => m.close_at).sort()[0];
+  const phase = phaseOf(game);
   const winnerOpen = winner?.state === "OPEN";
-  // Draft calls and blind duels show their own exact state (lock banner, Blind / Drafting); these only decide
-  // what a live Play view keeps on screen.
-  const draftOpen = early === "UPCOMING" && game.window !== "DONE";
-  const lanes = game.lanes ?? (early === "OPEN" ? "LIVE" : early === "UPCOMING" ? "BLIND" : "CLOSED");
-  const lanesOpen = lanes === "BLIND" || lanes === "LIVE";
-  if (live && !winnerOpen && !draftOpen && !objectives.length && !lanesOpen) return null;
+  const marketsOpen = phase === "BLIND" || phase === "LIVE";
+  if (live && !winnerOpen && !marketsOpen) return null;
 
   return (
     <>
@@ -157,11 +238,7 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
             <h2>{event.best_of === 1 ? "Who wins?" : `Game ${game.index} winner`}</h2>
             {winner.state !== "OPEN"
               ? <Locked label={windowText(game, event)} />
-              : winner.close_rule === "draft"
-                ? <Open label="locks when the draft starts" />
-                : winner.close_known === false
-                  ? <Open label="closes 3:00 into the game" />
-                  : <Open at={winner.close_at} />}
+              : <Open label="Closes when the draft starts" />}
           </div>
           <WinnerCards event={event} market={winner} caption="Winner" />
           <Rules markets={[winner]} summary={`Settles on who wins Game ${game.index}; void if it isn't played.`} />
@@ -169,67 +246,7 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       ) : null}
 
       <H2HHead event={event} />
-
-      {!live || draftOpen ? (
-        <Section title="Who gets picked?" sub={`Game ${game.index} · banned: half back`}>
-          <ChampionRow event={event} game={game.index} />
-        </Section>
-      ) : null}
-
-      {objectives.length ? (
-        <Section
-          title="Objectives"
-          sub={objectives.some((m) => m.close_known === false) ? <Open label="closes 3:00 into the game" /> : <Open at={firstClose(objectives)} />}
-        >
-          {objectives.map((m) =>
-            m.outcomes.every((o) => o.code === "A" || o.code === "B") ? (
-              <H2HRow key={m.id} event={event} market={m} label={name(m)} />
-            ) : (
-              <ChoiceRow key={m.id} event={event} market={m} label={name(m)} />
-            ),
-          )}
-          <Rules markets={objectives} summary="Settles from the game's live data; void if the game isn't played." />
-        </Section>
-      ) : game.window !== "DONE" && !live ? (
-        // Not priced yet (they need enough Worlds games with live data): greyed out so the page shows them.
-        <Section title="Objectives" sub={<Locked label="not priced yet" />}>
-          <LockedRow label="First blood" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
-          <LockedRow label="First tower" left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
-          <LockedRow label="Baron before 25:00" left="Yes" right="No" />
-        </Section>
-      ) : null}
-
-      {live && !lanesOpen ? null : (
-      <Section title="Lanes & kills" sub={lanes === "LIVE" ? <Open label="after draft · until 3:00" /> : lanes === "BLIND" ? <Open label="blind · locks when the draft starts" />
-            : lanes === "DRAFT" ? <Locked label="drafting · reopens when the game loads" /> : lanes === "UPCOMING" ? <Locked label="opens later" /> : <Locked />}>
-        {game.window === "DONE" || early === "CLOSED" ? (
-          <p className="muted" style={{ fontSize: 13 }}>{game.window === "DONE" ? `Game ${game.index} is over.` : "Early-game picks are closed."}</p>
-        ) : (
-          <>
-            <div className="mp-sub">Team races</div>
-            {(lanes === "BLIND" || lanes === "LIVE") && races.length ? (
-              races.map((m) => <H2HRow key={m.id} event={event} market={m} label={name(m).replace(/ (blind)$/, "")} />)
-            ) : (
-              <>
-                <p className="muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6, margin: 0 }}>
-                  <IconLock width={13} height={13} aria-hidden="true" />
-                  {lanes === "DRAFT" ? "No picks during the draft. They reopen with the game, until 3:00." : "Not priced yet."}
-                </p>
-                {["First to 5 kills", "Gold lead at 15:00", "First dragon"].map((l) => (
-                  <LockedRow key={l} label={l} left={event.team_a?.code ?? "TBD"} right={event.team_b?.code ?? "TBD"} />
-                ))}
-              </>
-            )}
-            <div className="mp-sub">Kill line</div>
-            <KillLine event={event} game={game.index} />
-            <div className="mp-sub">Lane duels · gold at 15:00</div>
-            <LaneDuels event={event} game={game.index} />
-            {races.length ? <Rules markets={races} summary="Team races settle from the game's live data; void if the game isn't played." /> : null}
-            {early === "UPCOMING" ? <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} /> : null}
-          </>
-        )}
-      </Section>
-      )}
+      {live && !marketsOpen ? null : <GameMarkets event={event} game={game} />}
     </>
   );
 }

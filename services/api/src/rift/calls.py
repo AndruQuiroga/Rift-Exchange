@@ -137,6 +137,15 @@ def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
         if abs(a["gold15"] - b["gold15"]) < TIE_MARGIN["gold15"]:
             return no_result(f"Within {TIE_MARGIN['gold15']:,} gold")
         return called(["A" if a["gold15"] > b["gold15"] else "B"], "Gold at 15:00 seen live")
+    if kind == "game_length":
+        clock = (tl.get("live") or {}).get("clock_s") or 0
+        if clock > int(p["line_s"]) + 120:  # the feed's clock counts pauses: call it only well past the line
+            return called(["OVER"], "Past the line live")
+        if game.ended_at is not None:
+            length = int((game.ended_at - game.started_at).total_seconds()) if game.started_at else None
+            if length is not None and length < int(p["line_s"]) - 60:  # clear of pause adjustments
+                return called(["UNDER"], "Game over before the line")
+        return None
     if kind == "total_kills_game":
         kills = sum(((tl.get("live") or {}).get("kills") or {}).values())
         return called(["OVER"], f"{kills} kills already") if kills > float(p["line"]) else None

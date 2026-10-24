@@ -153,6 +153,10 @@ export type Pick = {
   closes_with_game?: boolean;
   close_known?: boolean;
   close_rule?: "game" | "draft" | null;
+  /** What cancelling returns right now: the whole stake, 75% once the draft has started (D-040), or null. */
+  cancel_refund_rc?: number | null;
+  /** Placed after the draft, at the lower after-draft price (D-040). */
+  after_draft?: boolean;
 };
 
 /** Friends on one match: picks revealed once their market locks, before that only a count (A-010). */

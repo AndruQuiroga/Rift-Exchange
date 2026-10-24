@@ -16,6 +16,23 @@ The goal is **deep, varied, understandable markets**, not arbitrary predicates. 
 
 Do not offer a Bo1 `exact score` market with fake 1–0 odds; simple winner is sufficient. For a Game 4 market, do not post until the fixture **can actually reach Game 4** and clarify void if it never takes place.
 
+## Game markets as offered (D-040, 2026-10-24)
+
+Every game market below runs on one timeline: **blind** at full odds before the draft, **locked** during it, then
+**after the draft** from game start to 3:00 at 75% of the fair profit. One bet per market per person (kill lines:
+one per game; duels: one per lane). Cancel until 3:00: whole stake before the draft starts, 75% after.
+
+| Market | Outcomes | Settles on |
+| --- | --- | --- |
+| First blood / first tower / first dragon | A / B | Live timeline firsts |
+| Baron before 25:00 | Yes / No | First Baron's game time |
+| Game length | Over / Under a half-minute line (this Worlds' median) | Leaguepedia game time, else the feed's clock |
+| First to 5 kills / gold lead at 15:00 | A / B (gold: under 700 is void) | Live timeline |
+| Total kills | Over / Under any offered line | Final stats |
+| Lane duel (gold at 15:00) | Player A / Player B (tie or no-show: half back) | 15:00 frame |
+
+The draft-centric markets below are **not offered** since D-040; picks placed before it settle as written.
+
 ## Tier 2: draft-centric (strong LoL flavor)
 
 | Market | Scope | Resolution & detail | Cutoff |

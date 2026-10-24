@@ -257,7 +257,7 @@ def test_bans_and_pick_order_are_stored_on_completed_games(factory, world):
                       "red": ["Nunu", "Kaisa", "Renata", "RekSai", "DrMundo"]},
             "roles": {"blue": ["jungle", "top", "mid", "bottom", "support"],
                       "red": ["jungle", "bottom", "support", "mid", "top"]},
-            "sides": {"blue": "B", "red": "A"}}
+            "sides": {"blue": "B", "red": "A"}, "length_s": None}
         assert games[2].bans["blue"] == ["LeeSin", "MonkeyKing"] and games[2].bans["first_pick"] is None
         assert games[3].bans is None
         # Game 1 is done; Game 2 is asked for again until its pick order appears.

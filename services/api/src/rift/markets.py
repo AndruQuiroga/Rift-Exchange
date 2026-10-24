@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from rift.config import Settings
 from rift.display import team_name
 from rift.domain.pricing import (
+    after_draft,
     normalise,
     price,
     series_score_distribution,
@@ -104,9 +105,6 @@ def champion_label(champ: str) -> str:
 
 
 NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after Game N-1 ends (draft ~10 min)
-# Markets that stay open through the draft (D-026) carry a provisional cutoff this far past the usual one;
-# the worker pulls it to 3:00 of the game once the game loads, and settlement voids anything later.
-DRAFT_GRACE = timedelta(minutes=90)
 # D-037: series markets and Game 1's pre-draft markets lock when the series goes live (the draft starting), not
 # at the listed time, so a day running late keeps them open and one running early locks them at once. This is
 # only the backstop if the feed never reports the series live.
@@ -126,16 +124,14 @@ def draft_countdown_end(fixture: Fixture, game1_started_at: datetime | None) -> 
 
 def series_close(fixture: Fixture) -> datetime:
     return fixture.scheduled_at + SERIES_LOCK_BACKSTOP
-THROUGH_DRAFT_NOTE = "Open through the draft until 3:00 of game time."
 
 
 def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: TournamentStats, close_at: datetime,
                confidence: str) -> list[MarketSpec]:
-    """Markets scoped to one game, open before it starts. Kill lines and duels open once it loads (rift.props)."""
+    """Markets scoped to one game, open before its draft. Their after-draft copies open once it loads (D-040,
+    rift.props.open_early_team_markets); kill lines and duels are created on demand."""
     key = fixture.provider_id
     opens = "" if idx == 1 else f"Opens when Game {idx - 1} ends. "
-    when = f"{opens}{THROUGH_DRAFT_NOTE}"
-    late = close_at + DRAFT_GRACE  # provisional; pulled to 3:00 of the game once it loads
     specs = []
     if fixture.best_of > 1:
         # D-035: the winner closes when the draft starts (with the champion calls), not through it.
@@ -149,8 +145,8 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
     if stats.timeline is not None:
         from rift.props import early_team_specs, objective_specs
 
-        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, late, when))
-        # Team races, blind: before the draft like duels and kill lines (D-031), closing with the draft calls.
+        # Blind: before the draft at full price, closing with the winner when the draft starts (D-031, D-040).
+        specs.extend(objective_specs(fixture, idx, a, b, q, stats.timeline, close_at))
         specs.extend(early_team_specs(fixture, idx, a, b, q, stats.timeline, close_at, blind=True))
     return specs
 
@@ -301,6 +297,8 @@ def reprice(session: Session, market: Market, spec: MarketSpec, settings: Settin
     for i, os in enumerate(spec.outcomes):
         odds = price(os.probability, min_probability=Decimal(settings.min_probability),
                      max_odds=Decimal(settings.max_decimal_odds))
+        if market.params.get("early"):  # D-040: reopened after the draft, so a lower price
+            odds = after_draft(odds)
         outcome = existing.get(os.code)
         is_new = outcome is None
         if is_new:

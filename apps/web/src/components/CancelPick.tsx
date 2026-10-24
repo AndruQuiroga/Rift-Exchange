@@ -8,11 +8,15 @@ import { useNow } from "@/lib/hooks";
 import { useToast } from "@/lib/toasts";
 import type { Pick } from "@/lib/types";
 
-/** Whether a pick can still be taken back: yours, open, and its market not locked yet (D-038). */
-export const cancellable = (p: Pick, now: number) =>
-  p.status === "OPEN" && p.market_state === "OPEN" && (!p.close_at || Date.parse(p.close_at) > now) && !p.call;
+/** What taking a pick back returns now, or null (D-038, D-040). The server decides; before it says (an older
+ * response) only a still-open market counts, for the whole stake. */
+export const refundOf = (p: Pick, now: number): number | null =>
+  p.status !== "OPEN" || p.call ? null
+    : p.cancel_refund_rc !== undefined ? p.cancel_refund_rc
+    : p.market_state === "OPEN" && (!p.close_at || Date.parse(p.close_at) > now) ? p.stake_rc : null;
+export const cancellable = (p: Pick, now: number) => refundOf(p, now) !== null;
 
-/** Take a pick back before its market locks: tap Cancel, then confirm. The whole stake returns. */
+/** Take a pick back: tap Cancel, then confirm. All of it before the draft starts, 75% after (until 3:00). */
 export function CancelPick({ pick, compact }: { pick: Pick; compact?: boolean }) {
   const now = useNow(5000);
   const { mutate } = useSWRConfig();
@@ -20,14 +24,17 @@ export function CancelPick({ pick, compact }: { pick: Pick; compact?: boolean })
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!cancellable(pick, now)) return null;
+  const refundNow = refundOf(pick, now);
+  if (refundNow === null) return null;
+  const refund: number = refundNow;
+  const partial = refund < pick.stake_rc;
 
   async function cancel() {
     setBusy(true);
     setError(null);
     try {
       await api(`/picks/${pick.id}/cancel`, { method: "POST" });
-      toast({ tone: "money", badge: `+${rc(pick.stake_rc)}`, kicker: "Pick cancelled", text: `${pick.outcome_label}: ${rc(pick.stake_rc)} RC back` });
+      toast({ tone: "money", badge: `+${rc(refund)}`, kicker: "Pick cancelled", text: `${pick.outcome_label}: ${rc(refund)} RC back` });
       mutate((k) => typeof k === "string");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Couldn't cancel that.");
@@ -42,9 +49,10 @@ export function CancelPick({ pick, compact }: { pick: Pick; compact?: boolean })
       {confirm ? (
         <>
           <button type="button" className="cp-yes" disabled={busy} onClick={cancel}>
-            {busy ? <span className="spinner" aria-hidden="true" /> : null}Cancel · {rc(pick.stake_rc)} RC back
+            {busy ? <span className="spinner" aria-hidden="true" /> : null}Cancel · {rc(refund)} RC back
           </button>
           <button type="button" className="cp-no" disabled={busy} onClick={() => setConfirm(false)}>Keep</button>
+          {partial ? <span className="cp-why">75% back once the draft has started</span> : null}
         </>
       ) : (
         <button type="button" className="cp-open" onClick={() => setConfirm(true)} aria-label={`Cancel your pick on ${pick.outcome_label}`}>

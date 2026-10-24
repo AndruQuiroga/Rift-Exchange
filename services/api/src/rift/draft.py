@@ -272,9 +272,15 @@ def grid(session: Session, season: Season, fixture: Fixture, game_index: int, se
     }
 
 
+# D-040: champion markets are no longer offered. Picks already placed settle as before.
+CHAMPION_MARKETS_OFFERED = False
+
+
 def ensure_market(session: Session, season: Season, fixture: Fixture, game_index: int, champ: str, scope: str,
                   settings: Settings, now, role: str | None = None) -> Market:
     """Create (or re-price) the market for one tapped champion. Same template key for every player."""
+    if not CHAMPION_MARKETS_OFFERED:
+        raise DraftError("NOT_OFFERED", "Champion picks are no longer offered.")
     if scope not in SCOPES:
         raise DraftError("BAD_SCOPE", "Scope must be picked, A, B, banned or first.")
     if role is not None and (scope not in ("A", "B") or role not in ROLES):

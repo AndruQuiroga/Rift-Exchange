@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from rift import ledger
 from rift.domain.money import partial_return, winning_return
+from rift.domain.pricing import AFTER_DRAFT_RATE
 from rift.models import Fixture, Market, OutboxEvent, Outcome, Quote, Selection, Ticket, Wallet
 
 
@@ -140,6 +141,7 @@ def create_quote(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, 
                                  {"market_id": str(market.id)})
         markets_seen.add(market.id)
         _check_open(session, market, outcome, now)
+        _check_blind_held(session, market, user_id)
         out_items.append({
             "outcome_id": str(outcome.id), "market_id": str(market.id), "stake_rc": item.stake_rc,
             "odds": str(outcome.odds.quantize(Decimal("0.01"))), "odds_version": outcome.odds_version,
@@ -207,6 +209,7 @@ def accept_ticket(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID,
         outcome = outcomes[uuid.UUID(item["outcome_id"])]
         market = markets[uuid.UUID(item["market_id"])]
         _check_open(session, market, outcome, now)
+        _check_blind_held(session, market, user_id)
         confirmed = confirm_odds_versions.get(item["outcome_id"])
         if outcome.odds_version != item["odds_version"] or confirmed != item["odds_version"]:
             changed.append(item["outcome_id"])
@@ -263,13 +266,72 @@ def _existing_ticket(session: Session, season_id: uuid.UUID, user_id: uuid.UUID,
     ).scalar_one_or_none()
 
 
+def timeline_market(market: Market) -> bool:
+    """A game market on the D-040 timeline: blind before the draft, after-draft from game load to 3:00."""
+    return bool(market.fixture_id and (market.params.get("blind") or market.params.get("early")
+                                       or market.params.get("through_draft")))
+
+
+def family(market: Market) -> tuple:
+    """Blind and after-draft markets that predict the same thing (D-040): one bet per person across them.
+    Kill lines share one family per game whatever the line; duels one per lane and stat."""
+    p = market.params
+    return (market.fixture_id, p.get("game_index"), market.kind,
+            p.get("role") if market.kind == "lane_duel" else None, p.get("stat") if market.kind == "lane_duel" else None)
+
+
+def _check_blind_held(session: Session, market: Market, user_id: uuid.UUID) -> None:
+    """An after-draft bet needs no open blind bet on the same thing: cancel it first (75% back)."""
+    if not market.params.get("early"):
+        return
+    held = session.execute(select(Market).join(Selection, Selection.market_id == Market.id).where(
+        Selection.user_id == user_id, Selection.status == "OPEN", Market.fixture_id == market.fixture_id,
+        Market.kind == market.kind)).scalars().all()
+    if any(m.params.get("blind") and family(m) == family(market) for m in held):
+        raise PlacementError("CALLED_BLIND", "You already called this blind. Cancel that bet (75% back) to bet "
+                             "with the draft known.", {"market_id": str(market.id)})
+
+
+def cancel_refund(session: Session, sel: Selection, market: Market, now: datetime, decided: bool | None = None) -> int | None:
+    """What cancelling this pick returns right now, or None when it can't be cancelled (D-038, D-040).
+
+    Most markets: the whole stake, until they lock. Game markets on the blind / after-draft timeline: the whole
+    stake before the draft starts, then 75% until 3:00 of the game (first blood: until the first kill), never
+    once the data has decided them. decided: whether a result or live call exists, if the caller knows.
+    """
+    if sel.status != "OPEN" or sel.settled_revision:
+        return None
+    fixture = session.get(Fixture, market.fixture_id) if market.fixture_id else None
+    if not timeline_market(market):
+        follows_game = (market.params.get("game_index") or 1) > 1
+        started = fixture is not None and fixture.status != "SCHEDULED" and not follows_game
+        if market.state != "OPEN" or market.close_at <= now or started:
+            return None
+        return sel.stake_rc
+    from rift.draft import draft_window
+    from rift.props import market_cutoff, market_game
+
+    if market.state not in ("OPEN", "LOCKED", "SUSPENDED") or fixture is None or             fixture.status not in ("SCHEDULED", "LIVE"):
+        return None
+    game = market_game(session, market)
+    if game is not None and (game.state in ("completed", "unneeded") or game.ended_at is not None):
+        return None
+    cutoff = market_cutoff(market, game)
+    if cutoff is not None and now >= cutoff:
+        return None
+    if decided is None:
+        from rift.calls import calls
+
+        decided = market.id in calls(session, [market], 0)
+    if decided:
+        return None
+    before_draft = not market.params.get("early") and         draft_window(session, fixture, market.params.get("game_index", 1), now).open
+    return sel.stake_rc if before_draft else int(Decimal(sel.stake_rc) * AFTER_DRAFT_RATE)
+
+
 def cancel_selection(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, selection_id: uuid.UUID,
                      now: datetime) -> Selection:
-    """Take back a pick before its market locks (D-038): the whole stake comes back and it never settles.
-
-    Only your own open pick, only while its market is open, and not once its series has gone live for a
-    market that locks at the draft (the worker locking it a poll later must not leave a window).
-    """
+    """Take back a pick (D-038, D-040): see cancel_refund for when and how much comes back. It never settles."""
     sel = session.execute(select(Selection).where(Selection.id == selection_id).with_for_update()).scalar_one_or_none()
     if sel is None or sel.user_id != user_id:
         raise PlacementError("UNKNOWN_PICK", "That pick doesn't exist.")
@@ -278,17 +340,18 @@ def cancel_selection(session: Session, *, season_id: uuid.UUID, user_id: uuid.UU
         raise PlacementError("UNKNOWN_PICK", "That pick doesn't exist.")
     if sel.status != "OPEN" or sel.settled_revision:
         raise PlacementError("NOT_CANCELLABLE", "That pick is already settled or cancelled.")
-    fixture = session.get(Fixture, market.fixture_id) if market.fixture_id else None
-    follows_game = market.params.get("early") or market.params.get("through_draft") or (market.params.get("game_index") or 1) > 1
-    started = fixture is not None and fixture.status != "SCHEDULED" and not follows_game
-    if market.state != "OPEN" or market.close_at <= now or started:
-        raise PlacementError("MARKET_LOCKED", "Betting on this has closed, so the pick stands.")
+    refund = cancel_refund(session, sel, market, now)
+    if refund is None:
+        raise PlacementError("MARKET_LOCKED", "This can't be cancelled any more, so the pick stands.")
     wallet = session.execute(select(Wallet).where(Wallet.season_id == season_id, Wallet.user_id == user_id)
                              ).scalar_one()
     wallet = ledger.lock_wallets(session, {wallet.id})[wallet.id]
-    ledger.credit(session, wallet, kind="VOID_REFUND", amount_rc=sel.stake_rc, key=f"cancel:{sel.id}",
-                  ref_type="selection", ref_id=str(sel.id), memo=f"Cancelled: {sel.rules_snapshot.get('title', '')}")
-    sel.status, sel.settled_at = "CANCELLED", now
+    if refund:
+        ledger.credit(session, wallet, kind="VOID_REFUND", amount_rc=refund, key=f"cancel:{sel.id}",
+                      ref_type="selection", ref_id=str(sel.id),
+                      memo=f"Cancelled: {sel.rules_snapshot.get('title', '')}"
+                      + ("" if refund == sel.stake_rc else f" ({refund:,} of {sel.stake_rc:,} RC back)"))
+    sel.status, sel.settled_at, sel.return_rc = "CANCELLED", now, refund
     session.add(OutboxEvent(type="ticket.accepted", entity_id=str(sel.ticket_id), user_id=user_id,
                             payload={"cancelled": str(sel.id)}))
     session.flush()

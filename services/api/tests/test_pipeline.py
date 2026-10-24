@@ -448,7 +448,7 @@ def test_open_markets_pick_up_new_rules_on_the_next_pricing_pass(factory, world)
         old = make_market(s, season, fx, "game_winner", [("A", "A", "1.80"), ("B", "B", "2.00")],
                           params={"game_index": 1}, scope="GAME", key="game_winner:x:1")
         spec = markets.MarketSpec("game_winner:x:1", "game_winner", "GAME", "WINNER", "Game 1 winner", "new rules",
-                                  fx.scheduled_at + markets.DRAFT_GRACE, "elo_v1", "MODEL",
+                                  fx.scheduled_at + timedelta(minutes=90), "elo_v1", "MODEL",
                                   [markets.OutcomeSpec("A", "A", 0.55), markets.OutcomeSpec("B", "B", 0.45)],
                                   {"game_index": 1, "through_draft": True})
         markets.upsert_market(s, season, fx, spec, Settings(season_code="test"), START - timedelta(days=30))
