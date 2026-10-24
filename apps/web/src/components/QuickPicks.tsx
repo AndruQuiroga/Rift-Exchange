@@ -36,7 +36,7 @@ export function QuickPicks() {
         <div className={`toast quick ${notice.tone}`}>
           <span>{notice.text}</span>
           {notice.tone !== "success" && slip.lines.length ? (
-            <button type="button" className="link" onClick={() => { dismissNotice(); slip.setSheetOpen(true); }}>Review →</button>
+            <button type="button" className="link" onClick={() => { dismissNotice(); slip.setSheetOpen(true); }}>Open slip →</button>
           ) : null}
           <button type="button" className="icon-btn" aria-label="Dismiss" onClick={dismissNotice}>×</button>
         </div>
