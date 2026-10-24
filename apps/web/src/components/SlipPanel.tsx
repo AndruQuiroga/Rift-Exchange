@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
-import { useMe } from "@/lib/hooks";
+import { blended, useHoldings, useMe, type Holding } from "@/lib/hooks";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { STAKES, useSlip } from "@/lib/slip";
 import { stakeLimits, type StakeLimit } from "@/lib/stake-limits";
@@ -37,6 +37,37 @@ function ReceiptFriends({ event }: { event: EventT }) {
   );
 }
 
+/**
+ * Adding to a pick you already hold: each bet keeps its own odds, so show the bet you have, this one, and the
+ * two together (total stake, blended price, total return), with which way the price moved since.
+ */
+function TopUp({ holding, stake, odds }: { holding: Holding; stake: number | null; odds: string }) {
+  const add = stake ? potentialReturn(stake, odds) : 0;
+  const was = blended(holding);
+  const moved = Number(odds) > Number(was) ? "up" : Number(odds) < Number(was) ? "down" : null;
+  const total = { ...holding, stake: holding.stake + (stake ?? 0), ret: holding.ret + add };
+  return (
+    <div className="topup num" aria-label="Adding to a pick you hold">
+      <div className="topup-row">
+        <span className="muted">You hold</span>
+        <span>{rc(holding.stake)} RC @ {fmtOdds(was)}{holding.picks.length > 1 ? " avg" : ""} → {rc(holding.ret)}</span>
+      </div>
+      <div className="topup-row">
+        <span className="muted">Adding</span>
+        <span>
+          {stake ? `${rc(stake)} RC` : "—"} @ {fmtOdds(odds)}
+          {moved ? <span className={`topup-move ${moved}`}>{moved === "up" ? "▲" : "▼"} from {fmtOdds(was)}</span> : null}
+          {stake ? ` → ${rc(add)}` : ""}
+        </span>
+      </div>
+      <div className="topup-row total">
+        <span>Together</span>
+        <span><b>{rc(total.stake)} RC</b> @ {fmtOdds(blended(total))} avg → <b>{rc(total.ret)} RC</b></span>
+      </div>
+    </div>
+  );
+}
+
 type Phase =
   | { kind: "edit" }
   | { kind: "review"; quote: Quote; previous?: Record<string, string> }
@@ -60,6 +91,7 @@ export function QuickToggle() {
 export function SlipPanel({ onClose }: { onClose?: () => void }) {
   const slip = useSlip();
   const { data: me } = useMe();
+  const holdings = useHoldings();
   const { mutate } = useSWRConfig();
   const [phase, setPhase] = useState<Phase>({ kind: "edit" });
   const [error, setError] = useState<string | null>(null);
@@ -408,6 +440,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                   {l.stake ? ` (+${rc(potentialReturn(l.stake, l.odds) - l.stake)} profit)` : ""}
                   {l.stake && l.consolation ? <> · right side <b>{rc(partialReturn(l.stake, l.odds, l.consolation))} RC</b></> : null}
                 </div>
+                {holdings.get(l.outcomeId) ? <TopUp holding={holdings.get(l.outcomeId)!} stake={l.stake} odds={l.odds} /> : null}
               </div>
             );
           })}

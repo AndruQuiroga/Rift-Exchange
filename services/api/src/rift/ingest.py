@@ -354,7 +354,7 @@ def draft_record(fixture: Fixture, game: Game, row: LeaguepediaGame, team_a: Tea
     return {"source": "leaguepedia", **bans,
             "first_pick": picks["blue"][0] if picks else None, "first_pick_side": "blue" if picks else None,
             "picks": picks, "roles": {"blue": draft.team1_roles, "red": draft.team2_roles} if picks else None,
-            "sides": {"blue": code.get(blue.id), "red": code.get(red.id)}}
+            "sides": {"blue": code.get(blue.id), "red": code.get(red.id)}, "length_s": row.length_s}
 
 
 def sync_drafts(session: Session, fixture: Fixture, secondary: LeaguepediaSource, now: datetime) -> int:

@@ -15,7 +15,7 @@ from rift.config import Settings
 API = "https://lol.fandom.com/api.php"
 # Leaguepedia's ScoreboardGames declaration stores aggregate bans here, not PicksAndBansS7.
 GAME_FIELDS = ("SG.Team1, SG.Team2, SG.WinTeam, SG.N_GameInMatch, SG.DateTime_UTC, "
-               "SG.Team1Bans__full=Team1Bans, SG.Team2Bans__full=Team2Bans")
+               "SG.Team1Bans__full=Team1Bans, SG.Team2Bans__full=Team2Bans, SG.Gamelength_Number=Gamelength")
 # Pick order lives in PicksAndBansS7 (fields per its Cargo declaration, checked via action=cargofields),
 # joined on the shared GameId. Team1 is blue side in both tables; blue makes the first pick. PB's own team
 # names come back so a row whose sides disagree with the scoreboard is rejected rather than trusted.
@@ -49,6 +49,7 @@ class LeaguepediaGame:
     team1_bans: list[str]
     team2_bans: list[str]
     draft: LeaguepediaDraft | None = None  # filled by series_drafts only; None when PB has no full draft
+    length_s: int | None = None  # official game time (pauses excluded), when editors have filled it in
 
 
 class LeaguepediaSource:
@@ -190,6 +191,7 @@ class LeaguepediaClient(LeaguepediaSource):
                 team1_bans=[b for b in (r.get("Team1Bans") or "").split(",") if b],
                 team2_bans=[b for b in (r.get("Team2Bans") or "").split(",") if b],
                 draft=LeaguepediaClient._parse_draft(r) if "PBTeam1" in r else None,
+                length_s=round(float(r["Gamelength"]) * 60) if r.get("Gamelength") else None,
             ))
         return out
 

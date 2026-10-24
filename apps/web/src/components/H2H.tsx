@@ -1,13 +1,12 @@
 "use client";
 
 import type { ReactNode } from "react";
-import useSWR from "swr";
-import { oddsSpoken, potentialReturn, rc } from "@/lib/format";
+import { odds as fmtOdds, oddsSpoken, potentialReturn, rc } from "@/lib/format";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
-import { usePlaced } from "@/lib/hooks";
-import { useSlip } from "@/lib/slip";
+import { blended, useHoldings, usePlaced, type Holding } from "@/lib/hooks";
+import { useSlip, type SlipLine } from "@/lib/slip";
 import { teamColor, teamName } from "@/lib/teams";
-import type { EventT, MarketT, OutcomeT, Pick, Team } from "@/lib/types";
+import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
 import { TeamMark } from "./bits";
 import { eventLabel } from "./EventCard";
 import { IconCheck, IconLock } from "./icons";
@@ -34,9 +33,9 @@ export function FriendDots({ eventId, outcomeId }: { eventId: string; outcomeId:
  * (filled, with a check); already placed (outlined, "Placed"); closed (muted, with a lock).
  * Tap toggles; tapping the other side of a market moves your pick there.
  */
-export function PickButton({ event, market, outcome, className = "", label, children, style }: {
+export function PickButton({ event, market, outcome, className = "", label, children, style, blocked }: {
   event: EventT; market: MarketT; outcome: OutcomeT | undefined; className?: string; label: string; children?: ReactNode;
-  style?: React.CSSProperties;
+  style?: React.CSSProperties; blocked?: boolean;
 }) {
   const slip = useSlip();
   const placed = usePlaced();
@@ -46,7 +45,8 @@ export function PickButton({ event, market, outcome, className = "", label, chil
   const won = market.result && !market.result.void && market.result.winning_codes.includes(outcome.code);
   // Known before it pays (D-032): the winning side lights up the moment the data shows it.
   const called = !market.result && market.call && !market.call.void && market.call.winning_codes.includes(outcome.code);
-  const open = market.state === "OPEN" && outcome.odds !== null;
+  // blocked: you called this blind, so the after-draft price waits until that bet is cancelled (D-040).
+  const open = market.state === "OPEN" && outcome.odds !== null && !blocked;
   return (
     <button
       type="button"
@@ -69,44 +69,78 @@ export function PickButton({ event, market, outcome, className = "", label, chil
   );
 }
 
-/** One line under a market saying what you have on it: the slip pick and its return, or what is placed. */
-export function PickNote({ market }: { market: MarketT }) {
+/**
+ * What you have on a market, under its prices. Bets on one outcome are taken together (each top-up keeps its own
+ * odds): the total staked, the blended price and the total return, then each bet with its Cancel. blind: the
+ * blind market of an after-draft row (D-040), so a pick called before the draft still shows, tagged Blind.
+ */
+export function PickNote({ market, blind, tag }: { market: MarketT; blind?: MarketT; tag?: string }) {
   const slip = useSlip();
-  const placed = usePlaced();
-  const { data: openPicks } = useSWR<{ picks: Pick[] }>("/me/picks?state=open");
+  const holdings = useHoldings();
   const line = slip.lines.find((l) => l.marketId === market.id);
-  if (line) {
-    return (
-      <p className="pk-note num">
-        Your pick · <b>{line.outcomeLabel}</b>
-        {line.stake ? <> · {rc(line.stake)} RC → returns <b>{rc(potentialReturn(line.stake, line.odds))} RC</b></> : null}
-      </p>
-    );
-  }
-  const held = market.outcomes.filter((o) => placed.has(o.id));
+  const rows = [...(blind ? [{ m: blind, tag: "Blind" }] : []), { m: market, tag: tag ?? (blind ? "After draft" : null) }]
+    .flatMap(({ m, tag }) => m.outcomes.map((o) => ({ m, o, tag, h: holdings.get(o.id) })))
+    .filter((r): r is typeof r & { h: Holding } => !!r.h);
   const call = market.result ? null : market.call;
   const shown = call ? market.outcomes.filter((o) => call.winning_codes.includes(o.code)).map((o) => o.label).join(", ") : "";
-  if (!held.length) {
+  if (!rows.length && !line) {
     return call ? (
       <p className="pk-note num reveal">
         {call.void ? "Void" : `Result: ${shown}`} · <PayoutNote payAt={call.pays_at} final={call.final} />
       </p>
     ) : null;
   }
-  const winning = !!call && !call.void && held.some((o) => call.winning_codes.includes(o.code));
-  const mine = (openPicks?.picks ?? []).filter((p) => p.market_id === market.id);
   return (
-    <p className={`pk-note placed num${call ? " reveal" : ""}`}>
-      Placed · {held.map((o) => `${o.label} ${rc(placed.get(o.id) ?? 0)} RC`).join(" · ")}
-      {call ? (
-        <>
-          {" · "}
-          <b className={call.void ? "" : winning ? "win" : "loss"}>{call.void ? "Void" : winning ? "Winning" : "Losing"}</b>
-          {winning || call.void ? <>, <PayoutNote payAt={call.pays_at} final={call.final} /></> : null}
-        </>
+    <div className="pk-notes">
+      {rows.map(({ m, o, tag, h }) => {
+        const c = m.result ? null : m.call;
+        const verdict = !c ? null : c.void ? "Void" : c.winning_codes.includes(o.code) ? "Winning" : "Losing";
+        const many = h.picks.length > 1;
+        return (
+          <div className={`pk-note placed num${c ? " reveal" : ""}`} key={o.id}>
+            <div className="pkn-main">
+              {tag ? <span className={`pkn-tag${tag === "Blind" ? " blind" : ""}`}>{tag}</span> : <span className="pkn-k">Your bet</span>}
+              <b>{o.label}</b>
+              <span>{rc(h.stake)} RC @ {fmtOdds(blended(h))}{many ? " avg" : ""} → <b>{rc(h.ret)} RC</b></span>
+              {verdict ? <b className={verdict === "Winning" ? "win" : verdict === "Losing" ? "loss" : ""}>{verdict}</b> : null}
+              {c && verdict !== "Losing" ? <PayoutNote payAt={c.pays_at} final={c.final} /> : null}
+              {many ? null : <CancelPick pick={h.picks[0]} compact />}
+            </div>
+            {many ? (
+              <ul className="pkn-bets" aria-label={`Your ${h.picks.length} bets on ${o.label}`}>
+                {h.picks.map((p) => (
+                  <li key={p.id}>
+                    <span>{rc(p.stake_rc)} @ {fmtOdds(p.odds)} → {rc(p.potential_return_rc)}</span>
+                    <CancelPick pick={p} compact />
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        );
+      })}
+      {line ? <SlipNote line={line} holding={holdings.get(line.outcomeId)} /> : null}
+    </div>
+  );
+}
+
+/** The pick in your slip on this market, and what it does to a bet you already hold on the same side. */
+function SlipNote({ line, holding }: { line: SlipLine; holding?: Holding }) {
+  const ret = line.stake ? potentialReturn(line.stake, line.odds) : 0;
+  return (
+    <div className="pk-note num">
+      <div className="pkn-main">
+        <span className="pkn-tag slip">In slip</span>
+        <b>{line.outcomeLabel}</b>
+        {line.stake ? <span>{rc(line.stake)} RC @ {fmtOdds(line.odds)} → <b>{rc(ret)} RC</b></span> : <span className="muted">add a stake</span>}
+      </div>
+      {holding && line.stake ? (
+        <div className="pkn-total">
+          With your {rc(holding.stake)} RC: <b>{rc(holding.stake + line.stake)} RC</b> @{" "}
+          {fmtOdds(blended({ ...holding, stake: holding.stake + line.stake, ret: holding.ret + ret }))} avg → <b>{rc(holding.ret + ret)} RC</b>
+        </div>
       ) : null}
-      {mine.map((p) => <CancelPick key={p.id} pick={p} compact />)}
-    </p>
+    </div>
   );
 }
 
@@ -142,29 +176,36 @@ export function WinnerCards({ event, market, caption }: { event: EventT; market:
   );
 }
 
-/** A team-vs-team market as one row: the first team's price on the left, the second's on the right. */
-export function H2HRow({ event, market, label, left, right, hint }: {
-  event: EventT; market: MarketT; label: string; left?: OutcomeT; right?: OutcomeT; hint?: string;
+/** A team-vs-team market as one row: the first team's price on the left, the second's on the right. blind: the
+ * blind market behind an after-draft row (D-040); holding it blocks this one's prices until it is cancelled. */
+export function H2HRow({ event, market, label, left, right, hint, blind }: {
+  event: EventT; market: MarketT; label: string; left?: OutcomeT; right?: OutcomeT; hint?: string; blind?: MarketT;
 }) {
+  const holdings = useHoldings();
+  const blocked = !!blind && blind.outcomes.some((o) => holdings.has(o.id));
   const l = left ?? market.outcomes.find((o) => o.code === "A");
   const r = right ?? market.outcomes.find((o) => o.code === "B");
   return (
     <div className="h2h">
       <div className="h2h-row">
-        <PickButton event={event} market={market} outcome={l} label={`${l?.label ?? ""}, ${label}`} />
+        <PickButton event={event} market={market} outcome={l} label={`${l?.label ?? ""}, ${label}`} blocked={blocked} />
         <span className="h2h-label">
           {label}
           {hint ? <small>{hint}</small> : null}
         </span>
-        <PickButton event={event} market={market} outcome={r} label={`${r?.label ?? ""}, ${label}`} />
+        <PickButton event={event} market={market} outcome={r} label={`${r?.label ?? ""}, ${label}`} blocked={blocked} />
       </div>
-      <PickNote market={market} />
+      <PickNote market={market} blind={blind} />
     </div>
   );
 }
 
 /** A market whose answers aren't one per team (dragon type, games played, yes/no): its options in a row. */
-export function ChoiceRow({ event, market, label, short }: { event: EventT; market: MarketT; label: string; short?: (o: OutcomeT) => string }) {
+export function ChoiceRow({ event, market, label, short, blind }: {
+  event: EventT; market: MarketT; label: string; short?: (o: OutcomeT) => string; blind?: MarketT;
+}) {
+  const holdings = useHoldings();
+  const blocked = !!blind && blind.outcomes.some((o) => holdings.has(o.id));
   return (
     <div className="h2h">
       <div className="choice-row">
@@ -174,13 +215,13 @@ export function ChoiceRow({ event, market, label, short }: { event: EventT; mark
           style={market.outcomes.length > 4 ? undefined : { gridTemplateColumns: `repeat(${market.outcomes.length}, minmax(0, 1fr))` }}
         >
           {market.outcomes.map((o) => (
-            <PickButton key={o.id} event={event} market={market} outcome={o} className="chip-pk" label={`${label}: ${o.label}`}>
+            <PickButton key={o.id} event={event} market={market} outcome={o} className="chip-pk" label={`${label}: ${o.label}`} blocked={blocked}>
               <span className="pk-lbl">{short ? short(o) : o.label}</span>
             </PickButton>
           ))}
         </div>
       </div>
-      <PickNote market={market} />
+      <PickNote market={market} blind={blind} />
     </div>
   );
 }

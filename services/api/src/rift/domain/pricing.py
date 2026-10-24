@@ -54,3 +54,16 @@ def price(probability: float, *, min_probability: Decimal, max_odds: Decimal) ->
     if odds > max_odds or odds <= Decimal("1.00"):
         return None
     return odds
+
+
+# D-040: a market reopened after the draft knows the champions and the live game, so it pays this share of
+# the profit a fair price would (2.00 becomes 1.75). Cancelling after the draft starts returns the same share.
+AFTER_DRAFT_RATE = Decimal("0.75")
+
+
+def after_draft(odds: Decimal | None) -> Decimal | None:
+    """The after-draft price for fair odds: the same share of the profit, or None when nothing would be left."""
+    if odds is None:
+        return None
+    out = (1 + (odds - 1) * AFTER_DRAFT_RATE).quantize(ODDS_QUANT, rounding=ROUND_HALF_UP)
+    return out if out > Decimal("1.00") else None

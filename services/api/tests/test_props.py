@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from rift import props
 from rift.config import Settings
-from rift.markets import game_specs, series_close, tournament_stats
+from rift.markets import game_specs, series_close, tournament_stats, upsert_market
 from rift.models import Fixture, Game, Market, Outcome, Season, Selection, Team
 from rift.settlement import grade_market
 
@@ -62,11 +62,13 @@ def test_objective_markets_open_with_each_game(factory, season_games):
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
         specs = {sp.kind: sp for sp in game_specs(fx, 2, a, b, 0.6, tournament_stats(s, season), T0, "EXPERIMENTAL")}
-    assert set(props.OFFERED_OBJECTIVES) <= set(specs)
+    assert set(props.OFFERED_OBJECTIVES) - {"game_length"} <= set(specs)
+    assert "game_length" not in specs  # no game times recorded yet
     assert not set(props.RETIRED_OBJECTIVES) & set(specs)  # dragon element and soul are no longer offered
     blood = {o.code: o.probability for o in specs["first_blood"].outcomes}
     assert blood["A"] > 0.5  # A is the stronger side and winners have taken first blood every time
-    assert specs["baron_before"].params == {"game_index": 2, "through_draft": True}
+    assert specs["baron_before"].params == {"game_index": 2, "blind": True}  # D-040: blind, closing at the draft
+    assert specs["baron_before"].template_key.endswith(":blind") and "(blind)" in specs["baron_before"].title
 
 
 @pytest.mark.parametrize("kind,codes", [("first_blood", ["A"]), ("first_tower", ["A"]), ("five_kills", ["A"]),
@@ -318,8 +320,12 @@ def test_team_races_open_with_the_game_and_close_at_three_minutes(factory, seaso
     _live_game1(factory, season_games)
     with factory() as s, s.begin():
         season = s.get(Season, season_games["season"])
-        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1)) == 3
+        # Three team races and the after-draft first blood, first tower and Baron (D-040).
+        assert props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1)) == 6
         races = {m.kind: m for m in s.execute(select(Market).where(Market.kind.in_(props.EARLY_TEAM_KINDS))).scalars()}
+        objectives = s.execute(select(Market).where(Market.kind.in_(props.OFFERED_OBJECTIVES))).scalars().all()
+        assert {m.template_key for m in objectives} == {f"{k}:fx-1:1:live" for k in ("first_blood", "first_tower",
+                                                                                     "baron_before")}
         assert set(races) == set(props.EARLY_TEAM_KINDS)
         assert all(m.close_at == T0 + timedelta(minutes=3) and m.params["early"] for m in races.values())
     with factory() as s, s.begin():  # after 3:00 nothing new opens
@@ -554,7 +560,8 @@ def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory
         stats = tournament_stats(s, season)
         specs = {sp.template_key: sp for sp in game_specs(fx, 1, a, b, 0.6, stats, series_close(fx), "MODEL")}
     blind = {k: sp for k, sp in specs.items() if k.endswith(":blind")}
-    assert {sp.kind for sp in blind.values()} == {"five_kills", "gold_lead_15", "first_dragon"}
+    assert {sp.kind for sp in blind.values()} == {"five_kills", "gold_lead_15", "first_dragon", "first_blood",
+                                                 "first_tower", "baron_before"}
     race = blind["gold_lead_15:fx-1:1:blind"]
     assert race.close_at == series_close(fx) and race.params == {"game_index": 1, "blind": True}
     assert "(blind)" in race.title and "before the draft" in race.rules_text
@@ -566,3 +573,93 @@ def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory
         after = props.early_team_specs(fx, 1, a, b, 0.6, props.timeline_data(s, s.get(Season, season_games["season"])),
                                        T0 + timedelta(minutes=3))
     assert {sp.template_key for sp in after} == {"five_kills:fx-1:1", "gold_lead_15:fx-1:1", "first_dragon:fx-1:1"}
+
+
+def test_after_draft_markets_pay_less_than_blind(factory, season_games):
+    """D-040: the same race prices lower once it reopens after the draft (75% of the profit)."""
+    from decimal import Decimal
+
+    from rift.domain.pricing import after_draft, price
+
+    assert after_draft(Decimal("2.00")) == Decimal("1.75") and after_draft(Decimal("1.01")) == Decimal("1.01")
+    _live_game1(factory, season_games)
+    with factory() as s, s.begin():
+        season = s.get(Season, season_games["season"])
+        props.open_early_team_markets(s, season, SETTINGS, _Model(), T0 + timedelta(minutes=1))
+        tower = s.execute(select(Market).where(Market.template_key == "first_tower:fx-1:1:live")).scalar_one()
+        for o in s.execute(select(Outcome).where(Outcome.market_id == tower.id)).scalars():
+            fair = price(float(o.probability), min_probability=Decimal("0.01"), max_odds=Decimal(100))
+            assert o.odds == after_draft(fair) and o.odds < fair
+
+
+def test_one_bet_per_market_and_cancel_until_three_minutes(factory, season_games):
+    """D-040: blind or after the draft, not both. Cancel: all back before the draft, 75% after, nothing after 3:00."""
+    from conftest import outcome_id
+    from test_money import join, place
+
+    from rift.placement import PlacementError, cancel_selection
+
+    join(factory, season_games, "alice")
+    before = T0 - timedelta(hours=1)  # the series starts at T0 + 2h
+    with factory() as s, s.begin():
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
+        for spec in game_specs(fx, 1, a, b, 0.6, tournament_stats(s, season), series_close(fx), "MODEL"):
+            upsert_market(s, season, fx, spec, SETTINGS, before)
+        blind = s.execute(select(Market).where(Market.template_key == "first_tower:fx-1:1:blind")).scalar_one().id
+    tower = outcome_id(factory, blind, "A")
+
+    def cancel(at):
+        with factory() as s, s.begin():
+            pick = s.execute(select(Selection).where(Selection.status == "OPEN")).scalars().one()
+            return cancel_selection(s, season_id=season_games["season"], user_id=season_games["alice"],
+                                    selection_id=pick.id, now=at).return_rc
+
+    place(factory, season_games, "alice", [(tower, 100)], "b1", now=before)
+    assert cancel(before) == 100  # before the draft: all of it
+    place(factory, season_games, "alice", [(tower, 100)], "b2", now=before)
+
+    _live_game1(factory, season_games)  # the draft has happened and the game loaded at T0
+    at = T0 + timedelta(minutes=1)
+    with factory() as s, s.begin():
+        props.open_early_team_markets(s, s.get(Season, season_games["season"]), SETTINGS, _Model(), at)
+        live = s.execute(select(Market).where(Market.template_key == "first_tower:fx-1:1:live")).scalar_one().id
+    live_a = outcome_id(factory, live, "A")
+    with pytest.raises(PlacementError) as err:
+        place(factory, season_games, "alice", [(live_a, 100)], "l1", now=at)
+    assert err.value.code == "CALLED_BLIND"
+    assert cancel(at) == 75  # after the draft started: 75%
+    place(factory, season_games, "alice", [(live_a, 100)], "l2", now=at)  # replaced at the after-draft price
+    assert cancel(at + timedelta(seconds=30)) == 75
+    place(factory, season_games, "alice", [(live_a, 100)], "l3", now=at)
+    with pytest.raises(PlacementError) as err:
+        cancel(T0 + timedelta(minutes=3, seconds=1))
+    assert err.value.code == "MARKET_LOCKED"
+
+
+def test_game_length_line_and_grade(factory, season_games):
+    """D-040: over/under the median game time, on a half minute; official (Leaguepedia) time first."""
+    with factory() as s, s.begin():
+        for i, g in enumerate(s.execute(select(Game).where(Game.provider_id.like("past-%"))).scalars()):
+            g.ended_at = g.started_at + timedelta(minutes=28 + i % 6)  # 28-33 minutes
+    with factory() as s:
+        season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
+        a, b = s.get(Team, fx.team_a_id), s.get(Team, fx.team_b_id)
+        specs = {sp.template_key: sp for sp in game_specs(fx, 1, a, b, 0.6, tournament_stats(s, season), T0,
+                                                          "MODEL")}
+    length = specs["game_length:fx-1:1:blind"]
+    line = length.params["line_s"]
+    assert line % 60 == 30 and 28 * 60 < line < 34 * 60 and length.outcomes[0].label.startswith("Over")
+    with factory() as s, s.begin():
+        m = Market(season_id=season_games["season"], fixture_id=season_games["fixture"], template_key="gl:x",
+                   kind="game_length", scope="GAME", category="OBJECTIVES", title="g", rules_text="",
+                   params={"game_index": 1, "line_s": 1830}, model_key="t", confidence="EXPERIMENTAL", close_at=T0)
+        g = Game(fixture_id=season_games["fixture"], provider_id="g1", game_index=1, state="completed",
+                 started_at=T0, ended_at=T0 + timedelta(minutes=31), timeline_complete=False)
+        s.add_all([m, g])
+        s.flush()
+        assert grade_market(s, m).status == "HOLD"  # no official time, live data not complete
+        g.timeline_complete = True
+        assert grade_market(s, m).winning_codes == ["OVER"]  # 31:00 by the feed's clock
+        g.bans = {"length_s": 1800}  # Leaguepedia: 30:00 once the pause is taken out
+        assert grade_market(s, m).winning_codes == ["UNDER"]

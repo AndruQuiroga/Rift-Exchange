@@ -3,13 +3,14 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api, ApiError } from "@/lib/api";
-import { useNow, usePlaced } from "@/lib/hooks";
+import { useHoldings, useNow, usePlaced } from "@/lib/hooks";
 import { oddsSpoken } from "@/lib/format";
 import { useSlip } from "@/lib/slip";
 import type { EventT, MarketT } from "@/lib/types";
 import { RetryNotice } from "./bits";
 import { ChampIcon } from "./ChampionGrid";
 import { Choice } from "./Choice";
+import { PickNote } from "./H2H";
 import { Odds } from "./Odds";
 import { DraftLock, LockTimer } from "./Timing";
 
@@ -41,6 +42,14 @@ function WindowNote({ data, now, event }: { data: WindowState; now: number; even
 
 /** Which market a builder button belongs to: blind and after-draft markets are separate (D-031). */
 const inPhase = (m: MarketT, phase: Phase) => (phase === "BLIND" ? !!m.params.blind : !m.params.blind);
+const tagOf = (m: MarketT) => (m.params.blind ? "Blind" : "After draft");
+
+/** Your bets among this game's on-demand markets (duels, kill lines), blind ones first. */
+function useMine(event: EventT, match: (m: MarketT) => boolean) {
+  const holdings = useHoldings();
+  return (event.markets ?? []).filter((m) => match(m) && m.outcomes.some((o) => holdings.has(o.id)))
+    .sort((a, b) => Number(!a.params.blind) - Number(!b.params.blind));
+}
 type DuelGrid = WindowState & {
   stats: { id: string; label: string }[];
   duels: { role: string; a: { player_id: string; name: string; champion?: string }; b: { player_id: string; name: string; champion?: string }; odds: Record<string, Record<Side, string | null>> }[];
@@ -99,14 +108,16 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
   const now = useNow(1000);
   const [picked, setStat] = useState<string | null>(null);
   const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
+  const mine = useMine(event, (m) => m.kind === "lane_duel" && m.params.game_index === game);
   if (!data) return <div className="skeleton" style={{ height: 160, marginTop: 12 }} />;
   if (!data.duels.length) return <WindowNote data={data} now={now} event={event} />;
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   const phase = phaseOf(data);
   const stat = picked ?? data.stats[0]?.id ?? "gold15";
+  // D-040: one bet per lane. A lane you called blind keeps its after-draft prices shut until you cancel that bet.
+  const calledBlind = (role: string) => phase === "LIVE" && mine.some((m) => m.params.blind && m.params.role === role && m.params.stat === stat);
   return (
     <div>
-      <WindowNote data={data} now={now} event={event} />
       {data.stats.length > 1 ? (
         <div className="segmented" role="group" aria-label="Duel stat" style={{ marginTop: 12 }}>
           {data.stats.map((s) => (
@@ -131,7 +142,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
                 className="duel-side"
                 aria-pressed={selected(key)}
                 data-placed={mine || undefined}
-                disabled={!open || !px || isBusy(key)}
+                disabled={!open || !px || isBusy(key) || calledBlind(d.role)}
                 aria-busy={isBusy(key) || undefined}
                 onClick={() => tap(key, `/events/${event.id}/duels`, { game_index: game, role: d.role, stat }, s)}
                 aria-label={`${p.name}${p.champion ? ` on ${p.champion}` : ""}, ${oddsSpoken(px ?? null)}`}
@@ -144,9 +155,10 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
               </button>
             );
           };
+          const blindHere = calledBlind(d.role);
           return (
             <div className="duel-card" key={d.role}>
-              <div className="dcard-head"><span>{ROLE_LONG[d.role]}</span><span className="muted">{event.team_a?.code} vs {event.team_b?.code}</span></div>
+              <div className="dcard-head"><span>{ROLE_LONG[d.role]}</span><span className="muted">{blindHere ? "Called blind" : `${event.team_a?.code} vs ${event.team_b?.code}`}</span></div>
               <div className="dcard-sides">
                 {side("A")}
                 {side("B")}
@@ -156,10 +168,11 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         })}
       </div>
       {notice}
+      {mine.map((m) => <PickNote key={m.id} market={m} tag={tagOf(m)} />)}
       <p className="fineprint" style={{ textAlign: "left" }}>
         {phase === "BLIND"
-          ? "Blind duels stand whatever champions are picked; void if either player doesn't play."
-          : "Champions confirm when the game loads. Picks close at 3:00."}
+          ? "Blind duels stand whatever champions are picked. A tie, or a player who doesn't play: half back."
+          : "Priced with champions locked in. A tie: half back."}
       </p>
     </div>
   );
@@ -170,6 +183,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
   const now = useNow(1000);
   const [index, setIndex] = useState<number | null>(null);
   const { tap, selected, placed, isBusy, notice } = useOnDemand(event);
+  const mine = useMine(event, (m) => m.kind === "total_kills_game" && m.params.game_index === game);
   useEffect(() => {
     if (data && data.lines.length && index === null) {
       const typical = data.lines.findIndex((l) => l.line === data.typical);
@@ -182,9 +196,10 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
   const row = data.lines[activeIndex];
   const open = data.open && !!data.close_at && Date.parse(data.close_at) > now;
   const phase = phaseOf(data);
+  // D-040: one kill-line bet per game, blind or after the draft.
+  const calledBlind = phase === "LIVE" && mine.some((m) => m.params.blind);
   return (
     <div style={{ marginTop: 12 }}>
-      <WindowNote data={data} now={now} event={event} />
       {data.champions && Object.keys(data.champions).length ? <div className="line-champs">
         {(["A", "B"] as const).map((side) => (
           <div key={side}>
@@ -224,7 +239,7 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
               style={{ justifyContent: "space-between" }}
               aria-pressed={selected(key)}
               data-placed={mine || undefined}
-              disabled={!open || isBusy(key)}
+              disabled={!open || isBusy(key) || calledBlind}
               aria-busy={isBusy(key) || undefined}
               onClick={() => tap(key, `/events/${event.id}/kill-lines`, { game_index: game, line: row.line }, code)}
             >
@@ -235,7 +250,9 @@ export function KillLine({ event, game }: { event: EventT; game: number }) {
           );
         })}
       </div>
+      {calledBlind ? <p className="muted" style={{ fontSize: 12, margin: "8px 0 0" }}>You called the kill line blind. Cancel it (75% back) to take a line now.</p> : null}
       {notice}
+      {mine.map((m) => <PickNote key={m.id} market={m} tag={tagOf(m)} />)}
     </div>
   );
 }

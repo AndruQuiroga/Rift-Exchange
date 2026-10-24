@@ -312,7 +312,7 @@ def test_cancel_a_pick_before_its_market_locks(api, factory, world):
     with factory() as s, s.begin():
         apply_grade(s, world["market"], Grade("RESULT", ["A"], "test"), T0 + timedelta(days=4000))
     picks = {p["id"]: p for p in kai.get("/api/v1/me/picks").json()["picks"]}
-    assert picks[pick]["status"] == "CANCELLED" and picks[pick]["return_rc"] == 0
+    assert picks[pick]["status"] == "CANCELLED" and picks[pick]["return_rc"] == 300  # the full refund
     assert picks[second]["status"] == "WON"
 
 

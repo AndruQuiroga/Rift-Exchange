@@ -168,6 +168,10 @@ class Worker:
             Fixture.scheduled_at > now - markets.SERIES_LOCK_BACKSTOP,  # D-037: keep pricing while running late
             Fixture.team_a_id.is_not(None), Fixture.team_b_id.is_not(None))).scalars().all()
         markets.retire_kind(s, "champion_picked", "Replaced by the champion grid", template_prefix="champion_picked:")
+        # D-040: no champion markets, and objectives no longer stay open through the draft. Picks still settle.
+        for kind in ("champion_picked", "champion_banned", "champion_first_pick"):
+            markets.retire_kind(s, kind, "Champion picks are no longer offered")
+        props.retire_through_draft(s)
         markets.retire_kind(s, "total_kills_game", "Kill lines now open when the game loads",
                             model_key="negbin_tournament_v1")
         for f in fixtures:
