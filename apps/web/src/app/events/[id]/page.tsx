@@ -116,7 +116,8 @@ function PhaseStrip({ phase }: { phase: LanePhase }) {
 
 const OBJECTIVE_ROWS: [string, string][] = [
   ["first_blood", "First blood"], ["first_tower", "First tower"], ["first_dragon", "First dragon"],
-  ["baron_before", "Baron before 25:00"], ["game_length", "Game length"],
+  ["soul_team", "Dragon soul"], ["first_baron", "First Baron"], ["baron_before", "Baron before 25:00"],
+  ["game_length", "Game length"],
 ];
 const LANE_ROWS: [string, string][] = [["five_kills", "First to 5 kills"], ["gold_lead_15", "Gold lead at 15:00"]];
 
@@ -138,7 +139,7 @@ function TimelineRow({ event, game, kind, label, phase }: { event: EventT; game:
     return <LockedRow label={label} left={l} right={r} />;
   }
   const behind = shown === live ? blind : undefined;
-  if (shown.outcomes.every((o) => o.code === "A" || o.code === "B")) {
+  if (shown.outcomes.every((o) => o.code === "A" || o.code === "B" || o.code === "NONE")) {
     return <H2HRow event={event} market={shown} label={label} blind={behind} />;
   }
   const line = kind === "game_length" ? shown.outcomes[0]?.label.replace(/^Over /, "") : null;

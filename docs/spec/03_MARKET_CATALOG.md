@@ -26,6 +26,8 @@ one per game; duels: one per lane). Cancel until 3:00: whole stake before the dr
 | --- | --- | --- |
 | First blood / first tower / first dragon | A / B | Live timeline firsts |
 | Baron before 25:00 | Yes / No | First Baron's game time |
+| Dragon soul (D-041) | A / No soul / B | Timeline soul side |
+| First Baron (D-041) | A / No Baron / B | Timeline first Baron |
 | Game length | Over / Under a half-minute line (this Worlds' median) | Leaguepedia game time, else the feed's clock |
 | First to 5 kills / gold lead at 15:00 | A / B (gold: under 700 is void) | Live timeline |
 | Total kills | Over / Under any offered line | Final stats |

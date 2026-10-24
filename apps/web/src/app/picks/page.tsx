@@ -118,7 +118,8 @@ function PickRow({ picks }: { picks: Pick[] }) {
   const stake = picks.reduce((s, x) => s + x.stake_rc, 0);
   const open = p.status === "OPEN";
   const ret = picks.reduce((s, x) => s + (open ? x.potential_return_rc : x.return_rc), 0);
-  const odds = many ? (picks.reduce((s, x) => s + x.potential_return_rc, 0) / stake).toFixed(2) : p.odds;
+  const odds = new Set(picks.map((x) => x.odds)).size === 1 ? p.odds
+    : (picks.reduce((s, x) => s + x.potential_return_rc, 0) / stake).toFixed(2);
   const tone = p.status === "WON" || (p.status === "PARTIAL" && ret > stake) ? "win" : p.status === "LOST" ? "loss" : undefined;
   return (
     <article className="prow">
@@ -130,7 +131,7 @@ function PickRow({ picks }: { picks: Pick[] }) {
         <PickStatus pick={p} />
       </div>
       <div className="prow-money num">
-        <span>{rc(stake)} RC @ {fmtOdds(odds)}{many ? " avg" : ""}</span>
+        <span>{rc(stake)} RC @ {fmtOdds(odds)}{odds !== p.odds ? " avg" : ""}</span>
         <span className="prow-arrow" aria-hidden="true">→</span>
         <b className={tone}>{rc(ret)} RC</b>
         <span className="muted">{open ? "if it wins" : p.status === "CANCELLED" ? "refunded" : "returned"}</span>

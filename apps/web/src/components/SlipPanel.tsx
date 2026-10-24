@@ -5,7 +5,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { odds as fmtOdds, partialReturn, potentialReturn, rc } from "@/lib/format";
-import { blended, useHoldings, useMe, type Holding } from "@/lib/hooks";
+import { blended, mixed, useHoldings, useMe, type Holding } from "@/lib/hooks";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
 import { STAKES, useSlip } from "@/lib/slip";
 import { stakeLimits, type StakeLimit } from "@/lib/stake-limits";
@@ -50,7 +50,7 @@ function TopUp({ holding, stake, odds }: { holding: Holding; stake: number | nul
     <div className="topup num" aria-label="Adding to a pick you hold">
       <div className="topup-row">
         <span className="muted">You hold</span>
-        <span>{rc(holding.stake)} RC @ {fmtOdds(was)}{holding.picks.length > 1 ? " avg" : ""} → {rc(holding.ret)}</span>
+        <span>{rc(holding.stake)} RC @ {fmtOdds(was)}{mixed(holding) ? " avg" : ""} → {rc(holding.ret)}</span>
       </div>
       <div className="topup-row">
         <span className="muted">Adding</span>
@@ -62,7 +62,7 @@ function TopUp({ holding, stake, odds }: { holding: Holding; stake: number | nul
       </div>
       <div className="topup-row total">
         <span>Together</span>
-        <span><b>{rc(total.stake)} RC</b> @ {fmtOdds(blended(total))} avg → <b>{rc(total.ret)} RC</b></span>
+        <span><b>{rc(total.stake)} RC</b> @ {moved || mixed(holding) ? `${fmtOdds(blended(total))} avg` : fmtOdds(odds)} → <b>{rc(total.ret)} RC</b></span>
       </div>
     </div>
   );

@@ -62,12 +62,16 @@ export function useLiveUpdates(enabled: boolean) {
   }, [enabled, mutate]);
 }
 
-/** Outcomes you already hold an open pick on (outcome id -> RC staked), to mark them on every builder. */
 /** Every open bet on one outcome taken together: you can add to a pick, and each top-up keeps its own odds. */
 export type Holding = { stake: number; ret: number; picks: Pick[] };
 /** The blended price of a holding: what it returns per RC staked. */
 export const blended = (h: Holding) =>
-  h.picks.length === 1 && h.ret === h.picks[0].potential_return_rc ? h.picks[0].odds : h.stake ? (h.ret / h.stake).toFixed(2) : "0";
+  // Every bet at one price (and nothing else added in): that price, not a rounded division of the totals.
+  new Set(h.picks.map((p) => p.odds)).size === 1 && h.ret === h.picks.reduce((s, p) => s + p.potential_return_rc, 0)
+    ? h.picks[0].odds : h.stake ? (h.ret / h.stake).toFixed(2) : "0";
+
+/** Whether a holding's bets were taken at different prices, so its price is an average. */
+export const mixed = (h: Holding) => new Set(h.picks.map((p) => p.odds)).size > 1;
 
 export function useHoldings(): Map<string, Holding> {
   const { data } = useSWR<{ picks: Pick[] }>("/me/picks?state=open", fetcher);
@@ -81,6 +85,7 @@ export function useHoldings(): Map<string, Holding> {
   }, [data]);
 }
 
+/** Outcomes you already hold an open pick on (outcome id -> RC staked), to mark them on every builder. */
 export function usePlaced(): Map<string, number> {
   const { data } = useSWR<{ picks: Pick[] }>("/me/picks?state=open", fetcher);
   return useMemo(() => {

@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { odds as fmtOdds, oddsSpoken, potentialReturn, rc } from "@/lib/format";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
-import { blended, useHoldings, usePlaced, type Holding } from "@/lib/hooks";
+import { blended, mixed, useHoldings, usePlaced, type Holding } from "@/lib/hooks";
 import { useSlip, type SlipLine } from "@/lib/slip";
 import { teamColor, teamName } from "@/lib/teams";
 import type { EventT, MarketT, OutcomeT, Team } from "@/lib/types";
@@ -101,7 +101,7 @@ export function PickNote({ market, blind, tag }: { market: MarketT; blind?: Mark
             <div className="pkn-main">
               {tag ? <span className={`pkn-tag${tag === "Blind" ? " blind" : ""}`}>{tag}</span> : <span className="pkn-k">Your bet</span>}
               <b>{o.label}</b>
-              <span>{rc(h.stake)} RC @ {fmtOdds(blended(h))}{many ? " avg" : ""} → <b>{rc(h.ret)} RC</b></span>
+              <span>{rc(h.stake)} RC @ {fmtOdds(blended(h))}{mixed(h) ? " avg" : ""} → <b>{rc(h.ret)} RC</b></span>
               {verdict ? <b className={verdict === "Winning" ? "win" : verdict === "Losing" ? "loss" : ""}>{verdict}</b> : null}
               {c && verdict !== "Losing" ? <PayoutNote payAt={c.pays_at} final={c.final} /> : null}
               {many ? null : <CancelPick pick={h.picks[0]} compact />}
@@ -137,7 +137,8 @@ function SlipNote({ line, holding }: { line: SlipLine; holding?: Holding }) {
       {holding && line.stake ? (
         <div className="pkn-total">
           With your {rc(holding.stake)} RC: <b>{rc(holding.stake + line.stake)} RC</b> @{" "}
-          {fmtOdds(blended({ ...holding, stake: holding.stake + line.stake, ret: holding.ret + ret }))} avg → <b>{rc(holding.ret + ret)} RC</b>
+          {!mixed(holding) && Number(holding.picks[0].odds) === Number(line.odds) ? fmtOdds(line.odds)
+            : `${fmtOdds(blended({ ...holding, stake: holding.stake + line.stake, ret: holding.ret + ret }))} avg`} → <b>{rc(holding.ret + ret)} RC</b>
         </div>
       ) : null}
     </div>
@@ -185,6 +186,8 @@ export function H2HRow({ event, market, label, left, right, hint, blind }: {
   const blocked = !!blind && blind.outcomes.some((o) => holdings.has(o.id));
   const l = left ?? market.outcomes.find((o) => o.code === "A");
   const r = right ?? market.outcomes.find((o) => o.code === "B");
+  // D-041: a third answer for neither team ("No soul", "No Baron"), a small pick under the label.
+  const none = market.outcomes.find((o) => o.code === "NONE");
   return (
     <div className="h2h">
       <div className="h2h-row">
@@ -192,6 +195,11 @@ export function H2HRow({ event, market, label, left, right, hint, blind }: {
         <span className="h2h-label">
           {label}
           {hint ? <small>{hint}</small> : null}
+          {none ? (
+            <PickButton event={event} market={market} outcome={none} className="mid-pk" label={`${none.label}, ${label}`} blocked={blocked}>
+              <span className="pk-lbl">{none.label}</span>
+            </PickButton>
+          ) : null}
         </span>
         <PickButton event={event} market={market} outcome={r} label={`${r?.label ?? ""}, ${label}`} blocked={blocked} />
       </div>
