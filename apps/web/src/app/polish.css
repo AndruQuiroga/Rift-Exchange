@@ -127,14 +127,6 @@
 }
 
 /* Cancel a pick before its market locks (D-038). */
-.cancel-pick { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.pick > .cancel-pick { margin: 8px 0 2px; }
-.pk-note .cancel-pick { margin-left: 8px; vertical-align: middle; }
-.cp-open { min-height: 30px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--muted); background: var(--surface-3); }
-.cp-open:hover { color: var(--text); }
-.cp-yes { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 800; background: var(--warn); color: #2a1e05; }
-.cp-no { min-height: 32px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--muted); }
-.cancel-pick.compact .cp-open { min-height: 26px; padding: 0 8px; font-size: 11px; }
 
 /* Money on every pick: stake @ odds -> return; friends grouped by person with net and potential. */
 .dc-money, .fp-money { font-size: 12px; color: var(--muted); white-space: nowrap; }
@@ -170,16 +162,13 @@
 /* Your bets under a market: bets on one outcome taken together, each bet below with its Cancel. */
 .pk-notes { display: grid; gap: 6px; margin-top: 6px; }
 .pk-note .pkn-main { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.pk-note .pkn-main .cancel-pick { margin-left: auto; }
 .pkn-k { color: var(--muted); }
 .pkn-tag { font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 6px; border-radius: var(--radius-pill); background: var(--accent-soft); color: var(--text); }
 .pkn-tag.blind { background: var(--info); color: #06212f; }
 .pkn-tag.slip { background: var(--surface-3); color: var(--muted); }
 .pkn-bets { list-style: none; margin: 4px 0 0; padding: 0 0 0 10px; border-left: 2px solid var(--divider); display: grid; gap: 4px; color: var(--muted); }
 .pkn-bets li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.pkn-bets .cancel-pick { margin-left: auto; }
 .pkn-total { margin-top: 2px; color: var(--muted); }
-.cp-why { flex-basis: 100%; font-size: 11px; color: var(--muted); }
 
 /* The slip: adding to a pick you already hold. */
 .topup { margin-top: 8px; padding: 8px 10px; border-radius: var(--radius-control); background: var(--surface-2); display: grid; gap: 4px; font-size: 12px; }
@@ -188,3 +177,52 @@
 .topup-move { margin-left: 6px; font-weight: 700; }
 .topup-move.up { color: var(--win); }
 .topup-move.down { color: var(--loss); }
+
+/* Cancel a bet: a plain outlined button, then a confirm that says exactly what comes back. */
+.cancel-pick { display: inline-flex; align-items: center; margin-left: auto; }
+.cancel-pick.confirming { flex-basis: 100%; margin-left: 0; }
+.cp-open { display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
+  border: 1px solid var(--divider-strong); background: transparent; color: var(--text); font-size: 12px; font-weight: 700; }
+.cp-open:hover { border-color: var(--loss); color: var(--loss); }
+.cancel-pick.compact .cp-open { min-height: 28px; padding: 0 10px; font-size: 11px; }
+.cp-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; width: 100%;
+  margin-top: 6px; padding: 10px 12px; border-radius: var(--radius-control); background: var(--surface-2); border: 1px solid var(--divider); }
+.cp-q { display: grid; gap: 2px; font-size: 13px; color: var(--text); }
+.cp-q small { font-size: 11px; color: var(--muted); }
+.cp-btns { display: flex; gap: 8px; margin-left: auto; }
+.cp-yes, .cp-no { min-height: 36px; padding: 0 14px; border-radius: var(--radius-pill); font-size: 13px; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; }
+.cp-yes { background: var(--loss); color: #1c0606; }
+.cp-no { background: var(--surface-3); color: var(--text); }
+.cp-err { flex-basis: 100%; font-size: 12px; margin-top: 4px; }
+
+/* My picks: one header per match with its totals, one row per outcome you backed. */
+.pick-group + .pick-group { margin-top: var(--s4); }
+.pg-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--divider); border-bottom: 0;
+  border-radius: var(--radius-card) var(--radius-card) 0 0; background: var(--surface-2); color: inherit; text-decoration: none; }
+a.pg-head:hover { background: var(--surface-3); }
+.pg-title { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.pg-title b { font-size: 16px; }
+.pg-title .muted { font-size: 12px; }
+.pg-sum { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 10px; font-size: 13px; color: var(--muted); }
+.pg-sum b { color: var(--text); font-size: 14px; }
+.pg-sum b.win { color: var(--win); }
+.pg-sum b.loss { color: var(--loss); }
+.pg-go { font-size: 20px; color: var(--muted); }
+.pg-rows { border: 1px solid var(--divider); border-radius: 0 0 var(--radius-card) var(--radius-card); background: var(--surface); }
+.prow { padding: 12px 14px; display: grid; gap: 8px; }
+.prow + .prow { border-top: 1px solid var(--divider); }
+.prow-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.prow-what { min-width: 0; }
+.prow-sel { font-weight: 700; font-size: 15px; }
+.prow-mkt { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.prow-money { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14px; }
+.prow-money > b { font-size: 15px; }
+.prow-money .muted { font-size: 12px; }
+.prow-arrow { color: var(--muted); }
+.prow-bets { list-style: none; margin: 0; padding: 0 0 0 10px; border-left: 2px solid var(--divider); display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+.prow-bets li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.prow-note { margin: 0; font-size: 12px; color: var(--muted); }
+@media (max-width: 480px) {
+  .pg-head { flex-wrap: wrap; }
+  .pg-sum { justify-content: flex-start; flex-basis: 100%; order: 3; }
+}

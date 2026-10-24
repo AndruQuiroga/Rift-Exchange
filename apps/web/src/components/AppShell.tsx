@@ -99,7 +99,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </span>
           <span>
-            Review <IconArrow width={16} height={16} style={{ verticalAlign: "-3px" }} />
+            Slip <IconArrow width={16} height={16} style={{ verticalAlign: "-3px" }} />
           </span>
         </button>
       ) : null}
