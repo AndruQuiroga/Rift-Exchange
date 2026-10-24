@@ -128,7 +128,7 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
         </div>
       ) : null}
       <p className="muted" style={{ fontSize: 13 }}>
-        {stat === "gold15" ? "Which laner has more gold at 15:00. A gap under 700 gold is a tie and void." : `${data.stats.find((s) => s.id === stat)?.label} in Game ${game}`}
+        {stat === "gold15" ? "Which laner has more gold at 15:00. A gap under 500 gold is a tie: 75% back." : `${data.stats.find((s) => s.id === stat)?.label} in Game ${game}`}
       </p>
       <div className="duel-grid">
         {data.duels.map((d) => {
@@ -171,8 +171,8 @@ export function LaneDuels({ event, game }: { event: EventT; game: number }) {
       {mine.map((m) => <PickNote key={m.id} market={m} tag={tagOf(m)} />)}
       <p className="fineprint" style={{ textAlign: "left" }}>
         {phase === "BLIND"
-          ? "Blind duels stand whatever champions are picked. A tie, or a player who doesn't play: half back."
-          : "Priced with champions locked in. A tie: half back."}
+          ? "Blind duels stand whatever champions are picked. A tie, or a player who doesn't play: 75% back."
+          : "Priced with champions locked in. A tie: 75% back."}
       </p>
     </div>
   );

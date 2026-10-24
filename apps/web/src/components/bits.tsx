@@ -103,8 +103,9 @@ export function MarketBlock({ market, eventLabel, compact }: { market: MarketT; 
 export function PickStatus({ pick }: { pick: Pick }) {
   if (pick.status === "WON") return <span className="status won"><span className="dot" />Won</span>;
   if (pick.status === "PARTIAL") {
-    const ban = pick.kind === "champion_picked" || pick.kind === "lane_duel"; // D-033/D-036: half back
-    return <span className={`status ${ban ? "void" : "won"}`}><span className="dot" />{ban ? "Half back" : "Right side"}</span>;
+    // D-033/D-036/D-042: part of the stake back (a banned champion, a tied duel or team gold)
+    const back = pick.kind === "champion_picked" || pick.kind === "lane_duel" || pick.kind === "gold_lead_15";
+    return <span className={`status ${back ? "void" : "won"}`}><span className="dot" />{back ? "Part back" : "Right side"}</span>;
   }
   if (pick.status === "LOST") return <span className="status lost"><span className="dot" />Lost</span>;
   if (pick.status === "CANCELLED") return <span className="status"><span className="dot" />Cancelled</span>;
