@@ -186,9 +186,16 @@ export type Standing = {
   open_stake_rc: number;
   granted_rc: number;
   realized_net_rc: number;
+  today_net_rc: number;
+  /** Available plus in play: what the season table ranks by. */
+  bankroll_rc: number;
   won: number;
   lost: number;
+  won_today: number;
+  lost_today: number;
   rank: number;
+  /** Rank by today's net. */
+  today_rank: number;
   provisional: boolean;
 };
 

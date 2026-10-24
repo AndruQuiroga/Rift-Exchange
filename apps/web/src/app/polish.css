@@ -188,3 +188,10 @@
 .topup-move { margin-left: 6px; font-weight: 700; }
 .topup-move.up { color: var(--win); }
 .topup-move.down { color: var(--loss); }
+
+/* League: today's net or the season bankroll on the right, its record under it. */
+.standing .bal { display: grid; justify-items: end; gap: 2px; }
+.standing .bal small { font-size: 12px; font-weight: 600; color: var(--muted); }
+.standing.you { background: var(--accent-soft); }
+.you-tag { margin-left: 8px; font-size: 10px; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 6px;
+  border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-ink); vertical-align: 2px; }
