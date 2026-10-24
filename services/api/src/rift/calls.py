@@ -72,7 +72,7 @@ def calls(session: Session, markets: list[Market], settle_delay_s: int) -> dict[
 
 def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
     """A provisional result from the game's live timeline, or None while it is still open."""
-    from rift.props import EARLY_BARON_S, TEAM_GOLD_TIE, TIE_MARGIN, gold15_lead, player_lines
+    from rift.props import EARLY_BARON_S, TEAM_GOLD_TIE, duel_tie, gold15_lead, player_lines
 
     tl = game.timeline or {}
     participants = tl.get("participants") or {}
@@ -127,6 +127,8 @@ def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
             return None
         code = side_code.get(lead[0] or "")
         if code is None or lead[1] < TEAM_GOLD_TIE:
+            if p.get("void_refund"):  # D-042: a tie returns 75%
+                return Call([], False, f"Within {TEAM_GOLD_TIE:,} gold at 15:00: 75% back", False, partial=["A", "B"])
             return Call([], True, f"Within {TEAM_GOLD_TIE:,} gold at 15:00 (void rule)", False)
         return called([code], "Gold at 15:00 seen live")
     if kind == "lane_duel" and p.get("stat") == "gold15" and tl.get("at_15"):
@@ -134,16 +136,16 @@ def live_call(market: Market, fixture: Fixture, game: Game) -> Call | None:
         a, b = lines.get(p["a_player"]), lines.get(p["b_player"])
 
         def no_result(reason: str) -> Call:
-            if p.get("void_refund"):  # D-036: half back for both sides
-                return Call([], False, f"{reason}: half back", False, partial=["A", "B"])
+            if p.get("void_refund"):  # D-036, D-042: part back for both sides
+                return Call([], False, f"{reason}: part back", False, partial=["A", "B"])
             return Call([], True, reason, False)
 
         if a is None or b is None:
             return no_result("A dueling player did not play this game")
         if a["gold15"] is None or b["gold15"] is None:
             return None
-        if abs(a["gold15"] - b["gold15"]) < TIE_MARGIN["gold15"]:
-            return no_result(f"Within {TIE_MARGIN['gold15']:,} gold")
+        if abs(a["gold15"] - b["gold15"]) < (margin := duel_tie(p)):
+            return no_result(f"Within {margin:,} gold")
         return called(["A" if a["gold15"] > b["gold15"] else "B"], "Gold at 15:00 seen live")
     if kind == "game_length":
         clock = (tl.get("live") or {}).get("clock_s") or 0

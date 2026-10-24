@@ -152,7 +152,7 @@ function PickRow({ picks }: { picks: Pick[] }) {
         <p className="prow-note num">Right side, wrong record returns {rc(picks.reduce((s, x) => s + (x.partial_return_rc ?? 0), 0))} RC.</p>
       ) : null}
       {p.status === "PARTIAL" ? (
-        <p className="prow-note num">{p.kind === "lane_duel" ? "No winner: half your stake back." : `Right side, wrong record: ${rc(ret)} RC back.`}</p>
+        <p className="prow-note num">{p.kind === "lane_duel" || p.kind === "gold_lead_15" ? `No winner: ${rc(ret)} of ${rc(stake)} RC back.` : `Right side, wrong record: ${rc(ret)} RC back.`}</p>
       ) : null}
       {p.status === "VOID" && p.void_reason ? <p className="prow-note">Void: {p.void_reason}. Your stake was returned.</p> : null}
       {p.market_state === "HOLD" && p.market_state_reason ? <p className="prow-note">{p.market_state_reason}</p> : null}

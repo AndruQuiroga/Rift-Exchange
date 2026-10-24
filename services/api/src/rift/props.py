@@ -52,9 +52,14 @@ STATS = {
 # settle as before.
 OFFERED_STATS = ("gold15",)
 # A lead smaller than this is a tie, and ties void.
-TIE_MARGIN = {"gold15": 700}
-DUEL_VOID_REFUND = "0.5"  # D-036: a tie, a game over before 15:00 or a missing player returns half the stake
-TEAM_GOLD_TIE = 700  # the team gold lead at 15:00 uses the same tie band
+# D-042: a lane duel's gold is a tie under 500; duels created before keep their 700 (no "tie_gold" param).
+TIE_MARGIN = {"gold15": 500}
+LEGACY_DUEL_TIE = 700
+# D-036, D-042: a duel with no winner (a tie, a game over before 15:00, a missing player) returns 75% of the
+# stake; picks placed before keep the half back their own terms say.
+DUEL_VOID_REFUND = "0.75"
+TEAM_GOLD_TIE = 700  # the team gold lead at 15:00: under 700 is a tie...
+TEAM_GOLD_TIE_REFUND = "0.75"  # ...that returns 75% (D-042; a full refund before)
 SHRINK_GAMES = 3  # pseudo-games of the role average added to each player's own record
 OBJECTIVE_KINDS = ("first_blood", "first_tower", "first_dragon_type", "baron_before", "dragon_soul", "game_length",
                    "soul_team", "first_baron")
@@ -98,6 +103,14 @@ class TimelineData:
     reference_samples: list[tuple[str | None, str, str | None, float, float]] = field(default_factory=list)
     champion_samples: list[tuple[str, str, str, float, float]] = field(default_factory=list)
 
+
+
+def duel_tie(params: dict) -> float:
+    """A duel's tie band: its own (D-042), or 700 for a gold duel created before markets carried one."""
+    stat = params.get("stat")
+    if stat not in TIE_MARGIN:
+        return 1e-9
+    return params.get("tie_gold") or LEGACY_DUEL_TIE
 
 
 def _complete_games(session: Session, season: Season) -> list[Game]:
@@ -443,8 +456,8 @@ def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, dat
         ("five_kills", "five_kills", "First to 5 kills",
          "Team that reaches 5 kills first. Void if neither does, or both in the same moment."),
         ("gold_lead_15", "gold15", "Gold lead at 15:00",
-         ("Team with more total gold at 15:00 of game time. A gap under 700 gold is a tie and void, as is a game "
-         "that ends before 15:00.")),
+         ("Team with more total gold at 15:00 of game time. A gap under 700 gold is a tie: 75% of your stake "
+         "back. A game that ends before 15:00 is void.")),
         ("first_dragon", "dragon", "First dragon",
          "Team that takes the first dragon, any element. Void if no dragon is taken."),
     )
@@ -453,12 +466,14 @@ def early_team_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, dat
         w = data.winner_took_first.get(what, 0.5)
         p = q * w + (1 - q) * (1 - w)
         params, note, model = {"game_index": idx, "early": True}, "", "timeline_rates_v1"
+        tie = {"void_refund": TEAM_GOLD_TIE_REFUND} if kind == "gold_lead_15" else {}
         if blind:
-            params, model = {"game_index": idx, "blind": True}, "timeline_rates_blind_v1"
+            params, model = {"game_index": idx, "blind": True, **tie}, "timeline_rates_blind_v1"
         elif kind in LIVE_KINDS and state is not None:
             p = (five_kills_probability(p, state) if kind == "five_kills"
                  else gold_lead_probability(p, gold_gap_sd(data), state))
             params, note, model = {**params, **state.stamp()}, f" {LIVE_NOTE}", "timeline_rates_live_v1"
+        params = {**params, **tie}
         if p is None:  # the race is already won: nothing left to price
             continue
         specs.append(MarketSpec(
@@ -551,7 +566,7 @@ def duel_probability(data: TimelineData, a: dict, b: dict, role: str, stat: str,
     def cdf(x: float) -> float:
         return 0.5 * (1 + math.erf((x - mu) / (sd * math.sqrt(2))))
 
-    # A difference inside the tie band voids: whole numbers within half a unit, gold within 700.
+    # A difference inside the tie band has no winner: whole numbers within half a unit, gold within 500.
     band = TIE_MARGIN.get(stat, 0.5 if STATS[stat][1] else 0.0)
     win, lose = 1 - cdf(band), cdf(-band)
     return win / (win + lose) if win + lose > 1e-9 else 0.5
@@ -748,12 +763,13 @@ def ensure_duel(session: Session, season: Season, fixture: Fixture, game_index: 
         f"lane_duel:{fixture.provider_id}:{game_index}:{role}:{stat}:{a['player_id']}:{b['player_id']}",
         "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role}: {a['name']} vs {b['name']}",
         f"{label}: {who_a} or {who_b} in Game {game_index}. Open from game start until 3:00 at the "
-        f"after-draft price; a pick accepted after that is void. {LIVE_NOTE} {tie_note}{at15_note}: half your stake back. Settles from the "
+        f"after-draft price; a pick accepted after that is void. {LIVE_NOTE} {tie_note}{at15_note}: 75% of your stake back. Settles from the "
         f"game's live data.",
         w.close_at, "player_champion_live_v1", "EXPERIMENTAL",
         [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
         {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"],
          "a_champion": a["champion"], "b_champion": b["champion"], "early": True, "void_refund": DUEL_VOID_REFUND,
+         **({"tie_gold": TIE_MARGIN[stat]} if stat in TIE_MARGIN else {}),
          **(state.stamp() if state else {})})
     market = upsert_market(session, season, fixture, spec, settings, now)
     if market is None:
@@ -778,11 +794,11 @@ def _ensure_blind_duel(session: Session, season: Season, fixture: Fixture, game_
         "lane_duel", "GAME", "PLAYERS", f"Game {game_index} {role} (blind): {a['name']} vs {b['name']}",
         f"{label}: {a['name']} or {b['name']} in Game {game_index}, called before the draft whatever champions "
         f"they play. Closes before the draft starts. {tie_note}{at15_note}, or if either player doesn't play: "
-        f"half your stake back. Settles from the game's live data.",
+        f"75% of your stake back. Settles from the game's live data.",
         close_at, "player_blind_v1", "EXPERIMENTAL",
         [OutcomeSpec("A", a["name"], p), OutcomeSpec("B", b["name"], 1 - p)],
         {"game_index": game_index, "role": role, "stat": stat, "a_player": a["player_id"], "b_player": b["player_id"],
-         "blind": True, "void_refund": DUEL_VOID_REFUND})
+         "blind": True, "void_refund": DUEL_VOID_REFUND, **({"tie_gold": TIE_MARGIN[stat]} if stat in TIE_MARGIN else {})})
     market = upsert_market(session, season, fixture, spec, settings, now)
     if market is None:
         raise PropsError("NOT_OPEN", f"Game {game_index} blind picks are closed.")
@@ -977,7 +993,10 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
             return Grade("VOID", reason="No 15:00 gold (the game ended before 15:00)", evidence=ev)
         code = side_code.get(lead[0] or "")
         if code is None or lead[1] < TEAM_GOLD_TIE:
-            return Grade("VOID", reason=f"Within {TEAM_GOLD_TIE:,} gold at 15:00 (void rule)", evidence={**ev, "gap": lead[1]})
+            reason = f"Within {TEAM_GOLD_TIE:,} gold at 15:00"
+            if market.params.get("void_refund"):  # D-042: a tie returns 75%
+                return Grade("RESULT", [], f"{reason}: 75% back", {**ev, "gap": lead[1]}, partial_codes=["A", "B"])
+            return Grade("VOID", reason=f"{reason} (void rule)", evidence={**ev, "gap": lead[1]})
         return Grade("RESULT", [code], "Gold lead at 15:00 confirmed", {**ev, "gap": lead[1]})
     if kind in ("first_blood", "first_tower", "first_dragon", "five_kills"):
         first = firsts.get({"first_blood": "blood", "first_tower": "tower", "first_dragon": "dragon",
@@ -1018,9 +1037,9 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
         return Grade("RESULT", [soul or "NONE"], "Dragon soul confirmed", {**ev, "soul": soul})
     if kind == "lane_duel":
         def no_result(reason: str, evidence: dict) -> object:
-            # D-036: a duel with no winner returns half the stake (whole stake before the rule).
+            # D-036, D-042: a duel with no winner returns part of the stake (each pick by its own terms).
             if market.params.get("void_refund"):
-                return Grade("RESULT", [], f"{reason}: half back", evidence, partial_codes=["A", "B"])
+                return Grade("RESULT", [], f"{reason}: part back", evidence, partial_codes=["A", "B"])
             return Grade("VOID", reason=reason, evidence=evidence)
 
         lines = player_lines(game)
@@ -1031,8 +1050,9 @@ def grade(market: Market, fixture: Fixture, game: Game | None):
         va, vb = a[stat], b[stat]
         if va is None or vb is None:
             return no_result("Stat not available for this game (e.g. it ended before 15:00)", ev)
-        if abs(va - vb) < TIE_MARGIN.get(stat, 1e-9):
-            reason = f"Within {TIE_MARGIN[stat]:,} gold" if stat in TIE_MARGIN else "Exact tie"
+        margin = duel_tie(market.params)
+        if abs(va - vb) < margin:
+            reason = f"Within {margin:,} gold" if stat in TIE_MARGIN else "Exact tie"
             return no_result(reason, {**ev, "values": [va, vb]})
         return Grade("RESULT", ["A" if va > vb else "B"], "Player stats confirmed", {**ev, "values": [va, vb]})
     return Grade("HOLD", reason=f"No grader for {kind}")

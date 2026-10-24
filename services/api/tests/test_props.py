@@ -1,6 +1,7 @@
 """Players & game: objective markets, lane duels and any-line kill totals, all graded from the timeline."""
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from conftest import T0
@@ -526,8 +527,8 @@ def test_a_blind_duel_voids_when_a_named_player_does_not_play(factory, season_ga
         assert grade.partial_codes == ["A", "B"] and "did not play" in grade.reason  # D-036: half back
 
 
-def test_a_tied_duel_pays_half_back_to_both_sides(factory, season_games):
-    """D-036: a duel with no winner returns half the stake; picks from before the rule keep a full void."""
+def test_a_tied_duel_pays_75_percent_back_to_both_sides(factory, season_games):
+    """D-036, D-042: a duel with no winner returns 75% of the stake (a tie is under 500 gold)."""
     from test_money import join, place
 
     _live_game1(factory, season_games)
@@ -535,7 +536,10 @@ def test_a_tied_duel_pays_half_back_to_both_sides(factory, season_games):
     with factory() as s, s.begin():
         season, fx = s.get(Season, season_games["season"]), s.get(Fixture, season_games["fixture"])
         tie = props.ensure_duel(s, season, fx, 1, "bottom", "gold15", SETTINGS, at)  # 100 gold apart: a tie
-        assert tie.params["void_refund"] == "0.5"
+        assert tie.params["void_refund"] == "0.75" and tie.params["tie_gold"] == 500
+        # The sample games are identical, so the model is certain at a 500 band: pin even prices to test the refund.
+        for o in s.execute(select(Outcome).where(Outcome.market_id == tie.id)).scalars():
+            o.odds, o.odds_version = Decimal("1.90"), max(o.odds_version, 1)
         a, b = (s.execute(select(Outcome.id).where(Outcome.market_id == tie.id, Outcome.code == c)).scalar_one()
                 for c in ("A", "B"))
         tie_id = tie.id
@@ -549,7 +553,33 @@ def test_a_tied_duel_pays_half_back_to_both_sides(factory, season_games):
         apply_grade(s, tie_id, grade_market(s, s.get(Market, tie_id)), T0 + timedelta(hours=1))
     with factory() as s:
         got = sorted((sel.stake_rc, sel.status, sel.return_rc) for sel in s.execute(select(Selection)).scalars())
-        assert got == [(100, "PARTIAL", 50), (200, "PARTIAL", 100)]
+        assert got == [(100, "PARTIAL", 75), (200, "PARTIAL", 150)]
+
+
+def test_duel_tie_band_is_500_and_older_duels_keep_700():
+    """D-042: new gold duels tie under 500; a duel created before carries no band and keeps 700."""
+    assert props.duel_tie({"stat": "gold15", "tie_gold": 500}) == 500
+    assert props.duel_tie({"stat": "gold15"}) == 700
+    assert props.duel_tie({"stat": "kills"}) < 1
+
+
+def test_team_gold_tie_returns_75_percent(factory, world):
+    """D-042: team gold within 700 at 15:00 is a tie that pays 75% back; older markets keep the full void."""
+    close = (5000, 4800, 5900, 6000, 3200)  # +400 for A: a tie
+    with factory() as s, s.begin():
+        m = Market(season_id=world["season"], fixture_id=world["fixture"], template_key="gold_lead_15:x",
+                   kind="gold_lead_15", scope="GAME", category="OBJECTIVES", title="g", rules_text="",
+                   params={"game_index": 1, "void_refund": "0.75"}, model_key="t", confidence="EXPERIMENTAL",
+                   close_at=T0)
+        g = Game(fixture_id=world["fixture"], provider_id="g1", game_index=1, state="completed",
+                 blue_team_id=world["team_a"], red_team_id=world["team_b"], timeline_complete=True,
+                 timeline=timeline(world["team_a"], world["team_b"], a_gold=close))
+        s.add_all([m, g])
+        s.flush()
+        grade = grade_market(s, m)
+        assert grade.status == "RESULT" and grade.partial_codes == ["A", "B"] and "75% back" in grade.reason
+        m.params = {"game_index": 1}
+        assert grade_market(s, m).status == "VOID"
 
 
 def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory, season_games):
@@ -563,7 +593,7 @@ def test_team_races_are_blind_before_the_draft_like_duels_and_kill_lines(factory
     assert {sp.kind for sp in blind.values()} == {"five_kills", "gold_lead_15", "first_dragon", "first_blood",
                                                  "first_tower", "baron_before", "soul_team", "first_baron"}
     race = blind["gold_lead_15:fx-1:1:blind"]
-    assert race.close_at == series_close(fx) and race.params == {"game_index": 1, "blind": True}
+    assert race.close_at == series_close(fx) and race.params == {"game_index": 1, "blind": True, "void_refund": "0.75"}
     assert "(blind)" in race.title and "before the draft" in race.rules_text
     # After the draft the early-window races are their own markets (no ":blind"), and both grade the same way.
     _live_game1(factory, season_games)
