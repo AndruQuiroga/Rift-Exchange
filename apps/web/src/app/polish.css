@@ -135,3 +135,24 @@
 .cp-yes { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 800; background: var(--warn); color: #2a1e05; }
 .cp-no { min-height: 32px; padding: 0 10px; border-radius: var(--radius-pill); font-size: 12px; font-weight: 700; color: var(--muted); }
 .cancel-pick.compact .cp-open { min-height: 26px; padding: 0 8px; font-size: 11px; }
+
+/* Money on every pick: stake @ odds -> return; friends grouped by person with net and potential. */
+.dc-money, .fp-money { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.dc-money b, .fp-money b { color: var(--text); }
+.dc-money b.win { color: var(--win); }
+.yg-s b { color: var(--accent); font-weight: 800; }
+.your-game.down .yg-s b { color: var(--text); }
+.rivals .mt-row { grid-template-columns: 16px 24px minmax(0, 1fr) auto; }
+.mt-nums { display: grid; justify-items: end; font-family: var(--font-display); font-weight: 800; font-size: 17px; line-height: 1.1; }
+.mt-nums small { font-family: var(--font-ui); font-size: 11px; font-weight: 600; }
+.fgroup { border-radius: 14px; background: var(--surface); border: 1px solid var(--divider); }
+.fgroup > summary { list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.fgroup > summary::-webkit-details-marker { display: none; }
+.fg-main { display: grid; min-width: 0; flex: 1; font-size: 14px; }
+.fg-main .muted { font-size: 12px; }
+.fg-nums { display: grid; justify-items: end; font-size: 15px; }
+.fg-nums b { font-family: var(--font-display); font-weight: 800; font-size: 18px; }
+.fg-nums .muted { font-size: 11px; }
+.fgroup .fpicks { padding: 0 8px 8px; }
+.fgroup .fpick { background: var(--surface-2); }
+.fgroup .fpick .status { flex: none; }

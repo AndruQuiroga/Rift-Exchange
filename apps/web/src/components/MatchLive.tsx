@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ReactNode } from "react";
 import useSWR from "swr";
-import { rc } from "@/lib/format";
+import { odds as fmtOdds, rc } from "@/lib/format";
 import { useNow } from "@/lib/hooks";
 import { teamColor } from "@/lib/teams";
 import type { EventT, GameT, LiveEvent, LiveT, MarketT, Pick } from "@/lib/types";
@@ -147,11 +147,12 @@ export function LiveHero({ event, live, hidden, onReveal }: { event: EventT; liv
 export function YourGame({ live }: { live: LiveT | undefined }) {
   const picks = live?.my_picks ?? [];
   if (!picks.length) return null;
-  let back = 0, decided = 0, riding = 0;
+  let back = 0, decided = 0, riding = 0, ridingReturn = 0;
   for (const p of picks) {
     const r = p.status !== "OPEN" ? p.status : p.call?.result;
     if (!r) {
       riding += p.stake_rc;
+      ridingReturn += p.potential_return_rc;
       continue;
     }
     decided += p.stake_rc;
@@ -160,12 +161,16 @@ export function YourGame({ live }: { live: LiveT | undefined }) {
     else if (r === "PARTIAL") back += p.status === "OPEN" ? Math.round(p.stake_rc / 2) : p.return_rc;
   }
   const net = back - decided;
+  // If every pick still riding wins: what is back so far plus their full returns, minus everything staked.
+  const potential = back + ridingReturn - decided - riding;
   return (
     <section className={`your-game${net < 0 ? " down" : ""}`} aria-label="Your game">
       <div>
         <span className="yg-k">Your {picks.length} pick{picks.length === 1 ? "" : "s"} · {rc(riding)} RC still riding</span>
         <span className="yg-v num">{net >= 0 ? "+" : "−"}{rc(Math.abs(net))} RC</span>
-        <span className="yg-s">decided so far</span>
+        <span className="yg-s">
+          decided so far{riding ? <> · <b className="num">{potential >= 0 ? "up to +" : "at best −"}{rc(Math.abs(potential))} RC</b> if the rest win</> : null}
+        </span>
       </div>
       <div className="yg-bars" aria-hidden="true">
         {picks.map((p) => {
@@ -256,7 +261,10 @@ export function InPlay({ event, live }: { event: EventT; live: LiveT | undefined
         }
         return (
           <div className="deciding" key={p.id}>
-            <div className="dc-top"><b>{p.outcome_label}</b><span className="muted num">{rc(p.stake_rc)} RC</span></div>
+            <div className="dc-top">
+              <b>{p.outcome_label}</b>
+              <span className="dc-money num">{rc(p.stake_rc)} @ {fmtOdds(p.odds)} → <b className="win">{rc(p.potential_return_rc)}</b></span>
+            </div>
             <span className="dc-mkt muted">{p.market_title}</span>
             {pct != null ? <div className="dc-bar"><span style={{ width: `${pct}%` }} /></div> : null}
             {left || right ? <div className="dc-foot muted"><span>{left}</span><span>{right}</span></div> : null}

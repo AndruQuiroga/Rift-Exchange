@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { api, ApiError } from "@/lib/api";
 import { initials, useFriendsOnMatch } from "@/lib/friends";
-import { rc } from "@/lib/format";
+import { odds as fmtOdds, rc } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
 import { initialsOf, useToast } from "@/lib/toasts";
 import type { EventT, Pick, ReactionT, TableRow } from "@/lib/types";
+import { PickStatus } from "./bits";
 import { LockTimer } from "./Timing";
 
 const PHRASES: { id: string; text: string }[] = [
@@ -61,6 +62,11 @@ export function RivalsPanel({ event }: { event: EventT }) {
   // Against you first, then with you, then the rest.
   const order = { against: 0, with: 1, none: 2 } as const;
   const sorted = [...picks].sort((x, y) => order[stance(x) ?? "none"] - order[stance(y) ?? "none"]);
+  // One group per friend: who bet what, how much, and what it could bring.
+  const groups = [...sorted.reduce((m, p) => {
+    const name = p.user?.display_name ?? "A friend";
+    return m.set(name, [...(m.get(name) ?? []), p]);
+  }, new Map<string, Pick[]>()).entries()];
 
   return (
     <section className="rivals" aria-label="Friends on this match">
@@ -90,14 +96,34 @@ export function RivalsPanel({ event }: { event: EventT }) {
 
       {table && table.length > 1 ? <MatchTable rows={table} /> : null}
 
-      {sorted.length ? (
-        <div className="fpicks">
-          {sorted.map((p) => (
-            <FriendPick key={p.id} event={event} pick={p} stance={stance(p)} myHandle={me?.user.handle ?? ""}
-              reactions={(reactions ?? []).filter((r) => r.selection_id === p.id)} />
-          ))}
-        </div>
-      ) : null}
+      {groups.map(([name, list]) => {
+        const row = (table ?? []).find((r) => r.user.display_name === name && !r.you);
+        const staked = list.reduce((n, p) => n + p.stake_rc, 0);
+        const against = list.filter((p) => stance(p) === "against").length;
+        return (
+          <details className="fgroup" key={name} open={groups.length <= 2}>
+            <summary>
+              <Avatar name={name} size={30} />
+              <span className="fg-main">
+                <b>{name}</b>
+                <span className="muted num">{list.length} pick{list.length === 1 ? "" : "s"} · {rc(staked)} RC{against ? <> · <span className="loss">{against} against you</span></> : null}</span>
+              </span>
+              {row ? (
+                <span className="fg-nums num">
+                  <b className={row.net >= 0 ? "win" : "loss"}>{row.net >= 0 ? "+" : "−"}{rc(Math.abs(row.net))}</b>
+                  {row.riding ? <span className="muted">up to {(row.potential ?? 0) >= 0 ? "+" : "−"}{rc(Math.abs(row.potential ?? 0))}</span> : null}
+                </span>
+              ) : null}
+            </summary>
+            <div className="fpicks">
+              {list.map((p) => (
+                <FriendPick key={p.id} event={event} pick={p} stance={stance(p)} myHandle={me?.user.handle ?? ""}
+                  reactions={(reactions ?? []).filter((r) => r.selection_id === p.id)} />
+              ))}
+            </div>
+          </details>
+        );
+      })}
 
       {reactions?.length ? (
         <div className="trash">
@@ -121,7 +147,10 @@ function MatchTable({ rows }: { rows: TableRow[] }) {
           <span className="mt-rank num">{r.rank}</span>
           <Avatar name={r.user.display_name} you={r.you} size={24} />
           <span className="mt-bar"><span className={r.net >= 0 ? "up" : "down"} style={{ width: `${Math.max(4, (Math.abs(r.net) / top) * 100)}%` }} /></span>
-          <span className={`mt-net num ${r.net >= 0 ? "win" : "loss"}`}>{r.net >= 0 ? "+" : "−"}{rc(Math.abs(r.net))}</span>
+          <span className="mt-nums num">
+            <span className={r.net >= 0 ? "win" : "loss"}>{r.net >= 0 ? "+" : "−"}{rc(Math.abs(r.net))}</span>
+            {r.riding ? <small className="muted">up to {(r.potential ?? 0) >= 0 ? "+" : "−"}{rc(Math.abs(r.potential ?? 0))}</small> : null}
+          </span>
         </div>
       ))}
     </div>
@@ -156,11 +185,12 @@ function FriendPick({ event, pick, stance, myHandle, reactions }: {
   return (
     <div className={`fpick${stance ? ` ${stance}` : ""}`}>
       <div className="fpick-row">
-        <Avatar name={name} size={28} />
         <span className="fpick-main">
           <b>{pick.outcome_label}</b>
-          <span className="muted">{name} · {pick.market_title} · {rc(pick.stake_rc)}</span>
+          <span className="muted">{pick.market_title}</span>
+          <span className="fp-money num">{rc(pick.stake_rc)} @ {fmtOdds(pick.odds)} → {pick.status === "OPEN" ? <b>{rc(pick.potential_return_rc)}</b> : <b className={pick.return_rc > pick.stake_rc ? "win" : pick.return_rc ? "" : "loss"}>{rc(pick.return_rc)}</b>}</span>
         </span>
+        <PickStatus pick={pick} />
         {stance ? <span className={`stance ${stance}`}>{stance === "with" ? "With you" : "Against"}</span> : null}
         <button type="button" className="react-open" aria-expanded={open} aria-label={`React to ${name}`} onClick={() => setOpen(!open)}>
           {sent.size ? "Sent" : "React"}
