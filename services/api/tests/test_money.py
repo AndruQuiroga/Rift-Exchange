@@ -260,7 +260,7 @@ def test_stake_cap_counts_every_pick_on_the_market(factory, world):
                       idempotency_key="cap-1", now=T0, stake_cap_rc=1000)
     with pytest.raises(PlacementError) as e:  # the other side of the same market shares the room
         _quote(factory, world, [(b, 301)])
-    assert e.value.details["max_stake_rc"] == 300 and "700 RC on it already" in e.value.message
+    assert e.value.details["max_stake_rc"] == 300 and "700 RC staked" in e.value.message
     # A quote made before the room was used is checked again when it is accepted.
     early = _quote(factory, world, [(b, 300)])
     stale = _quote(factory, world, [(b, 300)])

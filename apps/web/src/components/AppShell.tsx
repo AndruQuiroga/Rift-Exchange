@@ -74,7 +74,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <span className="sr-only">Rift Exchange</span>
             <Link href="/profile" className="topbar-balance num" aria-label="Wallet">
               <b>{me ? `${rc(me.wallet.available_rc)} RC` : "—"}</b>
-              {grantToday ? <span className="grant">+{rc(season!.match_day_grant_rc)} today</span> : <span>Available</span>}
+              {me && (me.wallet.today_net_rc ?? 0) !== 0 ? (
+                <span className={(me.wallet.today_net_rc ?? 0) > 0 ? "grant" : "loss"}>
+                  {(me.wallet.today_net_rc ?? 0) > 0 ? "+" : "−"}{rc(Math.abs(me.wallet.today_net_rc ?? 0))} today
+                </span>
+              ) : <span>{grantToday ? "± 0 today" : "Available"}</span>}
             </Link>
           </header>
           {children}

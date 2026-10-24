@@ -177,6 +177,7 @@ class Fixture(Base):
     winner_team_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("teams.id"))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     data_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    live_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # D-039: starts the draft countdown
     details_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = _created()
     __table_args__ = (
@@ -352,14 +353,14 @@ class Selection(Base):
     odds_version: Mapped[int] = mapped_column(Integer)
     rule_version: Mapped[int] = mapped_column(Integer)
     rules_snapshot: Mapped[dict] = mapped_column(JSONB)
-    status: Mapped[str] = mapped_column(String(8), default="OPEN")
+    status: Mapped[str] = mapped_column(String(12), default="OPEN")
     return_rc: Mapped[int] = mapped_column(BigInteger, default=0)
     settled_revision: Mapped[int] = mapped_column(Integer, default=0)
     settled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint("stake_rc > 0", name="ck_selection_stake"),
         CheckConstraint("odds > 1", name="ck_selection_odds"),
-        CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID')", name="ck_selection_status"),
+        CheckConstraint("status IN ('OPEN','WON','PARTIAL','LOST','VOID','CANCELLED')", name="ck_selection_status"),
     )
 
 

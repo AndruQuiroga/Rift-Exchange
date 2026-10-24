@@ -146,6 +146,8 @@ def test_full_series_lifecycle(factory):
     now[0] = START + timedelta(minutes=5)
     feed.state = "inProgress"
     worker.cycle()
+    now[0] = START + timedelta(minutes=6, seconds=5)  # D-039: past the one-minute draft countdown
+    worker.cycle()
     with factory() as s:
         assert _locked_unless_through_draft(s.execute(select(Market)).scalars())
     assert _balance(factory, user_id) == start - 600
@@ -201,6 +203,8 @@ def test_early_start_locks_before_the_schedule_catches_up(factory):
     feed.live_ids = {"m1"}
     worker.cycle()
     worker.cycle()  # a second pass must not re-open the series from the stale schedule
+    now[0] = START - timedelta(hours=2) + timedelta(seconds=65)  # D-039: past the draft countdown
+    worker.cycle()
     with factory() as s:
         assert s.execute(select(Fixture.status)).scalar_one() == "LIVE"
         assert _locked_unless_through_draft(s.execute(select(Market)).scalars())
@@ -255,6 +259,10 @@ def _go_live(feed, worker, now):
     assert {m.state for m in _markets(worker.factory).values()} == {"OPEN"}
     now[0] = START + timedelta(minutes=2)
     feed.state, feed.games[0].state = "inProgress", "inProgress"
+    worker.cycle()
+    # D-039: going live starts a one-minute countdown to the draft rather than locking on the spot.
+    assert _markets(worker.factory)["series_winner:m1"].state == "OPEN"
+    now[0] = START + timedelta(minutes=3, seconds=5)
     worker.cycle()
     assert _locked_unless_through_draft(_markets(worker.factory).values())
 

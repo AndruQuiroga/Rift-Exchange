@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 import pytest
-from conftest import make_market, outcome_id
+from conftest import T0, make_market, outcome_id
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
 from test_timeline import CHAMPS
@@ -277,3 +277,62 @@ def test_a_close_that_follows_the_game_is_not_a_countdown_until_it_loads(api, fa
         s.add(Game(fixture_id=world["fixture"], provider_id="g1", game_index=1, state="inProgress",
                    started_at=s.get(Fixture, world["fixture"]).scheduled_at))
     assert kai.get(f"/api/v1/events/{event}").json()["markets"][0]["close_known"] is True
+
+
+def test_cancel_a_pick_before_its_market_locks(api, factory, world):
+    """D-038: your own open pick comes back in full until its market locks; it never settles."""
+    from rift.settlement import Grade, apply_grade
+
+    app, codes = api
+    kai, mika = signup(app, codes[0], "kai"), signup(app, codes[1], "mika")
+    before = kai.get("/api/v1/me").json()["wallet"]["available_rc"]
+    atlas = outcome_id(factory, world["market"], "A")
+    q = kai.post("/api/v1/quotes", json={"items": [{"outcome_id": str(atlas), "stake_rc": 300}]}, headers=H).json()
+    kai.post("/api/v1/tickets", headers={**H, "Idempotency-Key": "c1"},
+             json={"quote_id": q["quote_id"], "confirm_odds_versions": {str(atlas): 1}})
+    pick = kai.get("/api/v1/me/picks").json()["picks"][0]["id"]
+    assert mika.post(f"/api/v1/picks/{pick}/cancel", headers=H).status_code == 404  # not yours
+
+    r = kai.post(f"/api/v1/picks/{pick}/cancel", headers=H)
+    assert r.status_code == 200 and r.json()["pick"]["status"] == "CANCELLED"
+    assert r.json()["wallet"]["available_rc"] == before and r.json()["wallet"]["open_stake_rc"] == 0
+    assert kai.post(f"/api/v1/picks/{pick}/cancel", headers=H).json()["error"]["code"] == "NOT_CANCELLABLE"
+
+    # A pick on a locked market stands.
+    q = kai.post("/api/v1/quotes", json={"items": [{"outcome_id": str(atlas), "stake_rc": 200}]}, headers=H).json()
+    kai.post("/api/v1/tickets", headers={**H, "Idempotency-Key": "c2"},
+             json={"quote_id": q["quote_id"], "confirm_odds_versions": {str(atlas): 1}})
+    second = next(p["id"] for p in kai.get("/api/v1/me/picks?state=open").json()["picks"])
+    with factory() as s, s.begin():
+        s.execute(update(Market).values(state="LOCKED"))
+    assert kai.post(f"/api/v1/picks/{second}/cancel", headers=H).json()["error"]["code"] == "MARKET_LOCKED"
+
+    # Settling the market pays the standing pick and never touches the cancelled one.
+    with factory() as s, s.begin():
+        apply_grade(s, world["market"], Grade("RESULT", ["A"], "test"), T0 + timedelta(days=4000))
+    picks = {p["id"]: p for p in kai.get("/api/v1/me/picks").json()["picks"]}
+    assert picks[pick]["status"] == "CANCELLED" and picks[pick]["return_rc"] == 0
+    assert picks[second]["status"] == "WON"
+
+
+def test_today_net_counts_picks_settled_today_only(api, factory, world):
+    """The top bar's figure: return minus stake of picks settled on the venue's day, not grants."""
+    from sqlalchemy import select as sel_
+
+    from rift.api.views import today_net
+    from rift.models import Selection, Wallet
+    from rift.settlement import Grade, apply_grade
+
+    app, codes = api
+    kai = signup(app, codes[0], "kai")
+    atlas = outcome_id(factory, world["market"], "A")
+    q = kai.post("/api/v1/quotes", json={"items": [{"outcome_id": str(atlas), "stake_rc": 100}]}, headers=H).json()
+    kai.post("/api/v1/tickets", headers={**H, "Idempotency-Key": "t1"},
+             json={"quote_id": q["quote_id"], "confirm_odds_versions": {str(atlas): 1}})
+    settled_at = T0 + timedelta(hours=6)
+    with factory() as s, s.begin():
+        apply_grade(s, world["market"], Grade("RESULT", ["A"], "test"), settled_at)
+    with factory() as s:
+        wallet = s.execute(sel_(Wallet).join(Selection, Selection.user_id == Wallet.user_id)).scalars().first()
+        assert today_net(s, wallet, now=settled_at) == 62  # 100 at 1.62
+        assert today_net(s, wallet, now=settled_at + timedelta(days=1)) == 0  # a new day starts at zero

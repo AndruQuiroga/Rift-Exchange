@@ -281,7 +281,8 @@ def apply_grade(session: Session, market_id, grade: Grade, now: datetime) -> boo
                              reason=grade.reason, evidence=grade.evidence))
     outcome_codes = {o.id: o.code for o in _market_outcomes(session, market)}
     selections = [s for s in session.execute(
-        select(Selection).where(Selection.market_id == market.id).order_by(Selection.id).with_for_update()
+        select(Selection).where(Selection.market_id == market.id, Selection.status != "CANCELLED")
+        .order_by(Selection.id).with_for_update()
     ).scalars() if not swiss_card.moved_to_card(s)]
     callers = set(session.execute(select(SwissCall.user_id).where(SwissCall.market_id == market.id)).scalars())
     wallet_by_user = {

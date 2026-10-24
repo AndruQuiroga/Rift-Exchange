@@ -33,7 +33,7 @@ from rift.models import (
     User,
     Wallet,
 )
-from rift.placement import PlacementError, QuoteItem, accept_ticket, create_quote
+from rift.placement import PlacementError, QuoteItem, accept_ticket, cancel_selection, create_quote
 
 COOKIE = "rift_session"
 CLIENT_HEADER = "x-rift-client"
@@ -398,6 +398,19 @@ def create_app(settings: Settings | None = None, factory=None) -> FastAPI:
         if ticket is None:
             raise ApiError(404, "NOT_FOUND", "No ticket was placed with that key.")
         return ticket_view(session, ticket)
+
+    @app.post("/api/v1/picks/{selection_id}/cancel")
+    def cancel_pick(selection_id: uuid.UUID, session: Db, user: CurrentUser):
+        """Take a pick back before its market locks: the whole stake returns (D-038)."""
+        season = season_of(session)
+        wallet_of(session, season, user)
+        try:
+            sel = cancel_selection(session, season_id=season.id, user_id=user.id, selection_id=selection_id,
+                                   now=db_now(session))
+        except PlacementError as e:
+            raise ApiError(404 if e.code == "UNKNOWN_PICK" else 409, e.code, e.message) from e
+        wallet = wallet_of(session, season, user)
+        return {"pick": views.selection_rows(session, [sel])[0], "wallet": views.wallet_summary(session, wallet)}
 
     @app.get("/api/v1/me/picks")
     def my_picks(user: CurrentUser, session: Db, state: str | None = Query(None, pattern="^(open|settled)$")):

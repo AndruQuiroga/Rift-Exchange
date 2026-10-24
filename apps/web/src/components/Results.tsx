@@ -68,6 +68,19 @@ export function DeciderToasts({ event }: { event: EventT }) {
   const placed = usePlaced();
   const toast = useToast();
   const seen = useRef<Set<string> | null>(null);
+  const lastStatus = useRef(event.status);
+
+  // D-039: the broadcast going live starts a one-minute countdown on pre-draft picks; say so once, as it starts.
+  useEffect(() => {
+    const was = lastStatus.current;
+    lastStatus.current = event.status;
+    if (was !== "SCHEDULED" || event.status !== "LIVE") return;
+    const closing = (event.markets ?? []).some((m) => m.state === "OPEN" && Date.parse(m.close_at) - Date.now() < 120_000);
+    if (closing) {
+      toast({ key: `countdown:${event.id}`, tone: "money", badge: "1:00", kicker: "Match is live",
+              text: "Blind picks, the winner and draft calls close in a minute" });
+    }
+  }, [event.status, event.markets, event.id, toast]);
 
   useEffect(() => {
     const decided = (event.markets ?? []).map((m) => ({ m, out: outcomeOf(m) })).filter((r) => r.out);

@@ -100,7 +100,11 @@ export type LiveT = {
   my_picks: (Pick & { live: { score?: [number, number]; current?: number; line?: string; needed?: number } | null })[];
 };
 
-export type Wallet = { available_rc: number; open_stake_rc: number; recovery_due_rc: number; granted_rc: number; realized_net_rc: number };
+export type Wallet = {
+  available_rc: number; open_stake_rc: number; recovery_due_rc: number; granted_rc: number; realized_net_rc: number;
+  /** What picks settled today won or lost, plus Swiss rewards (the venue's day). */
+  today_net_rc?: number;
+};
 
 export type Me = { user: { id: string; handle: string; display_name: string; role: string }; wallet: Wallet };
 
@@ -122,7 +126,7 @@ export type Pick = {
   ticket_id: string;
   market_id: string;
   outcome_id: string;
-  status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID";
+  status: "OPEN" | "WON" | "PARTIAL" | "LOST" | "VOID" | "CANCELLED";
   stake_rc: number;
   odds: string;
   return_rc: number;

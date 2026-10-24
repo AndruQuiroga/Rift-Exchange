@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { PickStatus } from "@/components/bits";
+import { CancelPick } from "@/components/CancelPick";
 import { kickoff, longDate, odds as fmtOdds, rc } from "@/lib/format";
 import type { Pick } from "@/lib/types";
 
@@ -87,6 +88,7 @@ function PickCard({ pick: p }: { pick: Pick }) {
         </div>
         <PickStatus pick={p} />
       </div>
+      <CancelPick pick={p} />
       <div className="pick-nums num">
         <div>
           Stake<b>{rc(p.stake_rc)}</b>
