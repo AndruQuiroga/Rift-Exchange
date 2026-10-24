@@ -23,6 +23,15 @@ def main() -> None:
     link.add_argument("--revoke", action="store_true", help="revoke without issuing a replacement")
     link.add_argument("--origin", default="https://rift.mustache.network", help="public site origin")
     sub.add_parser("backtest", help="print the team-strength model backtest")
+    fix = sub.add_parser("correct-result", help="set a game market's result by hand (both blind and after-draft "
+                         "copies); the worker re-settles it on its next pass")
+    fix.add_argument("--fixture", required=True, help="the match's provider id")
+    fix.add_argument("--game", type=int, required=True)
+    fix.add_argument("--kind", required=True, help="market kind, e.g. baron_before")
+    fix.add_argument("--codes", help="winning outcome codes, comma-separated (e.g. YES)")
+    fix.add_argument("--void", action="store_true", help="void instead: every stake comes back")
+    fix.add_argument("--reason", required=True)
+    fix.add_argument("--by", default="admin", help="who made the call, for the audit log")
     args = parser.parse_args()
 
     if args.cmd == "api":
@@ -45,6 +54,34 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO)
         settings = get_settings()
         Worker(session_factory(), settings, LolesportsClient(settings), make_source(settings)).cycle()
+    elif args.cmd == "correct-result":
+        from sqlalchemy import select
+
+        from rift.db import db_now, transaction
+        from rift.models import AuditEvent, Fixture, Market, Outcome
+
+        if not args.void and not args.codes:
+            parser.error("give --codes or --void")
+        with transaction() as db:
+            fixture = db.execute(select(Fixture).where(Fixture.provider_id == args.fixture)).scalar_one()
+            rows = [m for m in db.execute(select(Market).where(Market.fixture_id == fixture.id,
+                                                               Market.kind == args.kind)).scalars()
+                    if m.params.get("game_index") == args.game]
+            if not rows:
+                parser.error("no such market")
+            correction = {"codes": [] if args.void else args.codes.split(","), "void": args.void,
+                          "reason": args.reason, "by": args.by, "at": db_now(db).isoformat()}
+            for m in rows:
+                if m.state == "OPEN":  # still taking bets: a known result can't sit on it
+                    print(m.template_key, "OPEN, skipped")
+                    continue
+                codes = set(db.execute(select(Outcome.code).where(Outcome.market_id == m.id)).scalars())
+                if not args.void and not set(correction["codes"]) <= codes:
+                    parser.error(f"{m.template_key} has no outcome {correction['codes']}")
+                m.params = {**m.params, "correction": correction}
+                db.add(AuditEvent(actor=args.by, action="market.corrected", entity_type="market",
+                                  entity_id=str(m.id), data=correction))
+                print(m.template_key, m.state, "->", "VOID" if args.void else correction["codes"])
     elif args.cmd == "invite":
         from rift.auth import create_invite
         from rift.db import transaction

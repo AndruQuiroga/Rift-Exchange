@@ -59,6 +59,12 @@ def _side_code(fixture: Fixture, team_id) -> str | None:
 
 
 def grade_market(session: Session, market: Market) -> Grade:
+    # A league correction (rift correct-result) stands over the data: the feed can't settle it the way the
+    # broadcast showed (e.g. its clock sits a few seconds off the game timer). Audited when set.
+    correction = (market.params or {}).get("correction")
+    if correction:
+        return Grade("VOID" if correction.get("void") else "RESULT", list(correction.get("codes") or []),
+                     f"Corrected by the league: {correction['reason']}", {"correction": correction})
     if market.fixture_id is None:
         return grade_tournament_market(session, market)
     fixture = session.get(Fixture, market.fixture_id)

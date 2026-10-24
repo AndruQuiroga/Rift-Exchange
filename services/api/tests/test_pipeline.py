@@ -500,3 +500,17 @@ def test_a_lagging_final_stats_feed_does_not_hold_back_the_game_result(factory):
     worker.cycle()
     with factory() as s:
         assert s.execute(select(Game).where(Game.game_index == 1)).scalar_one().stats_complete
+
+
+def test_a_league_correction_stands_over_the_data(factory, world):
+    """rift correct-result: a hand-set result grades the market and keeps doing so on every re-grade."""
+    from rift.settlement import apply_grade, grade_market
+
+    with factory() as s, s.begin():
+        m = s.get(Market, world["market"])
+        assert grade_market(s, m).status != "RESULT"  # nothing played yet
+        m.params = {**m.params, "correction": {"codes": ["B"], "void": False, "reason": "broadcast clock",
+                                               "by": "andru", "at": "2026-10-24T23:00:00+00:00"}}
+        grade = grade_market(s, m)
+        assert grade.status == "RESULT" and grade.winning_codes == ["B"] and "broadcast clock" in grade.reason
+        assert apply_grade(s, m.id, grade, START) and not apply_grade(s, m.id, grade_market(s, m), START)
