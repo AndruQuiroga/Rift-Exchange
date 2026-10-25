@@ -256,14 +256,16 @@ def _final(game: Game, tl: dict, feed: _Budget, now: datetime, t0: datetime) -> 
         scan["requests"] += start_left - feed.left
     if parse_time(scan["cursor"]) < end or scan["refine"]:
         return
-    if "at_15" not in tl or tl["at_15"] is None:
+    # The 15:00 line is read again once the game is over: read live, near the feed's edge, a frame can carry
+    # its 15:00 time with player gold minutes old (HLE-GEN 2026-10-24: 2,618 stored, 5,362 by the final feed).
+    if not (tl.get("at_15") or {}).get("final"):
         if end - t0 < AT_15:
             tl["at_15"] = None
         elif feed.left > 0:
             line = at_15(feed.frames(t0 + AT_15), t0)
             if line is None:
                 return  # a hole at 15:00; HOLD rather than use a distant frame
-            tl["at_15"] = line
+            tl["at_15"] = {**line, "final": True}
         else:
             return
     if tl.get("final") is None:

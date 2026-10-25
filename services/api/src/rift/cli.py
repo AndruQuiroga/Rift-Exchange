@@ -23,6 +23,9 @@ def main() -> None:
     link.add_argument("--revoke", action="store_true", help="revoke without issuing a replacement")
     link.add_argument("--origin", default="https://rift.mustache.network", help="public site origin")
     sub.add_parser("backtest", help="print the team-strength model backtest")
+    g15 = sub.add_parser("refresh-gold15", help="re-read finished games' 15:00 gold from the feed (a live read can "
+                         "be minutes stale); lists differences without --confirm")
+    g15.add_argument("--confirm", action="store_true", help="store the re-read lines; settlement re-grades")
     held = sub.add_parser("void-held", help="void markets stuck waiting on data (every stake back); lists them "
                           "without --confirm")
     held.add_argument("--reason-like", required=True, help="text in the hold reason, e.g. bans")
@@ -105,6 +108,37 @@ def main() -> None:
                                   entity_id=str(m.id), data=correction))
                 print(m.template_key, m.state, "->", "VOID" if args.void else
                       ", ".join(f"{c} ({labels[c]})" for c in correction["codes"]))
+    elif args.cmd == "refresh-gold15":
+        from sqlalchemy import select
+
+        from rift.adapters.lolesports import LolesportsClient, parse_time
+        from rift.config import get_settings
+        from rift.db import db_now, transaction
+        from rift.models import Game
+        from rift.timeline import AT_15, at_15
+
+        client = LolesportsClient(get_settings())
+        with transaction() as db:
+            games = [g for g in db.execute(select(Game).where(Game.timeline_complete.is_(True))).scalars()
+                     if (g.timeline or {}).get("at_15") and not g.timeline["at_15"].get("final")
+                     and (g.timeline or {}).get("t0")]
+            changed = 0
+            for g in games:
+                old = g.timeline["at_15"]["players"]
+                line = at_15(client.frames(g.provider_id, parse_time(g.timeline["t0"]) + AT_15), parse_time(g.timeline["t0"]))
+                if line is None:
+                    print(g.provider_id, "no 15:00 frame in the feed; left as is")
+                    continue
+                diffs = [line["players"][pid]["gold"] - old[pid]["gold"] for pid in line["players"] if pid in old]
+                worst = max(diffs, key=abs, default=0)
+                print(f"{g.provider_id}  gold change per player: mean {sum(diffs) / max(len(diffs), 1):+.0f}, "
+                      f"largest {worst:+d}")
+                if args.confirm:
+                    g.timeline = {**g.timeline, "at_15": {**line, "final": True}}
+                    g.data_changed_at = db_now(db)
+                    changed += 1
+            print(f"{len(games)} game(s) checked" + (f", {changed} updated: settlement re-grades their 15:00 markets"
+                                                      if args.confirm else ". Re-run with --confirm to store them."))
     elif args.cmd == "void-held":
         from sqlalchemy import func, select
 
