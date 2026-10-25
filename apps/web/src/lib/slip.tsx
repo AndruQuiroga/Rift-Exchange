@@ -19,7 +19,7 @@ export type SlipLine = {
   closeAt?: string;
   /** Through-draft and early-window markets close at 3:00 of game time, not at closeAt, once the game loads. */
   closesWithGame?: boolean;
-  closeRule?: "game" | "draft" | null;
+  closeRule?: "game" | "draft" | "next" | null;
   /** Share of the full return paid for a right-side, wrong-exact result (Swiss record), if any. */
   consolation?: string;
 };

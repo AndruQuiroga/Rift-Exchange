@@ -39,9 +39,11 @@ export function LockTimer({ at, label = "Locks in", compact }: { at: string | nu
 
 /** A market's close: the countdown once it is real, "3:00 into the game" while its game hasn't loaded. */
 export function MarketClose({ at, known, rule, scheduledAt, label = "Locks in", compact }: {
-  at: string | null | undefined; known?: boolean; rule?: "game" | "draft" | null; scheduledAt?: string; label?: string; compact?: boolean;
+  at: string | null | undefined; known?: boolean; rule?: "game" | "draft" | "next" | null; scheduledAt?: string; label?: string; compact?: boolean;
 }) {
   if (rule === "draft") return <DraftLock scheduledAt={scheduledAt} compact={compact} />;
+  // D-043: a later game, open while the one before it plays.
+  if (rule === "next") return <span className={`timer${compact ? " compact" : ""}`}>Locks <b>at its draft</b> · after this game</span>;
   if (known === false) return <span className={`timer${compact ? " compact" : ""}`}>Closes <b>3:00 into the game</b></span>;
   return <LockTimer at={at} label={label} compact={compact} />;
 }

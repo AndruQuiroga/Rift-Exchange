@@ -17,7 +17,7 @@ export type MarketT = {
   /** false while its close follows a game that hasn't loaded: close_at is only a backstop (3:00 of game time). */
   close_known?: boolean;
   /** What really closes it while close_at is a backstop: "game" (3:00 into it) or "draft" (the series going live). */
-  close_rule?: "game" | "draft" | null;
+  close_rule?: "game" | "draft" | "next" | null;
   confidence: string;
   model: string;
   params: Record<string, unknown>;
@@ -152,7 +152,7 @@ export type Pick = {
   close_at?: string;
   closes_with_game?: boolean;
   close_known?: boolean;
-  close_rule?: "game" | "draft" | null;
+  close_rule?: "game" | "draft" | "next" | null;
   /** What cancelling returns right now: the whole stake, 75% once the draft has started (D-040), or null. */
   cancel_refund_rc?: number | null;
   /** Placed after the draft, at the lower after-draft price (D-040). */

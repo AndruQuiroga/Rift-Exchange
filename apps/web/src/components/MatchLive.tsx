@@ -22,12 +22,12 @@ export function useLive(event: EventT) {
 }
 
 /** What can be picked right now on this match: open markets, plus duels and kill lines in their windows. */
-export function openNow(event: EventT, now: number): { count: number; closes: string | null; provisional: boolean; draft: boolean } {
+export function openNow(event: EventT, now: number): { count: number; closes: string | null; provisional: boolean; draft: boolean; next: boolean } {
   const open = (event.markets ?? []).filter((m) => m.state === "OPEN" && Date.parse(m.close_at) > now);
   const lanes = (event.games ?? []).some((g) => g.lanes === "BLIND" || g.lanes === "LIVE");
   const known = open.filter((m) => m.close_known !== false).map((m) => m.close_at).sort();
   return { count: open.length + (lanes ? 1 : 0), closes: known[0] ?? null, provisional: open.some((m) => m.close_known === false),
-           draft: open.some((m) => m.close_rule === "draft") };
+           draft: open.some((m) => m.close_rule === "draft"), next: open.some((m) => m.close_rule === "next") };
 }
 
 /** The game clock, ticking between polls: the last reported time plus what has passed since it arrived. */
@@ -235,6 +235,7 @@ export function OpenAside({ event }: { event: EventT }) {
   const o = openNow(event, now);
   if (!o.count) return null;
   if (o.draft) return <MarketClose at={null} rule="draft" scheduledAt={event.scheduled_at} />;
+  if (o.closes === null && o.next) return <MarketClose at={null} rule="next" />;
   return o.closes ? <LockTimer at={o.closes} label="Closes in" /> : o.provisional ? <MarketClose at={null} known={false} /> : <span className="muted" style={{ fontSize: 12 }}>until 3:00</span>;
 }
 

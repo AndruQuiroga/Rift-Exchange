@@ -355,6 +355,8 @@ export default function EventPage() {
   }
 
   const isLive = event.status === "LIVE";
+  // A later game open while the one shown is played (D-043).
+  const nextOpen = gameList.find((g) => g.window === "OPEN" && g.state === "unstarted" && g.index !== shownGame?.index);
   const isFinal = event.status === "COMPLETED";
   const liveView = isLive && !!priced;
   const opened = openNow(event, now);
@@ -431,6 +433,13 @@ export default function EventPage() {
             <Group id="open" tone="open" title="Open now" count={opened.count} aside={<OpenAside event={event} />}
               empty="Nothing to pick right now. Results land below as they happen.">
               {panels}
+              {nextOpen ? (
+                // D-043: the next game takes picks while this one plays; show it here, not only on its tab.
+                <div className="next-open">
+                  <div className="mp-sub">Game {nextOpen.index} · open while Game {nextOpen.index - 1} plays</div>
+                  <GamePanel event={event} game={nextOpen} live />
+                </div>
+              ) : null}
             </Group>
             {shownGame && upNext(shownGame) ? (
               <Group id="next" tone="next" title="Up next" count={1}>

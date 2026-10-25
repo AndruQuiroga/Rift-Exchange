@@ -53,20 +53,25 @@ def outcome_view(o: Outcome) -> dict:
 
 def provisional_closes(db: Session, markets: list[Market]) -> dict[uuid.UUID, str]:
     """Markets whose close_at is only a backstop, and what really closes them, so the client says so instead of
-    counting down: "game" (3:00 of game time, its game not loaded yet) or "draft" (the series going live, D-037)."""
+    counting down: "game" (3:00 of game time, its game not loaded yet), "draft" (the series going live, D-037) or
+    "next" (a later game's market while the game before it plays: its own draft, D-043)."""
     fixture_ids = {m.fixture_id for m in markets if m.fixture_id}
     if not fixture_ids:
         return {}
     fixtures = {f.id: f for f in db.execute(select(Fixture).where(Fixture.id.in_(fixture_ids))).scalars()}
-    started = {(g.fixture_id, g.game_index) for g in db.execute(select(Game).where(
-        Game.fixture_id.in_(fixture_ids), Game.started_at.is_not(None))).scalars()}
+    games = list(db.execute(select(Game).where(Game.fixture_id.in_(fixture_ids))).scalars())
+    started = {(g.fixture_id, g.game_index) for g in games if g.started_at is not None}
+    ended = {(g.fixture_id, g.game_index) for g in games if g.ended_at is not None or g.state == "completed"}
     out = {}
     for m in markets:
         f = fixtures.get(m.fixture_id)
         if f is None:
             continue
-        if (m.params.get("through_draft") or m.params.get("early")) and (m.fixture_id, m.params.get("game_index", 1)) not in started:
+        idx = m.params.get("game_index", 1)
+        if (m.params.get("through_draft") or m.params.get("early")) and (m.fixture_id, idx) not in started:
             out[m.id] = "game"
+        elif f.status == "LIVE" and idx > 1 and (m.fixture_id, idx - 1) not in ended:
+            out[m.id] = "next"  # D-043: open while the game before plays; closes at its own draft
         elif f.status == "SCHEDULED" and m.close_at >= series_close(f):
             out[m.id] = "draft"
     return out

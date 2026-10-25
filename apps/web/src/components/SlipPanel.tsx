@@ -341,7 +341,7 @@ export function SlipPanel({ onClose }: { onClose?: () => void }) {
                       {l.marketTitle}
                       {groups.length > 1 ? null : ` · ${l.eventLabel}`}
                     </div>
-                    {l.closeAt ? <MarketClose at={l.closeAt} rule={l.closeRule === "draft" ? "draft" : null} known={!(l.closesWithGame && Date.parse(l.closeAt) - Date.now() > 600_000)} compact /> : null}
+                    {l.closeAt ? <MarketClose at={l.closeAt} rule={l.closeRule === "draft" || l.closeRule === "next" ? l.closeRule : null} known={!(l.closesWithGame && Date.parse(l.closeAt) - Date.now() > 600_000)} compact /> : null}
                   </div>
                   <div className="px num" aria-live="polite">
                     {was ? <span className="was">{fmtOdds(was)}</span> : null}
