@@ -329,6 +329,32 @@ def cancel_refund(session: Session, sel: Selection, market: Market, now: datetim
     return sel.stake_rc if before_draft else int(Decimal(sel.stake_rc) * AFTER_DRAFT_RATE)
 
 
+def admin_remove(session: Session, selection_id: uuid.UUID, *, reason: str, by: str, now: datetime) -> Selection:
+    """The league removes an open pick (a misclick): the whole stake back whatever the market's state, the
+    pick never settles, and an audit event says who and why. Picks already settled are left alone."""
+    from rift.models import AuditEvent
+
+    sel = session.execute(select(Selection).where(Selection.id == selection_id).with_for_update()).scalar_one_or_none()
+    if sel is None:
+        raise PlacementError("UNKNOWN_PICK", "That pick doesn't exist.")
+    if sel.status != "OPEN" or sel.settled_revision:
+        raise PlacementError("NOT_CANCELLABLE", "That pick is already settled or cancelled.")
+    market = session.execute(select(Market).where(Market.id == sel.market_id).with_for_update()).scalar_one()
+    wallet = session.execute(select(Wallet).where(Wallet.season_id == market.season_id,
+                                                  Wallet.user_id == sel.user_id)).scalar_one()
+    wallet = ledger.lock_wallets(session, {wallet.id})[wallet.id]
+    ledger.credit(session, wallet, kind="VOID_REFUND", amount_rc=sel.stake_rc, key=f"cancel:{sel.id}",
+                  ref_type="selection", ref_id=str(sel.id),
+                  memo=f"Removed by the league: {sel.rules_snapshot.get('title', '')} ({reason})")
+    sel.status, sel.settled_at, sel.return_rc = "CANCELLED", now, sel.stake_rc
+    session.add(AuditEvent(actor=by, action="selection.removed", entity_type="selection", entity_id=str(sel.id),
+                           data={"reason": reason, "stake_rc": sel.stake_rc, "market": market.template_key}))
+    session.add(OutboxEvent(type="ticket.accepted", entity_id=str(sel.ticket_id), user_id=sel.user_id,
+                            payload={"cancelled": str(sel.id)}))
+    session.flush()
+    return sel
+
+
 def cancel_selection(session: Session, *, season_id: uuid.UUID, user_id: uuid.UUID, selection_id: uuid.UUID,
                      now: datetime) -> Selection:
     """Take back a pick (D-038, D-040): see cancel_refund for when and how much comes back. It never settles."""

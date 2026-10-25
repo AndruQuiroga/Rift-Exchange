@@ -23,6 +23,15 @@ def main() -> None:
     link.add_argument("--revoke", action="store_true", help="revoke without issuing a replacement")
     link.add_argument("--origin", default="https://rift.mustache.network", help="public site origin")
     sub.add_parser("backtest", help="print the team-strength model backtest")
+    rm = sub.add_parser("remove-pick", help="remove a member's open pick (a misclick) with the whole stake back; "
+                        "lists matches without --confirm")
+    rm.add_argument("--user", required=True, help="the member's name or handle")
+    rm.add_argument("--fixture", required=True, help="the match's provider id")
+    rm.add_argument("--game", type=int, help="game number, for game markets")
+    rm.add_argument("--kind", required=True, help="market kind, e.g. soul_team")
+    rm.add_argument("--reason", required=True)
+    rm.add_argument("--by", default="admin", help="who made the call, for the audit log")
+    rm.add_argument("--confirm", action="store_true", help="remove them (otherwise only list)")
     fix = sub.add_parser("correct-result", help="set a game market's result by hand (both blind and after-draft "
                          "copies); the worker re-settles it on its next pass")
     fix.add_argument("--fixture", required=True, help="the match's provider id")
@@ -90,6 +99,34 @@ def main() -> None:
                                   entity_id=str(m.id), data=correction))
                 print(m.template_key, m.state, "->", "VOID" if args.void else
                       ", ".join(f"{c} ({labels[c]})" for c in correction["codes"]))
+    elif args.cmd == "remove-pick":
+        from sqlalchemy import func, or_, select
+
+        from rift.db import db_now, transaction
+        from rift.models import Fixture, Market, Selection, User
+        from rift.placement import admin_remove
+
+        with transaction() as db:
+            named = or_(func.lower(User.handle) == args.user.lower(), func.lower(User.display_name) == args.user.lower())
+            user = db.execute(select(User).where(named)).scalar_one_or_none()
+            if user is None:
+                parser.error(f"No member named {args.user!r}")
+            fixture = db.execute(select(Fixture).where(Fixture.provider_id == args.fixture)).scalar_one()
+            picks = [(sel, m) for sel, m in db.execute(
+                select(Selection, Market).join(Market, Market.id == Selection.market_id)
+                .where(Selection.user_id == user.id, Selection.status == "OPEN", Market.fixture_id == fixture.id,
+                       Market.kind == args.kind)).all()
+                     if args.game is None or m.params.get("game_index") == args.game]
+            if not picks:
+                parser.error(f"{user.display_name} has no open {args.kind} pick on that match")
+            for sel, m in picks:
+                line = f"{sel.id}  {m.title}: {sel.rules_snapshot.get('outcome')} {sel.stake_rc:,} RC @ {sel.odds:.2f}"
+                if args.confirm:
+                    admin_remove(db, sel.id, reason=args.reason, by=args.by, now=db_now(db))
+                    line += f"  -> removed, {sel.stake_rc:,} RC back"
+                print(line)
+            if not args.confirm:
+                print(f"{len(picks)} pick(s) for {user.display_name}. Re-run with --confirm to remove them.")
     elif args.cmd == "invite":
         from rift.auth import create_invite
         from rift.db import transaction

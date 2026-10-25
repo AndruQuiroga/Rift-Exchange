@@ -288,3 +288,24 @@ def test_knockouts_uncap_predictions_that_close_before_the_draft(factory, world)
     with pytest.raises(PlacementError) as e:  # Game 1 winner stays open through the draft: still capped
         _quote(factory, world, [(outcome_id(factory, g1_id, "A"), 1500)])
     assert e.value.code == "STAKE_LIMIT"
+
+
+def test_the_league_can_remove_a_misclicked_pick_with_the_whole_stake_back(factory, world):
+    """rift remove-pick: even on a locked market, the full stake returns and the pick never settles."""
+    from sqlalchemy import update
+
+    from rift.models import AuditEvent, Market, Selection
+    from rift.placement import PlacementError, admin_remove
+
+    join(factory, world, "alice")
+    before = balance(factory, world, "alice")[0]
+    place(factory, world, "alice", [(outcome_id(factory, world["market"], "A"), 300)], "misclick")
+    with factory() as s, s.begin():
+        s.execute(update(Market).values(state="LOCKED"))
+        sel = s.execute(select(Selection)).scalar_one()
+        admin_remove(s, sel.id, reason="misclick", by="andru", now=T0)
+        assert (sel.status, sel.return_rc) == ("CANCELLED", 300)
+        assert s.execute(select(AuditEvent).where(AuditEvent.action == "selection.removed")).scalar_one()
+    assert balance(factory, world, "alice")[0] == before
+    with factory() as s, s.begin(), pytest.raises(PlacementError):
+        admin_remove(s, s.execute(select(Selection)).scalar_one().id, reason="again", by="andru", now=T0)
