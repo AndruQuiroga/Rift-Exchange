@@ -28,7 +28,7 @@ def main() -> None:
     fix.add_argument("--fixture", required=True, help="the match's provider id")
     fix.add_argument("--game", type=int, required=True)
     fix.add_argument("--kind", required=True, help="market kind, e.g. baron_before")
-    fix.add_argument("--codes", help="winning outcome codes, comma-separated (e.g. YES)")
+    fix.add_argument("--codes", help="winning outcome codes or team codes, comma-separated (e.g. YES, BLG)")
     fix.add_argument("--void", action="store_true", help="void instead: every stake comes back")
     fix.add_argument("--reason", required=True)
     fix.add_argument("--by", default="admin", help="who made the call, for the audit log")
@@ -58,7 +58,7 @@ def main() -> None:
         from sqlalchemy import select
 
         from rift.db import db_now, transaction
-        from rift.models import AuditEvent, Fixture, Market, Outcome
+        from rift.models import AuditEvent, Fixture, Market, Outcome, Team
 
         if not args.void and not args.codes:
             parser.error("give --codes or --void")
@@ -69,19 +69,27 @@ def main() -> None:
                     if m.params.get("game_index") == args.game]
             if not rows:
                 parser.error("no such market")
-            correction = {"codes": [] if args.void else args.codes.split(","), "void": args.void,
+            # A team code (e.g. BLG) stands for that team's side in this fixture, so nobody has to know A from B.
+            side = {}
+            for code, team_id in (("A", fixture.team_a_id), ("B", fixture.team_b_id)):
+                team = db.get(Team, team_id) if team_id else None
+                if team is not None and team.code:
+                    side[team.code.upper()] = code
+            wanted = [side.get(c.strip().upper(), c.strip()) for c in (args.codes or "").split(",") if c.strip()]
+            correction = {"codes": [] if args.void else wanted, "void": args.void,
                           "reason": args.reason, "by": args.by, "at": db_now(db).isoformat()}
             for m in rows:
                 if m.state == "OPEN":  # still taking bets: a known result can't sit on it
                     print(m.template_key, "OPEN, skipped")
                     continue
-                codes = set(db.execute(select(Outcome.code).where(Outcome.market_id == m.id)).scalars())
-                if not args.void and not set(correction["codes"]) <= codes:
+                labels = dict(db.execute(select(Outcome.code, Outcome.label).where(Outcome.market_id == m.id)).all())
+                if not args.void and not set(correction["codes"]) <= set(labels):
                     parser.error(f"{m.template_key} has no outcome {correction['codes']}")
                 m.params = {**m.params, "correction": correction}
                 db.add(AuditEvent(actor=args.by, action="market.corrected", entity_type="market",
                                   entity_id=str(m.id), data=correction))
-                print(m.template_key, m.state, "->", "VOID" if args.void else correction["codes"])
+                print(m.template_key, m.state, "->", "VOID" if args.void else
+                      ", ".join(f"{c} ({labels[c]})" for c in correction["codes"]))
     elif args.cmd == "invite":
         from rift.auth import create_invite
         from rift.db import transaction
