@@ -727,3 +727,17 @@ def test_soul_and_first_baron_by_team_or_nobody(factory, season_games):
                       "soul_side": None}
         assert grade_market(s, markets["soul_team"]).winning_codes == ["NONE"]
         assert grade_market(s, markets["first_baron"]).winning_codes == ["NONE"]
+
+
+def test_a_pricing_only_15_line_changes_prices_never_settlement(factory, season_games):
+    """rift refresh-gold15: a re-read 15:00 line feeds prices; the line picks settled on stays for grading."""
+    with factory() as s, s.begin():
+        g = s.execute(select(Game).where(Game.provider_id == "past-0")).scalar_one()
+        stale = g.timeline["at_15"]
+        fresh = {"at_s": 900, "final": True,
+                 "players": {pid: {"cs": p["cs"], "gold": p["gold"] + 2000} for pid, p in stale["players"].items()}}
+        g.timeline = {**g.timeline, "at_15_pricing": fresh}
+        s.flush()
+        assert props.player_lines(g)["a-top"]["gold15"] == stale["players"]["1"]["gold"]  # settlement's view
+        assert props.player_lines(g, pricing=True)["a-top"]["gold15"] == stale["players"]["1"]["gold"] + 2000
+        assert props.gold15_lead(g) == props.gold15_lead(g, pricing=False)

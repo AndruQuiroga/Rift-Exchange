@@ -120,11 +120,18 @@ def _complete_games(session: Session, season: Season) -> list[Game]:
     ).scalars())
 
 
-def player_lines(game: Game) -> dict[str, dict]:
+def _at15(tl: dict, pricing: bool) -> dict:
+    """The 15:00 player lines. pricing: prefer the re-read line a finished game was given for prices only
+    (rift refresh-gold15); settlement always reads the line its picks settled on."""
+    line = (tl.get("at_15_pricing") if pricing else None) or tl.get("at_15") or {}
+    return line.get("players") or {}
+
+
+def player_lines(game: Game, pricing: bool = False) -> dict[str, dict]:
     """player_id -> {role, team_id, name, kills, cs15, damage} for one completed game (None where unknown)."""
     tl = game.timeline or {}
     team_of = {"blue": game.blue_team_id, "red": game.red_team_id}
-    at15 = ((tl.get("at_15") or {}).get("players")) or {}
+    at15 = _at15(tl, pricing)
     out = {}
     for pid, p in (tl.get("participants") or {}).items():
         final = (tl.get("final") or {}).get(pid) or {}
@@ -136,10 +143,10 @@ def player_lines(game: Game) -> dict[str, dict]:
     return out
 
 
-def gold15_lead(game: Game) -> tuple[str | None, int] | None:
+def gold15_lead(game: Game, pricing: bool = False) -> tuple[str | None, int] | None:
     """(team_id ahead at 15:00, gold gap), team_id None on a dead heat; None without a 15:00 frame."""
     tl = game.timeline or {}
-    at15 = ((tl.get("at_15") or {}).get("players")) or {}
+    at15 = _at15(tl, pricing)
     team_of = {"blue": game.blue_team_id, "red": game.red_team_id}
     gold = Counter()
     for pid, p in (tl.get("participants") or {}).items():
@@ -174,7 +181,7 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
             elif g.winner_team_id is not None:
                 took[(what, "n")] += 1
                 took[(what, "w")] += int(team == str(g.winner_team_id))
-        lead = gold15_lead(g)
+        lead = gold15_lead(g, pricing=True)
         if lead:
             data.gold15_gaps.append(lead[1])
         if lead and lead[0] and lead[1] >= TEAM_GOLD_TIE and g.winner_team_id is not None:
@@ -187,7 +194,7 @@ def timeline_data(session: Session, season: Season) -> TimelineData:
         data.early_baron += int(bool(baron) and baron["at_s"] < EARLY_BARON_S)
         champions = {str(p.get("player_id") or p.get("name")): p.get("champion")
                      for p in (tl.get("participants") or {}).values()}
-        for pid, line in player_lines(g).items():
+        for pid, line in player_lines(g, pricing=True).items():
             for stat in STATS:
                 if line[stat] is None or not line["role"]:
                     continue
