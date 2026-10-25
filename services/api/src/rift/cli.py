@@ -23,6 +23,12 @@ def main() -> None:
     link.add_argument("--revoke", action="store_true", help="revoke without issuing a replacement")
     link.add_argument("--origin", default="https://rift.mustache.network", help="public site origin")
     sub.add_parser("backtest", help="print the team-strength model backtest")
+    held = sub.add_parser("void-held", help="void markets stuck waiting on data (every stake back); lists them "
+                          "without --confirm")
+    held.add_argument("--reason-like", required=True, help="text in the hold reason, e.g. bans")
+    held.add_argument("--reason", required=True)
+    held.add_argument("--by", default="admin", help="who made the call, for the audit log")
+    held.add_argument("--confirm", action="store_true", help="void them (otherwise only list)")
     rm = sub.add_parser("remove-pick", help="remove a member's open pick (a misclick) with the whole stake back; "
                         "lists matches without --confirm")
     rm.add_argument("--user", required=True, help="the member's name or handle")
@@ -99,6 +105,26 @@ def main() -> None:
                                   entity_id=str(m.id), data=correction))
                 print(m.template_key, m.state, "->", "VOID" if args.void else
                       ", ".join(f"{c} ({labels[c]})" for c in correction["codes"]))
+    elif args.cmd == "void-held":
+        from sqlalchemy import func, select
+
+        from rift.db import db_now, transaction
+        from rift.models import AuditEvent, Fixture, Market, Selection
+
+        with transaction() as db:
+            rows = db.execute(select(Market).where(Market.state == "HOLD", Market.state_reason.ilike(
+                f"%{args.reason_like}%")).order_by(Market.close_at)).scalars().all()
+            correction = {"codes": [], "void": True, "reason": args.reason, "by": args.by, "at": db_now(db).isoformat()}
+            for m in rows:
+                fx = db.get(Fixture, m.fixture_id) if m.fixture_id else None
+                picks, staked = db.execute(select(func.count(), func.coalesce(func.sum(Selection.stake_rc), 0)).where(
+                    Selection.market_id == m.id, Selection.status == "OPEN")).one()
+                print(f"{fx.provider_id if fx else '-'}  {m.title}  [{m.state_reason}]  {picks} pick(s), {staked:,} RC")
+                if args.confirm:
+                    m.params = {**m.params, "correction": correction}
+                    db.add(AuditEvent(actor=args.by, action="market.corrected", entity_type="market",
+                                      entity_id=str(m.id), data=correction))
+            print(f"{len(rows)} market(s){' voided: stakes return on the next settle pass' if args.confirm else '. Re-run with --confirm to void them.'}")
     elif args.cmd == "remove-pick":
         from sqlalchemy import func, or_, select
 
