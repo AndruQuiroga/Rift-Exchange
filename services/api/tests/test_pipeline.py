@@ -249,8 +249,10 @@ def _markets(factory):
 
 
 def _locked_unless_through_draft(ms) -> bool:
-    """Series markets lock at series start; through-draft game markets stay open until 3:00 of their game."""
-    return all((m.state == "OPEN") == bool(m.params.get("through_draft")) for m in ms)
+    """Series markets lock at series start; through-draft game markets stay open until 3:00 of their game, and
+    a later game's markets stay open while the game before it is played (D-043)."""
+    return all((m.state == "OPEN") == bool(m.params.get("through_draft") or (m.params.get("game_index") or 1) > 1)
+               for m in ms)
 
 
 def _go_live(feed, worker, now):
@@ -426,6 +428,7 @@ def test_next_game_opens_from_a_final_frame_only_when_reachable_whoever_won():
     bo3.team_b_wins = 1
     games[1].state = "completed"
     assert markets.next_game(bo3, games) == (3, end + timedelta(minutes=7))
+
     games[2].started_at = end + timedelta(minutes=6)  # already loaded: too late to open
     assert markets.next_game(bo3, games) is None
 
@@ -436,7 +439,7 @@ def test_game_specs_hold_pre_game_markets_only():
     stats = markets.TournamentStats(games=15, pick_rate={}, kill_totals=[20] * 10 + [30] * 5)
     close = START + timedelta(minutes=42)
     fresh = {s.kind: s for s in markets.game_specs(fixture, 2, a, b, 0.6, stats, close, "MODEL")}
-    assert fresh["game_winner"].close_at == close and "Opens when Game 1 ends" in fresh["game_winner"].rules_text
+    assert fresh["game_winner"].close_at == close and "Opens when Game 1 starts" in fresh["game_winner"].rules_text
     assert "draft starts" in fresh["game_winner"].rules_text and not fresh["game_winner"].params["through_draft"]
     assert "total_kills_game" not in fresh  # kill lines open once the game loads (early-game window)
 
@@ -514,3 +517,21 @@ def test_a_league_correction_stands_over_the_data(factory, world):
         grade = grade_market(s, m)
         assert grade.status == "RESULT" and grade.winning_codes == ["B"] and "broadcast clock" in grade.reason
         assert apply_grade(s, m.id, grade, START) and not apply_grade(s, m.id, grade_market(s, m), START)
+
+
+def test_the_next_game_opens_while_the_one_before_is_played():
+    """D-043: Game N+1 is open while Game N plays, closing provisionally, unless Game N decides the series."""
+    start = START + timedelta(minutes=40)
+
+    def g(idx, state, started=None):
+        return Game(game_index=idx, state=state, started_at=started, ended_at=None)
+
+    bo3 = Fixture(best_of=3, status="LIVE", team_a_wins=1, team_b_wins=0, scheduled_at=START)
+    games = [Game(game_index=1, state="completed", ended_at=START), g(2, "inProgress", start), g(3, "unstarted")]
+    assert markets.next_game(bo3, games) == (3, start + markets.IN_PLAY_CLOSE)  # 1-0: Game 3 may be played
+    bo3.team_b_wins = 1
+    games = [games[0], Game(game_index=2, state="completed", ended_at=start), g(3, "inProgress", start)]
+    assert markets.next_game(bo3, games) is None  # 1-1: Game 3 decides it, there is no Game 4
+    bo5 = Fixture(best_of=5, status="LIVE", team_a_wins=0, team_b_wins=0, scheduled_at=START)
+    assert markets.next_game(bo5, [g(1, "inProgress", START), g(2, "unstarted")]) == (2, START + markets.IN_PLAY_CLOSE)
+    assert markets.next_game(bo5, [g(1, "inProgress", START), g(2, "inProgress", start)]) is None  # loaded: too late

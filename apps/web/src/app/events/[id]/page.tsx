@@ -88,7 +88,7 @@ function PhaseBadge({ phase, closeAt }: { phase: LanePhase; closeAt?: string | n
     );
   }
   if (phase === "DRAFT") return <Locked label="Drafting · reopens at game start" />;
-  if (phase === "UPCOMING") return <Locked label="Opens when the previous game ends" />;
+  if (phase === "UPCOMING") return <Locked label="Opens when the previous game starts" />;
   return <Locked label="Closed at 3:00" />;
 }
 
@@ -189,8 +189,8 @@ function UpNext({ event, game }: { event: EventT; game: GameT }) {
   if (game.window === "UPCOMING" && game.index > 1) {
     return (
       <p className="muted" style={{ fontSize: 14, margin: 0 }}>
-        Game {game.index} opens when Game {game.index - 1} ends: its winner and blind picks at full odds until its draft
-        starts, then everything again at lower odds from game start to 3:00.
+        Game {game.index} opens when Game {game.index - 1} starts: its winner and blind picks at full odds until its
+        draft starts, then everything again at lower odds from game start to 3:00. If the series ends first, its picks are refunded.
       </p>
     );
   }
@@ -210,8 +210,9 @@ function GamePanel({ event, game, live = false }: { event: EventT; game: GameT; 
       <div className="upcoming">
         <div style={{ fontWeight: 700 }}>Game {game.index} opens {game.opens_when ? game.opens_when.toLowerCase() : "later"}</div>
         <p className="muted" style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>
-          Its winner and blind picks open between games at full odds and close when its draft starts. Objectives,
-          lanes and kills reopen at lower odds from game start to 3:00.
+          Its winner and blind picks open at full odds as soon as Game {game.index - 1} starts, and close when its own
+          draft starts. Objectives, lanes and kills reopen at lower odds from game start to 3:00. If the series ends
+          before it, its picks are refunded.
         </p>
         <NotifyButton event={event.id} game={game.index} label={eventLabel(event)} />
       </div>
@@ -324,9 +325,11 @@ export default function EventPage() {
   const winner = markets.find((m) => m.kind === "series_winner");
   const cd = winner?.close_at ? countdown(winner.close_at, now) : null;
   const gameList = event.best_of > 1 ? event.games ?? [] : [];
-  // Default to the game that is open right now once the series itself has locked.
+  // Default to the game that is open right now once the series itself has locked, unless one is being played
+  // (D-043: the next game opens while the current one runs; its tab says Open).
   const openGame = gameList.find((g) => g.window === "OPEN" && g.index > 1);
-  const current = tab ?? (event.status === "LIVE" && openGame ? openGame.index : 0);
+  const playing = gameList.some((g) => g.state === "inProgress");
+  const current = tab ?? (event.status === "LIVE" && openGame && !playing ? openGame.index : 0);
   const shownGame = event.best_of === 1 ? (event.games ?? [])[0] : gameList.find((g) => g.index === current);
   const priced = markets.length > 0 && event.team_a && event.team_b;
   // Phones: swipe left or right to move between Series and each game. Swipes that start on something

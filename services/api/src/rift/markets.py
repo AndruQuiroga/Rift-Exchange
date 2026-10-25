@@ -105,6 +105,9 @@ def champion_label(champ: str) -> str:
 
 
 NEXT_GAME_WINDOW = timedelta(minutes=7)  # Game N markets close this long after Game N-1 ends (draft ~10 min)
+# D-043: the provisional close of Game N+1's markets while Game N is played, well past any game's end; the
+# worker pulls it to NEXT_GAME_WINDOW after Game N ends.
+IN_PLAY_CLOSE = timedelta(hours=2)
 # D-037: series markets and Game 1's pre-draft markets lock when the series goes live (the draft starting), not
 # at the listed time, so a day running late keeps them open and one running early locks them at once. This is
 # only the backstop if the feed never reports the series live.
@@ -131,7 +134,7 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
     """Markets scoped to one game, open before its draft. Their after-draft copies open once it loads (D-040,
     rift.props.open_early_team_markets); kill lines and duels are created on demand."""
     key = fixture.provider_id
-    opens = "" if idx == 1 else f"Opens when Game {idx - 1} ends. "
+    opens = "" if idx == 1 else f"Opens when Game {idx - 1} starts. "
     specs = []
     if fixture.best_of > 1:
         # D-035: the winner closes when the draft starts (with the champion calls), not through it.
@@ -152,12 +155,14 @@ def game_specs(fixture: Fixture, idx: int, a: Team, b: Team, q: float, stats: To
 
 
 def next_game(fixture: Fixture, games: list[Game]) -> tuple[int, datetime] | None:
-    """The game whose markets are open between games: (index, close_at), or None.
+    """The later game whose markets are open now: (index, close_at), or None.
 
-    Game N (N >= 2) opens once Game N-1's end is observed with its time known (the schedule says completed,
-    or its final livestats frame is in), only while the series can still reach Game N. The series score
-    must agree with the completed games; a game seen ending in livestats before the score counts it opens
-    the next game only if that game is reachable whoever won.
+    D-043: while Game N is being played, Game N+1 is open, unless Game N decides the series whoever wins it
+    (a game that is never played voids). Its close is provisional until Game N ends, then NEXT_GAME_WINDOW
+    after that end, before Game N+1's draft. Between games, Game N (N >= 2) is open once Game N-1's end is
+    observed with its time known, only while the series can still reach it. The series score must agree with
+    the completed games; a game seen ending in livestats before the score counts it opens the next game only
+    if that game is reachable whoever won.
     """
     need = fixture.best_of // 2 + 1
     if fixture.best_of == 1 or fixture.status != "LIVE":
@@ -165,17 +170,23 @@ def next_game(fixture: Fixture, games: list[Game]) -> tuple[int, datetime] | Non
     done = sorted((g for g in games if g.state == "completed" or (g.ended_at is not None and g.state != "unneeded")),
                   key=lambda g: g.game_index)
     n = len(done) + 1
-    if not done or [g.game_index for g in done] != list(range(1, n)) or n > fixture.best_of:
+    if [g.game_index for g in done] != list(range(1, n)) or n > fixture.best_of:
         return None
     scored = sum(1 for g in done if g.state == "completed")
     unscored = len(done) - scored
     a, b = fixture.team_a_wins, fixture.team_b_wins
     if a + b != scored or unscored > 1 or max(a, b) + unscored >= need:
         return None
-    nxt = next((g for g in games if g.game_index == n), None)
-    if nxt is not None and (nxt.state != "unstarted" or nxt.started_at is not None):
-        return None
-    if done[-1].ended_at is None:
+    game = next((g for g in games if g.game_index == n), None)
+    if game is not None and (game.state != "unstarted" or game.started_at is not None):
+        if unscored or n + 1 > fixture.best_of or (a == need - 1 and b == need - 1):
+            return None  # Game n decides the series whichever team wins it
+        after = next((g for g in games if g.game_index == n + 1), None)
+        if after is not None and (after.state != "unstarted" or after.started_at is not None):
+            return None
+        start = game.started_at or fixture.live_at or fixture.scheduled_at
+        return (n + 1, start + IN_PLAY_CLOSE) if start else None
+    if not done or done[-1].ended_at is None:
         return None
     return n, done[-1].ended_at + NEXT_GAME_WINDOW
 
@@ -381,7 +392,7 @@ def lock_due(session: Session, now: datetime) -> int:
             if g is None or g.state in ("completed", "unneeded") or g.ended_at is not None or f.status != "LIVE":
                 locked.setdefault(m.id, (m, "Game over"))
             continue
-        if (m.category == "DRAFT" or m.kind == "game_winner") and (idx or 1) > 1:
+        if (m.category == "DRAFT" or m.kind == "game_winner" or m.params.get("blind")) and (idx or 1) > 1:
             # Champion calls close before the draft: NEXT_GAME_WINDOW after the previous game ends (D-026).
             prev = games.get((f.id, idx - 1))
             if prev is not None and prev.ended_at is not None:
