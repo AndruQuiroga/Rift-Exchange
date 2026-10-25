@@ -163,8 +163,8 @@ def test_event_games_and_live_scoreboard(api, factory, world):
     assert g1["winner"] == "A" and g1["burned_champions"] == [] and g1["ended_at"] is not None
     assert g2["burned_champions"] == CHAMPS and g2["state"] == "inProgress" and g2["winner"] is None
     assert g3 == {"index": 3, "state": "unstarted", "started_at": None, "ended_at": None, "winner": None,
-                  "window": "UPCOMING", "opens_when": "When Game 2 ends", "closes_at": None, "early": "UPCOMING",
-                  "burned_champions": CHAMPS + ["Rumble"], "lanes": "UPCOMING"}
+                  "window": "UPCOMING", "opens_when": "When Game 2 starts", "closes_at": None, "early": "UPCOMING",
+                  "burned_champions": CHAMPS + ["Rumble"], "lanes": "BLIND"}  # D-043: open while Game 2 plays
     assert detail["markets"]  # existing fields stay
 
     live = kai.get(f"/api/v1/events/{world['fixture']}/live").json()

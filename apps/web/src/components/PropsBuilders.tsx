@@ -31,7 +31,7 @@ function WindowNote({ data, now, event }: { data: WindowState; now: number; even
         {phase === "BLIND" ? "Called before the draft, whatever champions they play."
           : phase === "LIVE" ? "Champions locked in. Priced from the live game."
           : phase === "DRAFT" ? "No picks during the draft. They reopen with champions when the game loads."
-          : phase === "UPCOMING" ? (data.opens_when ?? "Opens when the previous game ends.")
+          : phase === "UPCOMING" ? (data.opens_when ?? "Opens when the previous game starts.")
           : "Early-game picks are closed."}
       </span>
       {open && phase === "BLIND" && event?.status === "SCHEDULED" ? <DraftLock scheduledAt={event.scheduled_at} />

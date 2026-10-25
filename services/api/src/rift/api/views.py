@@ -218,7 +218,7 @@ def games_view(fixture: Fixture, games: list[Game], markets: list[Market], now: 
             window = "UPCOMING"
         opens_when = None
         if window == "UPCOMING":
-            opens_when = f"When Game {idx - 1} ends" if idx > 1 else (
+            opens_when = f"When Game {idx - 1} starts" if idx > 1 else (
                 "When both teams are known" if not (fixture.team_a_id and fixture.team_b_id) else None)
         closes = min((m.close_at for m in open_), default=None)
         early = early_state(fixture, g, idx, now)
